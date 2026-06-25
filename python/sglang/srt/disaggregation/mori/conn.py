@@ -309,6 +309,9 @@ class MoriKVManager(CommonKVManager):
         is_mla_backend: Optional[bool] = False,
     ):
         super().__init__(args, disaggregation_mode, server_args, is_mla_backend)
+        # Mori RDMA control-plane handshakes (RegisterRemoteEngine /
+        # BuildRdmaConn) are not safe under concurrent callers.
+        self._engine_lock = threading.Lock()
         self.engine = self._init_engine()
         self.engine_desc = self.engine.get_engine_desc()
         self.kv_mem_descs: List[MemoryDesc] = []
@@ -341,9 +344,40 @@ class MoriKVManager(CommonKVManager):
             self.room_to_bootstrap_addr: Dict[int, str] = {}
             self._start_decode_thread()
 
+    def _configure_mori_same_node_transport(self) -> None:
+        """Force XGMI (GPU P2P) for single-node PD on one machine.
+
+        When ionic/RoCE HCAs are present mori auto-selects RDMA even without
+        ``--disaggregation-ib-device``.  Same-host P+D then hits ibverbs
+        connection timeouts (and concurrent BuildRdmaConn RegEndpoint races).
+        Exclude all HCAs so mori falls back to XGMI when
+        ``MORI_DISABLE_AUTO_XGMI=0``.
+        """
+        if self.kv_args.ib_device:
+            return
+        if self.server_args.nnodes != 1:
+            return
+        os.environ.setdefault("MORI_DISABLE_AUTO_XGMI", "0")
+        if os.environ.get("MORI_RDMA_DEVICES"):
+            return
+        try:
+            hcas = os.listdir("/sys/class/infiniband")
+        except OSError:
+            return
+        if not hcas:
+            return
+        os.environ["MORI_RDMA_DEVICES"] = "^" + ",".join(hcas)
+        logger.info(
+            "Same-node mori PD: excluded RDMA HCAs %s; enable XGMI via "
+            "MORI_DISABLE_AUTO_XGMI=0",
+            hcas,
+        )
+
     def _init_engine(self) -> IOEngine:
         if self.kv_args.ib_device:
             os.environ["MORI_RDMA_DEVICES"] = self.kv_args.ib_device
+        else:
+            self._configure_mori_same_node_transport()
 
         self.local_ip = get_local_ip_auto()
         config = IOEngineConfig(host=self.local_ip, port=0)
@@ -677,7 +711,8 @@ class MoriKVManager(CommonKVManager):
         if engine_key in self.decode_kv_args_table:
             logger.debug("Remote peer %s already registered. Skipping.", engine_key)
             return
-        self.engine.register_remote_engine(register_info.engine_desc)
+        with self._engine_lock:
+            self.engine.register_remote_engine(register_info.engine_desc)
         self.decode_kv_args_table[engine_key] = register_info
         logger.debug(
             "Registered decode peer %s (%s:%s)",
@@ -737,14 +772,15 @@ class MoriKVManager(CommonKVManager):
 
         transfer_uid = self.engine.allocate_transfer_uid()
 
-        statuses = self.engine.batch_write(
-            [src_desc],
-            [plan.local_offsets],
-            [dst_desc],
-            [plan.remote_offsets],
-            [plan.sizes],
-            [transfer_uid],
-        )
+        with self._engine_lock:
+            statuses = self.engine.batch_write(
+                [src_desc],
+                [plan.local_offsets],
+                [dst_desc],
+                [plan.remote_offsets],
+                [plan.sizes],
+                [transfer_uid],
+            )
         return statuses
 
     def _build_contiguous_transfer_plan(
@@ -982,11 +1018,12 @@ class MoriKVManager(CommonKVManager):
             remote_offsets.append([dst_aux_index * item_len])
             sizes.append([item_len])
             uids.append(self.engine.allocate_transfer_uid())
-        return list(
-            self.engine.batch_write(
-                src_descs, local_offsets, dst_descs, remote_offsets, sizes, uids
+        with self._engine_lock:
+            return list(
+                self.engine.batch_write(
+                    src_descs, local_offsets, dst_descs, remote_offsets, sizes, uids
+                )
             )
-        )
 
     def send_aux_tcp(
         self,
@@ -1187,14 +1224,15 @@ class MoriKVManager(CommonKVManager):
                 size = bytes_to_send
 
             transfer_uid = self.engine.allocate_transfer_uid()
-            batch_statuses = self.engine.batch_write(
-                [src_desc],
-                [[src_offset]],
-                [dst_desc],
-                [[dst_offset]],
-                [[size]],
-                [transfer_uid],
-            )
+            with self._engine_lock:
+                batch_statuses = self.engine.batch_write(
+                    [src_desc],
+                    [[src_offset]],
+                    [dst_desc],
+                    [[dst_offset]],
+                    [[size]],
+                    [transfer_uid],
+                )
             statuses.extend(batch_statuses)
 
         return statuses
