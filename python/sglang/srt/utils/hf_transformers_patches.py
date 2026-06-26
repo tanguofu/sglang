@@ -60,6 +60,7 @@ def apply_all():
     _patch_image_processor_kwargs()
     _patch_image_process_cuda_tensor()
     _patch_nemotron_h_pattern()
+    _patch_glm_moe_dsa_attribute_map()
 
     # v5 general patches
     _ensure_clean_up_tokenization_compat()
@@ -451,3 +452,32 @@ def patch_is_base_mistral_in_ci():
         logger.info("CI: patched _patch_mistral_regex to skip HF API calls")
 
     _is_base_mistral_patched = True
+
+
+def _patch_glm_moe_dsa_attribute_map():
+    """Remove ``head_dim`` → ``qk_rope_head_dim`` from ``GlmMoeDsaConfig.attribute_map``.
+
+    When a model's ``config.json`` contains both ``head_dim`` (e.g. 192) and
+    ``qk_rope_head_dim`` (e.g. 64), the upstream ``attribute_map`` causes
+    ``head_dim`` to silently overwrite ``qk_rope_head_dim`` during config
+    init, resulting in wrong fused QKV projection sizes and weight-loading
+    failures for GLM-5.2-FP8 DSA models.
+
+    SGLang's ``model_config.py`` already sets ``head_dim`` correctly for MLA
+    architectures, so this mapping is not needed and only causes harm.
+    """
+    try:
+        from transformers.models.glm_moe_dsa.configuration_glm_moe_dsa import (
+            GlmMoeDsaConfig,
+        )
+    except ImportError:
+        logger.debug(
+            "_patch_glm_moe_dsa_attribute_map: GlmMoeDsaConfig not importable, patch skipped"
+        )
+        return
+
+    if "head_dim" in GlmMoeDsaConfig.attribute_map:
+        del GlmMoeDsaConfig.attribute_map["head_dim"]
+        logger.info(
+            "Removed 'head_dim' -> 'qk_rope_head_dim' from GlmMoeDsaConfig.attribute_map"
+        )

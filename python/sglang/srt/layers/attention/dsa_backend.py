@@ -1610,8 +1610,8 @@ class DeepseekSparseAttnBackend(
         kv_cache = self.token_to_kv_pool.get_key_buffer(layer.layer_id)
 
         if q_rope is not None:
-            q_nope = q.view(-1, layer.tp_q_head_num, layer.v_head_dim)
-            q_rope = q_rope.view(
+            q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
+            q_rope = q_rope.reshape(
                 -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
             )
         else:
@@ -1817,8 +1817,8 @@ class DeepseekSparseAttnBackend(
         # Do absorbed multi-latent attention
         kv_cache = self.token_to_kv_pool.get_key_buffer(layer.layer_id)
         if q_rope is not None:
-            q_nope = q.view(-1, layer.tp_q_head_num, layer.v_head_dim)
-            q_rope = q_rope.view(
+            q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
+            q_rope = q_rope.reshape(
                 -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
             )
             # Caller passed split q_nope / q_rope; we'll need to concat below if
@@ -2380,13 +2380,13 @@ class DeepseekSparseAttnBackend(
         kv_cache = k_cache.view(-1, self.real_page_size, self.kv_cache_dim).unsqueeze(1)
 
         if merge_query:
-            q_nope = q.view(-1, layer.tp_q_head_num, layer.v_head_dim)
-            q_rope_reshaped = q_rope.view(
+            q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
+            q_rope_reshaped = q_rope.reshape(
                 -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
             )
             q_all = concat_mla_absorb_q_general(q_nope, q_rope_reshaped)
         else:
-            q_all = q.view(-1, layer.tp_q_head_num, layer.head_dim)
+            q_all = q.reshape(-1, layer.tp_q_head_num, layer.head_dim)
 
         # Align topk_indices with q dimensions
         if topk_indices is not None:

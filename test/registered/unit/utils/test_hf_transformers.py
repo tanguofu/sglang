@@ -591,5 +591,83 @@ class TestPatchNemotronHPattern(unittest.TestCase):
             self.skipTest("NemotronHConfig not available in this transformers version")
 
 
+# ---------------------------------------------------------------------------
+# compat: _patch_glm_moe_dsa_attribute_map
+# ---------------------------------------------------------------------------
+
+
+class TestPatchGlmMoeDsaAttributeMap(unittest.TestCase):
+    """Verify ``_patch_glm_moe_dsa_attribute_map`` removes the ``head_dim`` →
+    ``qk_rope_head_dim`` mapping from ``GlmMoeDsaConfig.attribute_map``.
+
+    When a model's ``config.json`` contains both ``head_dim`` (e.g. 192) and
+    ``qk_rope_head_dim`` (e.g. 64), the upstream ``attribute_map`` causes
+    ``head_dim`` to silently overwrite ``qk_rope_head_dim`` during config
+    init, resulting in wrong fused QKV projection sizes and weight-loading
+    failures for GLM-5.2-FP8 DSA models.
+    """
+
+    def test_head_dim_removed_from_attribute_map(self):
+        """After the patch, ``attribute_map`` must NOT contain ``head_dim``."""
+        try:
+            from transformers.models.glm_moe_dsa.configuration_glm_moe_dsa import (
+                GlmMoeDsaConfig,
+            )
+        except ImportError:
+            self.skipTest("GlmMoeDsaConfig not available in this transformers version")
+
+        from sglang.srt.utils.hf_transformers_patches import (
+            _patch_glm_moe_dsa_attribute_map,
+        )
+
+        _patch_glm_moe_dsa_attribute_map()
+        self.assertNotIn(
+            "head_dim",
+            GlmMoeDsaConfig.attribute_map,
+            "head_dim must not be in GlmMoeDsaConfig.attribute_map after the patch",
+        )
+
+    def test_patch_is_idempotent(self):
+        """Calling the patch multiple times must not raise an error."""
+        try:
+            from transformers.models.glm_moe_dsa.configuration_glm_moe_dsa import (
+                GlmMoeDsaConfig,
+            )
+        except ImportError:
+            self.skipTest("GlmMoeDsaConfig not available in this transformers version")
+
+        from sglang.srt.utils.hf_transformers_patches import (
+            _patch_glm_moe_dsa_attribute_map,
+        )
+
+        # Call twice — both should succeed without error
+        _patch_glm_moe_dsa_attribute_map()
+        _patch_glm_moe_dsa_attribute_map()
+
+        self.assertNotIn("head_dim", GlmMoeDsaConfig.attribute_map)
+
+    def test_no_crash_when_config_not_importable(self):
+        """The patch must not raise when GlmMoeDsaConfig cannot be imported."""
+        import sys
+
+        from sglang.srt.utils.hf_transformers_patches import (
+            _patch_glm_moe_dsa_attribute_map,
+        )
+
+        # Simulate missing module by temporarily removing it from sys.modules.
+        # Use a key that is definitely not present.
+        saved = sys.modules.pop(
+            "transformers.models.glm_moe_dsa.configuration_glm_moe_dsa", None
+        )
+        try:
+            # Should not raise
+            _patch_glm_moe_dsa_attribute_map()
+        finally:
+            if saved is not None:
+                sys.modules[
+                    "transformers.models.glm_moe_dsa.configuration_glm_moe_dsa"
+                ] = saved
+
+
 if __name__ == "__main__":
     unittest.main()
