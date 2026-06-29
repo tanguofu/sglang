@@ -1293,7 +1293,8 @@ class DFlashWorkerV2(BaseSpecWorker):
             )
 
             # Avoid copying large hidden-state buffers to CPU in overlap scheduling.
-            logits_output.hidden_states = None
+            if not model_worker_batch.return_hidden_states:
+                logits_output.hidden_states = None
 
             batch_output.next_draft_input = self._make_next_draft_input_prefill(
                 verified_id=next_token_ids,

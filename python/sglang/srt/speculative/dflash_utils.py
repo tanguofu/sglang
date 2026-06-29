@@ -529,7 +529,10 @@ def parse_dflash_draft_config(*, draft_hf_config: Any) -> DFlashDraftConfig:
             f"got {mask_token!r}."
         )
 
-    mask_token_id = dflash_cfg.get("mask_token_id", None)
+    mask_token_id = dflash_cfg.get(
+        "mask_token_id",
+        _cfg_get(draft_hf_config, "mask_token_id", None),
+    )
     if mask_token_id is not None:
         if not isinstance(mask_token_id, Integral) or isinstance(mask_token_id, bool):
             raise ValueError(

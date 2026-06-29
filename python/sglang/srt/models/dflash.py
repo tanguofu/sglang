@@ -364,6 +364,7 @@ class DFlashDraftModel(nn.Module):
                 "This usually means the target model is capturing a different number of layer features than "
                 "the draft checkpoint/config expects."
             )
+        target_hidden = target_hidden.to(self.fc.weight.dtype)
         return self.hidden_norm(self.fc(target_hidden))
 
     @torch.no_grad()

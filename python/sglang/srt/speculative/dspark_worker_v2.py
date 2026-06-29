@@ -51,18 +51,18 @@ class DSparkWorkerV2(DFlashWorkerV2):
         self._dspark_markov_resolved = True
         draft_model = self.draft_model
 
-        markov_w1 = getattr(draft_model, "markov_w1", None)
-        markov_w2 = getattr(draft_model, "markov_w2", None)
+        markov_w1_mod = getattr(draft_model, "markov_w1", None)
+        markov_w2_mod = getattr(draft_model, "markov_w2", None)
 
-        if markov_w1 is not None and markov_w2 is not None:
-            self._dspark_markov_w1 = markov_w1
-            self._dspark_markov_w2 = markov_w2
+        if markov_w1_mod is not None and markov_w2_mod is not None:
+            self._dspark_markov_w1 = markov_w1_mod.weight if hasattr(markov_w1_mod, "weight") else markov_w1_mod
+            self._dspark_markov_w2 = markov_w2_mod.weight if hasattr(markov_w2_mod, "weight") else markov_w2_mod
             if self.tp_rank == 0:
                 logger.info(
                     "DSPARK: Markov head resolved from draft model. "
                     "w1 shape=%s, w2 shape=%s",
-                    tuple(markov_w1.shape),
-                    tuple(markov_w2.shape),
+                    tuple(self._dspark_markov_w1.shape),
+                    tuple(self._dspark_markov_w2.shape),
                 )
             return True
 
