@@ -1092,7 +1092,19 @@ def sparse_mla_fwd_decode_partial_fp8(
     block_I=64,
     inner_iter=1,
     threads=256,
+    num_stages=1,
 ):
+    # num_stages: async pipeline depth for KV load / GEMM overlap.
+    # NOTE: num_stages=2 (double-buffer) was A/B tested on amd-355-worker
+    # (2026-06-29) and found to be a -25% NEGATIVE optimization for long-ctx
+    # single-request decode: double-buffering the KV tiles doubles shared-memory
+    # footprint, lowering CTA occupancy on gfx950, and the occupancy loss
+    # outweighs the load/compute overlap gain at low concurrency. The bf16
+    # sibling kernel uses num_stages=0 on gfx95 for the same reason. Keep
+    # num_stages=1 (no double-buffer) as the safe default; T.Pipelined with
+    # num_stages=1 behaves like T.serial but keeps the loop struct uniform with
+    # the bf16 path. FlashInfer's double-buffer pipeline does NOT transfer to
+    # ROCm gfx950 due to different shared-memory/CU ratio and occupancy rules.
     assert d_v == 512, f"only support d_v=512"
     assert (
         topk % block_I == 0
@@ -1202,7 +1214,11 @@ def sparse_mla_fwd_decode_partial_fp8(
             T.copy(q_fp8[b_i, s_i, H0:H1, 2 * group_size : 3 * group_size], q_tile2)
             T.copy(q_fp8[b_i, s_i, H0:H1, 3 * group_size : 4 * group_size], q_tile3)
 
-            for k_i in T.serial(inner_iter):
+            # Async pipeline: overlap next KV-tile load with current GEMM/softmax.
+            # T.Pipelined auto double-buffers the shared-memory KV tiles; the
+            # compute stage (incl. online softmax) runs sequentially so register
+            # state (m_i/sumexp/acc_o) cross-iteration deps are preserved.
+            for k_i in T.Pipelined(inner_iter, num_stages=num_stages):
                 topk_block_i = group_i * inner_iter + k_i
 
                 for bi_i in T.Parallel(BI):
@@ -1350,9 +1366,12 @@ def tilelang_sparse_fwd(
             if q.dtype != kv.dtype:
                 q = q.to(kv.dtype)
             if _is_gfx95_supported:
-                block_I, threads, block_per_cu, cu = 64, 256, 2, 256
+                # gfx950 (MI355X): num_stages=1 (no double-buffer). A/B tested
+                # 2026-06-29: num_stages=2 is -25% for long-ctx single-request
+                # decode (occupancy loss > overlap gain). Matches bf16 gfx95.
+                block_I, threads, block_per_cu, cu, num_stages = 64, 256, 2, 256, 1
             else:
-                block_I, threads, block_per_cu, cu = 64, 256, 1, 304
+                block_I, threads, block_per_cu, cu, num_stages = 64, 256, 1, 304, 1
             ni = topk // block_I
             inner_iter = _pick_inner_iter(q.shape[0], ni, cu, block_per_cu)
             kernel_partial = sparse_mla_fwd_decode_partial_fp8(
@@ -1364,6 +1383,7 @@ def tilelang_sparse_fwd(
                 block_I=block_I,
                 inner_iter=inner_iter,
                 threads=threads,
+                num_stages=num_stages,
             )
         else:
             if _is_gfx95_supported:
