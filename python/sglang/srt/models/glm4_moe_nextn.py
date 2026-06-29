@@ -149,6 +149,23 @@ class Glm4MoeForCausalLMNextN(Glm4MoeForCausalLM):
             0 if get_global_server_args().disable_shared_experts_fusion else 1
         )
 
+        # DSpark Markov head: low-rank bias tables for sequential Markov
+        # sampling. Initialized to None; populated from checkpoint weights
+        # (mtp.markov_head.markov_w1 / markov_w2) during load_weights.
+        # When absent, DSpark falls back to DFlash greedy sampling.
+        self.markov_w1: Optional[torch.Tensor] = None
+        self.markov_w2: Optional[torch.Tensor] = None
+        markov_rank = getattr(config, "dspark_markov_rank", None)
+        if markov_rank is not None and int(markov_rank) > 0:
+            self.markov_w1 = nn.Parameter(
+                torch.empty(config.vocab_size, int(markov_rank)),
+                requires_grad=False,
+            )
+            self.markov_w2 = nn.Parameter(
+                torch.empty(config.vocab_size, int(markov_rank)),
+                requires_grad=False,
+            )
+
     @torch.no_grad()
     def forward(
         self,
@@ -162,7 +179,20 @@ class Glm4MoeForCausalLMNextN(Glm4MoeForCausalLM):
         )
 
     def load_weights(self, weights: Iterable[Tuple[str, torch.Tensor]]):
-        super().load_weights(weights, is_nextn=True)
+        # Intercept markov head weights before delegating to the parent.
+        remaining = []
+        for name, tensor in weights:
+            if name.startswith("mtp.markov_head.markov_w1"):
+                if self.markov_w1 is not None:
+                    self.markov_w1.data.copy_(tensor)
+                continue
+            if name.startswith("mtp.markov_head.markov_w2"):
+                if self.markov_w2 is not None:
+                    self.markov_w2.data.copy_(tensor)
+                continue
+            remaining.append((name, tensor))
+
+        super().load_weights(iter(remaining), is_nextn=True)
 
 
 EntryClass = [Glm4MoeForCausalLMNextN]

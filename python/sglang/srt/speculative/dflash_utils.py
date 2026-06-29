@@ -423,6 +423,8 @@ class DFlashDraftConfig:
     target_layer_ids: Optional[List[int]]
     mask_token: str
     mask_token_id: Optional[int]
+    markov_rank: Optional[int]
+    markov_head_type: Optional[str]
 
     def require_num_layers(self) -> int:
         if self.num_hidden_layers is None:
@@ -541,6 +543,26 @@ def parse_dflash_draft_config(*, draft_hf_config: Any) -> DFlashDraftConfig:
                 f"got {mask_token_id}."
             )
 
+    # DSpark Markov head config (optional; only used by DSPARK algorithm).
+    raw_markov_rank = dflash_cfg.get(
+        "markov_rank",
+        _cfg_get(draft_hf_config, "dspark_markov_rank", None),
+    )
+    markov_rank = _parse_optional_int(
+        raw_markov_rank,
+        field_name="DSPARK markov_rank",
+        min_value=1,
+    )
+    markov_head_type = dflash_cfg.get(
+        "markov_head_type",
+        _cfg_get(draft_hf_config, "dspark_markov_head_type", None),
+    )
+    if markov_head_type is not None and not isinstance(markov_head_type, str):
+        raise ValueError(
+            "DSPARK markov_head_type must be a string, "
+            f"got {markov_head_type!r}."
+        )
+
     return DFlashDraftConfig(
         num_hidden_layers=num_hidden_layers,
         num_target_layers=num_target_layers,
@@ -548,6 +570,8 @@ def parse_dflash_draft_config(*, draft_hf_config: Any) -> DFlashDraftConfig:
         target_layer_ids=parsed_target_layer_ids,
         mask_token=mask_token,
         mask_token_id=mask_token_id,
+        markov_rank=markov_rank,
+        markov_head_type=markov_head_type,
     )
 
 

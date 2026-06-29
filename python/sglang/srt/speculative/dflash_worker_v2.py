@@ -608,6 +608,33 @@ class DFlashWorkerV2(BaseSpecWorker):
 
         return int(resolved_id)
 
+    def _sample_draft_tokens_from_output(
+        self,
+        *,
+        draft_logits_output,
+        block_ids: torch.Tensor,
+        lm_head,
+        bs: int,
+    ) -> torch.Tensor:
+        """Sample draft tokens from the draft model output.
+
+        DFlash uses greedy argmax over the vocab-parallel LM head.
+        DSpark overrides this to use sequential Markov sampling.
+        """
+        draft_hidden = draft_logits_output.hidden_states
+        if draft_hidden is None:
+            raise RuntimeError("DFLASH draft model returned no hidden states.")
+        draft_hidden = draft_hidden.view(bs, int(self.block_size), -1)
+        draft_next = self._greedy_sample_from_vocab_parallel_head(
+            hidden_states=draft_hidden[:, 1:, :].reshape(-1, draft_hidden.shape[-1]),
+            lm_head=lm_head,
+        ).view(bs, int(self.block_size) - 1)
+
+        draft_tokens = self._draft_block_tokens_buf[:bs]
+        draft_tokens[:, 0].copy_(block_ids[:, 0])
+        draft_tokens[:, 1:].copy_(draft_next)
+        return draft_tokens
+
     def _greedy_sample_from_vocab_parallel_head(
         self,
         *,
@@ -1486,18 +1513,12 @@ class DFlashWorkerV2(BaseSpecWorker):
                 forward_batch
             ).logits_output
 
-        draft_hidden = draft_logits_output.hidden_states
-        if draft_hidden is None:
-            raise RuntimeError("DFLASH draft model returned no hidden states.")
-        draft_hidden = draft_hidden.view(bs, int(self.block_size), -1)
-        draft_next = self._greedy_sample_from_vocab_parallel_head(
-            hidden_states=draft_hidden[:, 1:, :].reshape(-1, draft_hidden.shape[-1]),
+        draft_tokens = self._sample_draft_tokens_from_output(
+            draft_logits_output=draft_logits_output,
+            block_ids=block_ids,
             lm_head=lm_head,
-        ).view(bs, int(self.block_size) - 1)
-
-        draft_tokens = self._draft_block_tokens_buf[:bs]
-        draft_tokens[:, 0].copy_(block_ids[:, 0])
-        draft_tokens[:, 1:].copy_(draft_next)
+            bs=bs,
+        )
 
         # --- 2) Target verify.
         # TARGET_VERIFY uses standard causal masking; custom masks are unnecessary here.

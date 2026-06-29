@@ -33,6 +33,7 @@ class SpeculativeAlgorithm(Enum):
     """
 
     DFLASH = auto()
+    DSPARK = auto()
     EAGLE = auto()
     EAGLE3 = auto()
     FROZEN_KV_MTP = auto()
@@ -107,7 +108,10 @@ class SpeculativeAlgorithm(Enum):
         return self == SpeculativeAlgorithm.FROZEN_KV_MTP
 
     def is_dflash(self) -> bool:
-        return self == SpeculativeAlgorithm.DFLASH
+        return self in (SpeculativeAlgorithm.DFLASH, SpeculativeAlgorithm.DSPARK)
+
+    def is_dspark(self) -> bool:
+        return self == SpeculativeAlgorithm.DSPARK
 
     def is_standalone(self) -> bool:
         return self == SpeculativeAlgorithm.STANDALONE
@@ -200,6 +204,10 @@ class SpeculativeAlgorithm(Enum):
         if self.is_dflash():
             # V2 worker drives both overlap and non-overlap (scheduler runs it
             # synchronously when overlap is disabled), same as EAGLE.
+            if self.is_dspark():
+                from sglang.srt.speculative.dspark_worker_v2 import DSparkWorkerV2
+
+                return DSparkWorkerV2
             from sglang.srt.speculative.dflash_worker_v2 import DFlashWorkerV2
 
             return DFlashWorkerV2
