@@ -538,7 +538,12 @@ class DeepseekMLAForwardMixin:
             and (not fuse_rope_for_trtllm_mla)
             and (not skip_rope_for_dsa_tilelang_fused)
             and (not skip_rope_for_aiter_fused_mla)
-            and (not _use_aiter or not _is_gfx95_supported or self.use_dsa)
+            and (
+                not _use_aiter
+                or not _is_gfx95_supported
+                or self.use_dsa
+                or self.is_nextn
+            )
         ):
             q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe)
 
@@ -741,7 +746,12 @@ class DeepseekMLAForwardMixin:
                         ),
                     )
         else:
-            if _use_aiter_gfx95:
+            # DSpark draft (is_nextn) layers run on the aiter backend (not DSA),
+            # which would route through fused_qk_rope_cat_and_cache_mla. That fused
+            # kernel asserts kh == kh2 == h_cache during CUDA graph capture on the
+            # draft worker. Skip it for is_nextn layers and fall back to the
+            # non-fused path (rope already applied in forward_absorb_prepare).
+            if _use_aiter_gfx95 and not self.is_nextn:
                 cos = self.rotary_emb.cos_cache
                 sin = self.rotary_emb.sin_cache
 
@@ -1010,11 +1020,16 @@ class DeepseekMLAForwardMixin:
         Skip rope in prepare and let the fused kernel in forward_absorb_core handle it,
         when running aiter-backend MLA on gfx95 (i.e., the `else` branch in forward_absorb_core
         that calls fused_qk_rope_cat_and_cache_mla).
+
+        DSpark draft layers (is_nextn=True on the aiter backend) are excluded: the fused
+        kernel asserts kh == kh2 == h_cache during CUDA graph capture on the draft worker,
+        so they use the non-fused path with rope applied in forward_absorb_prepare instead.
         """
         return (
             _use_aiter_gfx95
             and self.current_attention_backend
             not in FORWARD_ABSORB_CORE_ATTENTION_BACKENDS
+            and not self.is_nextn
         )
 
 
