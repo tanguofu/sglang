@@ -97,6 +97,23 @@ class DSparkConfidenceHead(nn.Module):
         return self.proj(features.float()).squeeze(-1)
 
 
+class Glm5DSparkDecoderLayer(DeepseekV2DecoderLayer):
+    """Decoder layer for GLM-5.2 DSpark that respects first_k_dense_replace.
+
+    Unlike DeepseekV2DecoderLayer which forces all is_nextn layers to be MoE,
+    this subclass respects the config's first_k_dense_replace so that dense
+    layers (0..first_k_dense_replace-1) use DeepseekV2MLP and sparse layers
+    use DeepseekV2MoE — matching the trained checkpoint's structure.
+    """
+
+    def _is_layer_sparse(self, layer_id: int, is_nextn: bool) -> bool:
+        return (
+            self.config.n_routed_experts is not None
+            and layer_id >= self.config.first_k_dense_replace
+            and layer_id % self.config.moe_layer_freq == 0
+        )
+
+
 class Glm5DSparkModel(nn.Module):
     """GLM-5.2 DSpark draft model.
 
@@ -149,7 +166,7 @@ class Glm5DSparkModel(nn.Module):
 
         self.layers = nn.ModuleList(
             [
-                DeepseekV2DecoderLayer(
+                Glm5DSparkDecoderLayer(
                     config=config,
                     layer_id=layer_id,
                     quant_config=quant_config,
