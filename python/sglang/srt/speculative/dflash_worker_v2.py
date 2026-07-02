@@ -331,7 +331,7 @@ class DFlashWorkerV2(BaseSpecWorker):
 
     def init_cuda_graphs(self):
         capture_decode_cuda_graph = not self.server_args.disable_cuda_graph
-        if is_cuda() and capture_decode_cuda_graph:
+        if (is_cuda() or is_hip()) and capture_decode_cuda_graph:
             available_mem = get_available_gpu_memory(self.device, self.gpu_id)
             if available_mem < 1.0:
                 capture_decode_cuda_graph = False
