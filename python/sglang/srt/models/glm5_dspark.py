@@ -1,11 +1,13 @@
 """GLM-5.2 DSpark draft model for speculative decoding.
 
 Adapted from the official DeepSeek-V4 DSpark implementation (PR #29538).
-Uses DFlash-style non-causal (bidirectional) decoder layers — matching the
-DeepSpec training code where Glm5DSparkModel inherits from Qwen3DSparkModel
-with is_causal=False. Adds a Markov refinement head and confidence head.
+Mirrors the DeepseekV4DSparkModel structure exactly, but uses
+DFlashDecoderLayer (bidirectional) instead of DeepseekV4DecoderLayer,
+matching the DeepSpec training code where Glm5DSparkModel inherits from
+Qwen3DSparkModel with is_causal=False.
+
 The draft model's lm_head and embed_tokens are tied to the target model at
-runtime.
+runtime by DSparkWorkerV2.
 """
 
 from __future__ import annotations
@@ -82,6 +84,14 @@ class DSparkConfidenceHead(nn.Module):
 
 
 class Glm5DSparkModel(nn.Module):
+    """GLM-5.2 DSpark draft model.
+
+    Mirrors DeepseekV4DSparkModel (PR #29538) but uses DFlashDecoderLayer
+    (bidirectional, non-causal) instead of DeepseekV4DecoderLayer.
+    The hc_head collapse is replaced with a simple RMSNorm + linear
+    projection since DFlashDecoderLayer does not have hc_post.
+    """
+
     def __init__(
         self,
         config: PretrainedConfig,
@@ -167,34 +177,13 @@ class Glm5DSparkModel(nn.Module):
             hidden_states, _ = self.norm(hidden_states, residual)
         return hidden_states
 
-    def kv_from_hidden(
-        self,
-        x: torch.Tensor,
-        positions: torch.Tensor,
-        cache_loc: torch.Tensor,
-        attn_backend,
-    ) -> None:
-        """Materialize K/V from projected hidden states into the draft KV cache.
+    def collapse_block_hidden(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """Collapse block hidden states to per-block representation.
 
-        Uses DFlash's kv_proj_only + apply_k_norm + apply_k_rope per layer,
-        matching the DFlash worker's _append_target_hidden_sequential path.
+        DeepseekV4 uses hc_head (hypercomplex attention); GLM-5.2 uses
+        simple RMSNorm since DFlashDecoderLayer has no hc_post.
         """
-        token_to_kv_pool = attn_backend.token_to_kv_pool
-        for layer in self.layers:
-            attn = layer.self_attn
-            k, v = attn.kv_proj_only(x)
-            k = attn.apply_k_norm(k)
-            k = attn.apply_k_rope(positions, k)
-            k = k.view(-1, attn.num_kv_heads, attn.head_dim)
-            v = v.view(-1, attn.num_kv_heads, attn.head_dim)
-            token_to_kv_pool.set_kv_buffer(
-                attn.attn,
-                cache_loc,
-                k,
-                v,
-                attn.attn.k_scale,
-                attn.attn.v_scale,
-            )
+        return self.norm(hidden_states)
 
     def forward(
         self,
@@ -202,7 +191,8 @@ class Glm5DSparkModel(nn.Module):
         positions: torch.Tensor,
         forward_batch: ForwardBatch,
     ) -> torch.Tensor:
-        return self.forward_backbone(input_ids, positions, forward_batch)
+        hidden_states = self.forward_backbone(input_ids, positions, forward_batch)
+        return self.collapse_block_hidden(hidden_states)
 
 
 def get_dspark_num_layers(config: PretrainedConfig) -> int:
@@ -210,6 +200,13 @@ def get_dspark_num_layers(config: PretrainedConfig) -> int:
 
 
 class Glm5ForCausalLMDSpark(Glm4MoeForCausalLM):
+    """GLM-5.2 DSpark entry point.
+
+    Mirrors DeepseekV4ForCausalLMDSpark (PR #29538). The draft model's
+    embed_tokens and lm_head are tied to the target model at runtime
+    by DSparkWorkerV2.
+    """
+
     def __init__(
         self,
         config: PretrainedConfig,
@@ -248,15 +245,6 @@ class Glm5ForCausalLMDSpark(Glm4MoeForCausalLM):
 
     def project_main_hidden(self, main_hidden: torch.Tensor) -> torch.Tensor:
         return self.model.project_main_hidden(main_hidden)
-
-    def kv_from_hidden(
-        self,
-        x: torch.Tensor,
-        positions: torch.Tensor,
-        cache_loc: torch.Tensor,
-        attn_backend,
-    ) -> None:
-        self.model.kv_from_hidden(x, positions, cache_loc, attn_backend)
 
     @torch.no_grad()
     def forward(
