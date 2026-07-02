@@ -1785,6 +1785,50 @@ class DeepseekV2AttentionMLA(
         self.init_mla_fused_rope_rocm_forward()
         self.init_mla_fused_rope_cpu_forward()
 
+    def kv_from_hidden(
+        self,
+        x: torch.Tensor,
+        positions: torch.Tensor,
+        cache_loc: torch.Tensor,
+        attn_backend,
+    ) -> None:
+        """Project hidden states to MLA KV latent and write directly to the KV cache.
+
+        Used by DSparkWorkerV2 for materializing target context features
+        into the draft KV cache. Matches the interface expected by the
+        DSpark worker (cf. DeepseekV4DecoderLayer.kv_from_hidden).
+
+        For MLA, the KV cache stores the latent: concat(kv_a_layernorm(k_nope), rope(k_pe)).
+        The value is k_nope (pre-rope latent), matching attn_mqa's v_head_dim=kv_lora_rank.
+        """
+        if self.q_lora_rank is not None:
+            qkv_latent = self.fused_qkv_a_proj_with_mqa(x)[0]
+            latent_cache = qkv_latent[..., self.q_lora_rank:]
+        else:
+            latent_cache = self.kv_a_proj_with_mqa(x)[0]
+
+        k_nope = latent_cache[..., : self.kv_lora_rank]
+        k_pe = latent_cache[..., self.kv_lora_rank :]
+
+        k_nope = self.kv_a_layernorm(k_nope)
+
+        if self.rotary_emb is not None:
+            k_pe = k_pe.unsqueeze(1)
+            dummy_q = k_pe.new_empty(k_pe.shape)
+            _, k_pe = self.rotary_emb(positions, dummy_q, k_pe)
+        else:
+            k_pe = k_pe.unsqueeze(1)
+
+        k = torch.cat([k_nope.unsqueeze(1), k_pe], dim=-1)
+        v = k_nope.unsqueeze(1)
+
+        attn_backend.token_to_kv_pool.set_kv_buffer(
+            self.attn_mqa,
+            cache_loc,
+            k,
+            v,
+        )
+
     def dispatch_attn_forward_method(
         self, forward_batch: ForwardBatch
     ) -> AttnForwardMethod:

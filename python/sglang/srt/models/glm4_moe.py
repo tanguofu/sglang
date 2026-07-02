@@ -1473,10 +1473,30 @@ class Glm4MoeForCausalLM(nn.Module):
             # of the (i-1)th layer as aux hidden state
             self.model.layers_to_capture = [val + 1 for val in layer_ids]
 
+    def set_dspark_layers_to_capture(self, layer_ids: List[int]):
+        if not self.pp_group.is_last_rank:
+            return
+        if not layer_ids:
+            raise ValueError(
+                "DSpark requires explicit layer_ids for aux hidden capture."
+            )
+        self.capture_aux_hidden_states = True
+        self.model.layers_to_capture = list(layer_ids)
+
 
 class GlmMoeDsaForCausalLM(DeepseekV2ForCausalLM):
     def determine_num_fused_shared_experts(self):
         super().determine_num_fused_shared_experts("GlmMoeDsaForCausalLM")
+
+    def set_dspark_layers_to_capture(self, layer_ids: List[int]):
+        if not self.pp_group.is_last_rank:
+            return
+        if not layer_ids:
+            raise ValueError(
+                "DSpark requires explicit layer_ids for aux hidden capture."
+            )
+        self.capture_aux_hidden_states = True
+        self.model.layers_to_capture = list(layer_ids)
 
 
 EntryClass = [Glm4MoeForCausalLM, GlmMoeDsaForCausalLM]

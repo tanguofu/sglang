@@ -46,10 +46,15 @@ docker run -d --name glm52_dspark \
     cp /data/dspark_v3_files/dspark_worker_v2.py /sgl-workspace/sglang/python/sglang/srt/speculative/dspark_worker_v2.py && \
     cp /data/dspark_v3_files/dspark_info.py /sgl-workspace/sglang/python/sglang/srt/speculative/dspark_info.py && \
     cp /data/dspark_v3_files/glm5_dspark.py /sgl-workspace/sglang/python/sglang/srt/models/glm5_dspark.py && \
+    cp /data/dspark_v3_files/deepseek_v2.py /sgl-workspace/sglang/python/sglang/srt/models/deepseek_v2.py && \
     cp /data/dspark_v3_files/dflash_worker_v2.py /sgl-workspace/sglang/python/sglang/srt/speculative/dflash_worker_v2.py && \
     cp /data/dspark_v3_files/spec_info.py /sgl-workspace/sglang/python/sglang/srt/speculative/spec_info.py && \
+    cp /data/dspark_v3_files/spec_registry.py /sgl-workspace/sglang/python/sglang/srt/speculative/spec_registry.py && \
+    cp /data/dspark_v3_files/spec_utils.py /sgl-workspace/sglang/python/sglang/srt/speculative/spec_utils.py && \
     cp /data/dspark_v3_files/speculative_hook.py /sgl-workspace/sglang/python/sglang/srt/arg_groups/speculative_hook.py && \
     cp /data/dspark_v3_files/server_args.py /sgl-workspace/sglang/python/sglang/srt/server_args.py && \
+    cp /data/dspark_v3_files/model_runner.py /sgl-workspace/sglang/python/sglang/srt/model_executor/model_runner.py && \
+    cp /data/dspark_v3_files/decode_cuda_graph_runner.py /sgl-workspace/sglang/python/sglang/srt/model_executor/runner/decode_cuda_graph_runner.py && \
     exec python3 -m sglang.launch_server \
       --model-path /data/models/GLM-5.2-FP8 \
       --tp-size 8 --pp-size 1 --trust-remote-code \
@@ -61,7 +66,7 @@ docker run -d --name glm52_dspark \
       --kv-cache-dtype auto \
       --max-running-requests 128 \
       --speculative-algorithm DSPARK \
-      --speculative-draft-model-path /data/checkpoints/deepspec/dspark_glm5_2_v7/step_latest \
+      --speculative-draft-model-path /data/checkpoints/deepspec/dspark_glm5_mock/step_latest \
       --speculative-num-steps 1 --speculative-num-draft-tokens 7 \
       --speculative-eagle-topk 1 \
       --reasoning-parser glm45 --tool-call-parser glm47 \
