@@ -340,6 +340,11 @@ class Glm5ForCausalLMDSpark(GlmMoeDsaForCausalLM):
 
         embed_tokens and lm_head (shared_head.head) are skipped — they
         are tied to the target model at runtime by DSparkWorkerV2.
+
+        Note: DeepseekV2ForCausalLM.load_weights (do_load_weights) already
+        calls post_load_weights internally, which handles kv_b_proj MLA
+        split (w_kc/w_vc) and FP8/INT8 requantization. This mirrors how
+        DeepseekV4ForCausalLMDSpark delegates to super().load_weights.
         """
         dspark_top_level = {
             "main_proj",
