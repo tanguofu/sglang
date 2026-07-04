@@ -1,0 +1,310 @@
+{
+  "benchmark": "AIME 2025",
+  "method": "greedy (temperature=0, max_tokens=32768)",
+  "correct": 25,
+  "total": 30,
+  "accuracy": 83.3,
+  "target": 99.2,
+  "results": [
+    {
+      "problem_idx": 1,
+      "expected": 70,
+      "predicted": 70,
+      "correct": true,
+      "elapsed": 9.8,
+      "finish_reason": "stop",
+      "content": "To find the bases $b > 9$ for which $17_b$ is a divisor of $97_b$, we first convert the numbers from base $b$ to base 10. \n\nThe number $17_b$ in base 10 is:\n$1 \\cdot b + 7 = b + 7$\n\nThe number $97_b$ in base 10 is:\n$9 \\cdot b + 7 = 9b + 7$\n\nWe are given that $b + 7$ divides $9b + 7$. We can simplify $9b + 7$ by rewriting it in terms of $b + 7$:\n$9b + 7 = 9(b + 7) - 63 + 7 = 9(b + 7) - 56$\n\nFor $b + 7$ to be a divisor of $9(b + 7) - 56$, it must also divide the remainder, $-56$. Therefore, $b + 7",
+      "reasoning_len": 3354
+    },
+    {
+      "problem_idx": 2,
+      "expected": 588,
+      "predicted": 588,
+      "correct": true,
+      "elapsed": 63.7,
+      "finish_reason": "stop",
+      "content": "To find the area of heptagon $AFNBCEM$, we can break it down into simpler geometric shapes whose areas we can determine. The heptagon is formed by the union of three regions: $\\triangle AFM$, quadrilateral $NEMF$, and quadrilateral $NECB$.\n\nFirst, let's establish the dimensions and area ratios in $\\triangle ABC$.\nWe are given the lengths along $\\overline{AB}$:\n$AD = 4$, $DE = 16$, $EB = 8 \\implies AB = 4 + 16 + 8 = 28$.\nAnd the lengths along $\\overline{AC}$:\n$AF = 13$, $FG = 52$, $GC = 26 \\impli",
+      "reasoning_len": 29775
+    },
+    {
+      "problem_idx": 3,
+      "expected": 16,
+      "predicted": 16,
+      "correct": true,
+      "elapsed": 14.9,
+      "finish_reason": "stop",
+      "content": "To find the number of different assignments of flavors to the 9 players, we first need to determine the possible combinations of the number of players who chose chocolate ($c$), vanilla ($v$), and strawberry ($s$). \n\nWe are given the following conditions:\n1. $c + v + s = 9$\n2. $c \\ge 1, v \\ge 1, s \\ge 1$ (At least one player chose each flavor)\n3. $c > v > s$ (More chose chocolate than vanilla, and more chose vanilla than strawberry)\n\nSince $s \\ge 1$ and $v > s$, the minimum value for $s$ is 1, a",
+      "reasoning_len": 5481
+    },
+    {
+      "problem_idx": 4,
+      "expected": 117,
+      "predicted": 117,
+      "correct": true,
+      "elapsed": 21.5,
+      "finish_reason": "stop",
+      "content": "To find the number of ordered pairs $(x,y)$ of integers between $-100$ and $100$, inclusive, that satisfy the equation $12x^2-xy-6y^2=0$, we can start by factoring the quadratic equation. \n\nWe can factor $12x^2-xy-6y^2$ as follows:\n$$12x^2-xy-6y^2 = 12x^2 - 9xy + 8xy - 6y^2$$\n$$= 3x(4x - 3y) + 2y(4x - 3y)$$\n$$= (3x + 2y)(4x - 3y)$$\n\nSetting this equal to zero gives:\n$$(3x + 2y)(4x - 3y) = 0$$\n\nThis means that either $3x + 2y = 0$ or $4x - 3y = 0$. We will find the number of valid integer pairs $",
+      "reasoning_len": 7660
+    },
+    {
+      "problem_idx": 5,
+      "expected": 279,
+      "predicted": 279,
+      "correct": true,
+      "elapsed": 48.6,
+      "finish_reason": "stop",
+      "content": "To find the number of eight-digit positive integers using the digits 1, 2, 3, 4, 5, 6, 7, 8 exactly once that are divisible by 22, we must ensure they are divisible by both 2 and 11.\n\n**Divisibility by 2:**\nFor a number to be divisible by 2, its last digit must be even. The available even digits are 2, 4, 6, and 8.\n\n**Divisibility by 11:**\nFor a number to be divisible by 11, the alternating sum of its digits must be a multiple of 11. Let the 8-digit number be $d_1 d_2 d_3 d_4 d_5 d_6 d_7 d_8$. T",
+      "reasoning_len": 18135
+    },
+    {
+      "problem_idx": 6,
+      "expected": 504,
+      "predicted": 504,
+      "correct": true,
+      "elapsed": 12.7,
+      "finish_reason": "stop",
+      "content": "To find $r^2+s^2$, we can use the properties of the given isosceles trapezoid and its inscribed circle.\n\n1. **Height of the trapezoid:**\nFor a circle to be inscribed in a trapezoid and tangent to all four sides, the diameter of the circle must be equal to the height of the trapezoid. \nGiven the radius $R = 3$, the height $h$ of the trapezoid is:\n$$h = 2R = 2 \\times 3 = 6$$\n\n2. **Sum of the parallel sides ($r+s$):**\nThe area of a trapezoid is given by the formula $A = \\frac{r+s}{2}h$. \nWe are giv",
+      "reasoning_len": 4819
+    },
+    {
+      "problem_idx": 7,
+      "expected": 821,
+      "predicted": 821,
+      "correct": true,
+      "elapsed": 133.1,
+      "finish_reason": "stop",
+      "content": "To find the probability that the last word listed alphabetically contains the letter $G$, we first need to understand how the words are formed and sorted.\n\nThe twelve letters $A, B, C, D, E, F, G, H, I, J, K, L$ correspond to the numbers $1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12$. \nThey are randomly grouped into 6 pairs. In each pair, the letters are placed in alphabetical order to form a two-letter word. This means each pair consists of a smaller element (the first letter) and a larger element (th",
+      "reasoning_len": 56655
+    },
+    {
+      "problem_idx": 8,
+      "expected": 77,
+      "predicted": 77,
+      "correct": true,
+      "elapsed": 27.1,
+      "finish_reason": "stop",
+      "content": "To find the values of $k$ for which the system has exactly one complex solution $z$, we can interpret the given equations geometrically in the complex plane, where $z = x + iy$.\n\nThe first equation is:\n$$|25+20i-z| = 5$$\nThis represents a circle centered at $C = (25, 20)$ with radius $R = 5$. In Cartesian coordinates, the equation of the circle is:\n$$(x-25)^2 + (y-20)^2 = 25$$\n\nThe second equation is:\n$$|z-4-k| = |z-3i-k|$$\nThis represents the set of points $z = (x, y)$ that are equidistant from",
+      "reasoning_len": 9804
+    },
+    {
+      "problem_idx": 9,
+      "expected": 62,
+      "predicted": null,
+      "correct": false,
+      "elapsed": 154.7,
+      "finish_reason": "length",
+      "content": "",
+      "reasoning_len": 60972
+    },
+    {
+      "problem_idx": 10,
+      "expected": 81,
+      "predicted": null,
+      "correct": false,
+      "elapsed": 158.0,
+      "finish_reason": "length",
+      "content": "",
+      "reasoning_len": 80875
+    },
+    {
+      "problem_idx": 11,
+      "expected": 259,
+      "predicted": 259,
+      "correct": true,
+      "elapsed": 97.5,
+      "finish_reason": "stop",
+      "content": "To find the sum of the $y$-coordinates of the intersection points of the parabola $x = 34y^2$ and the piecewise linear function $f(x)$, we first analyze the given function $f(x)$. The function is periodic with period 4, and its definition over one period is:\n\\[ f(x) = \\begin{cases} x & \\text{if } x \\in [-1, 1) \\\\ 2 - x & \\text{if } x \\in [1, 3) \\end{cases} \\]\nThe range of $f(x)$ is $[-1, 1]$. Since the parabola is given by $x = 34y^2$, we must have $x \\ge 0$. Also, for the intersection points, $",
+      "reasoning_len": 38947
+    },
+    {
+      "problem_idx": 12,
+      "expected": 510,
+      "predicted": 510,
+      "correct": true,
+      "elapsed": 94.6,
+      "finish_reason": "stop",
+      "content": "To find the area of the finite region, we start by analyzing the given inequalities:\n$$x-yz < y-zx < z-xy$$\nThis chain of inequalities is equivalent to two inequalities:\n1) $x-yz < y-zx \\implies x-y + z(x-y) < 0 \\implies (x-y)(1+z) < 0$\n2) $y-zx < z-xy \\implies y-z + x(y-z) < 0 \\implies (y-z)(1+x) < 0$\n\nBy transitivity, these inequalities also imply $x-yz < z-xy$, which gives:\n3) $(x-z)(1+y) < 0$\n\nWe are given the plane $x+y+z=75$. We want to find the region where all three inequalities are sati",
+      "reasoning_len": 41552
+    },
+    {
+      "problem_idx": 13,
+      "expected": 204,
+      "predicted": 204,
+      "correct": true,
+      "elapsed": 152.3,
+      "finish_reason": "stop",
+      "content": "To find the expected number of regions into which the 27 line segments divide the disk, we can use the formula for the number of regions formed by $N$ line segments in a circle:\n$$R = 1 + N + I$$\nwhere $N$ is the number of line segments, and $I$ is the number of intersections between the segments in the interior of the disk. This formula holds as long as no three segments intersect at the same interior point and no segment passes through an endpoint of another segment, which is almost surely tru",
+      "reasoning_len": 71022
+    },
+    {
+      "problem_idx": 14,
+      "expected": 60,
+      "predicted": null,
+      "correct": false,
+      "elapsed": 167.1,
+      "finish_reason": "length",
+      "content": "",
+      "reasoning_len": 73248
+    },
+    {
+      "problem_idx": 15,
+      "expected": 735,
+      "predicted": null,
+      "correct": false,
+      "elapsed": 160.9,
+      "finish_reason": "length",
+      "content": "",
+      "reasoning_len": 64236
+    },
+    {
+      "problem_idx": 16,
+      "expected": 468,
+      "predicted": 468,
+      "correct": true,
+      "elapsed": 14.0,
+      "finish_reason": "stop",
+      "content": "Let the line containing the points $A, B, C, D, E,$ and $F$ be the x-axis. We can set the coordinate of $A$ to be $0$. \nSince the points lie in the order $A, B, C, D, E, F$, we can find the coordinates of the other points using the given distances:\n- $AC = 26 \\implies C = 26$\n- $AF = 73 \\implies F = 73$\n- $DF = 33 \\implies D = F - 33 = 73 - 33 = 40$\n- $BD = 22 \\implies B = D - 22 = 40 - 22 = 18$\n- $CE = 31 \\implies E = C + 31 = 26 + 31 = 57$\n\nLet the coordinates of $G$ be $(x, y)$. We are given ",
+      "reasoning_len": 5024
+    },
+    {
+      "problem_idx": 17,
+      "expected": 49,
+      "predicted": 49,
+      "correct": true,
+      "elapsed": 16.2,
+      "finish_reason": "stop",
+      "content": "To find all positive integers $n$ such that $n+2$ divides $3(n+3)(n^2+9)$, we can first expand the expression $3(n+3)(n^2+9)$:\n$$ 3(n+3)(n^2+9) = 3(n^3 + 3n^2 + 9n + 27) $$\n\nWe want to find the remainder when this polynomial is divided by $n+2$. We can do this using polynomial long division or synthetic division. Let's divide $n^3 + 3n^2 + 9n + 27$ by $n+2$:\n1. $n^3 \\div n = n^2$. Multiply $n^2(n+2) = n^3 + 2n^2$. Subtracting gives $n^2 + 9n$.\n2. $n^2 \\div n = n$. Multiply $n(n+2) = n^2 + 2n$. S",
+      "reasoning_len": 5431
+    },
+    {
+      "problem_idx": 18,
+      "expected": 82,
+      "predicted": 82,
+      "correct": true,
+      "elapsed": 104.2,
+      "finish_reason": "stop",
+      "content": "To find the number of valid colorings of the $2 \\times 2$ grid, we can set up a system of equations based on the conditions given. \n\nLet the 12 unit line segments be represented by variables $x \\in \\{0, 1\\}$, where $1$ represents a red segment and $0$ represents a blue segment. \nLet the horizontal segments from top to bottom be:\n- Top: $a, b$\n- Middle: $c, d$\n- Bottom: $e, f$\n\nAnd the vertical segments from left to right be:\n- Left: $g, h$\n- Middle: $i, j$\n- Right: $k, l$\n\nThe $2 \\times 2$ grid ",
+      "reasoning_len": 45118
+    },
+    {
+      "problem_idx": 19,
+      "expected": 106,
+      "predicted": 106,
+      "correct": true,
+      "elapsed": 23.0,
+      "finish_reason": "stop",
+      "content": "To find the value of the given product, we can simplify the general $k$-th term of the product. The product is given by:\n$$\\prod_{k=4}^{63} \\frac{\\log_k \\left(5^{k^2 - 1}\\right)}{\\log_{k+1} \\left(5^{k^2 - 4}\\right)}$$\n\nUsing the logarithm power rule, $\\log_a(b^c) = c \\log_a(b)$, we can rewrite the $k$-th term as:\n$$\\frac{(k^2 - 1) \\log_k 5}{(k^2 - 4) \\log_{k+1} 5}$$\n\nNext, we use the change of base formula, $\\log_a b = \\frac{\\ln b}{\\ln a}$, to change the base of the logarithms to $e$:\n$$\\frac{(k",
+      "reasoning_len": 8134
+    },
+    {
+      "problem_idx": 20,
+      "expected": 336,
+      "predicted": 336,
+      "correct": true,
+      "elapsed": 131.8,
+      "finish_reason": "stop",
+      "content": "To find the value of $\\wideparen{DE} + 2 \\cdot \\wideparen{HJ} + 3 \\cdot \\wideparen{FG}$, we first determine the positions of $G$, $H$, and $J$. \nThe circumcircle of $\\triangle DEF$ is the nine-point circle of $\\triangle ABC$. Thus, it passes through the midpoints of the sides ($D, E, F$) and the feet of the altitudes. Since $G$ is on $\\overline{BD} \\subset \\overline{BC}$, $H$ is on $\\overline{AE} \\subset \\overline{AC}$, and $J$ is on $\\overline{AF} \\subset \\overline{AB}$, the points $G$, $H$, an",
+      "reasoning_len": 65561
+    },
+    {
+      "problem_idx": 21,
+      "expected": 293,
+      "predicted": 293,
+      "correct": true,
+      "elapsed": 21.8,
+      "finish_reason": "stop",
+      "content": "To find the area of the rectangle $EFGH$, we first set up a coordinate system. \nLet the center of $\\omega_1$, point $A$, be at the origin $(0,0)$. \nSince $\\omega_1$ has radius $6$ and is internally tangent to $\\omega_2$ (which has radius $15$) at point $B$, the distance between their centers is $15 - 6 = 9$. \nLet the point of tangency $B$ be at $(6,0)$. Then the center of $\\omega_2$, let's call it $O$, is at $(-9,0)$.\n\nWe are given that $\\overline{BC}$ is a diameter of $\\omega_2$. Since $B = (6,",
+      "reasoning_len": 7829
+    },
+    {
+      "problem_idx": 22,
+      "expected": 237,
+      "predicted": 237,
+      "correct": true,
+      "elapsed": 41.7,
+      "finish_reason": "stop",
+      "content": "To find the probability that a randomly selected subset $B$ of the set of positive integer divisors of $2025$ has a least common multiple (LCM) of $2025$, we first determine the prime factorization of $2025$:\n$$2025 = 45^2 = (3^2 \\cdot 5)^2 = 3^4 \\cdot 5^2$$\nThe positive divisors of $2025$ are of the form $3^a \\cdot 5^b$, where $0 \\le a \\le 4$ and $0 \\le b \\le 2$. The total number of divisors is $(4+1)(2+1) = 15$. Thus, the set $A$ contains $15$ elements, and the total number of possible subsets",
+      "reasoning_len": 17492
+    },
+    {
+      "problem_idx": 23,
+      "expected": 610,
+      "predicted": 610,
+      "correct": true,
+      "elapsed": 111.1,
+      "finish_reason": "stop",
+      "content": "To determine the number of values of $N$ between $1$ and $1000$ inclusive for which the greedy algorithm succeeds, we first analyze how the greedy algorithm operates and when it can fail.\n\nThe greedy algorithm for making $N$ cents using $25$-cent, $10$-cent, and $1$-cent coins will use:\n- $q = \\lfloor N/25 \\rfloor$ quarters\n- $d = \\lfloor (N \\pmod{25})/10 \\rfloor$ dimes\n- $p = N \\pmod{10}$ pennies\n\nThe total number of coins used by the greedy algorithm is $G(N) = q + d + p$.\nThe algorithm fails ",
+      "reasoning_len": 43999
+    },
+    {
+      "problem_idx": 24,
+      "expected": 149,
+      "predicted": 149,
+      "correct": true,
+      "elapsed": 69.8,
+      "finish_reason": "stop",
+      "content": "To find the number of values of $x$ in the interval $0 < x < 2\\pi$ where $f(x) = \\sin(7\\pi \\sin(5x)) = 0$, we set the argument of the sine function to an integer multiple of $\\pi$:\n$$7\\pi \\sin(5x) = k\\pi \\implies \\sin(5x) = \\frac{k}{7}$$\nSince the range of the sine function is $[-1, 1]$, the integer $k$ can take values from $-7$ to $7$, giving $15$ possible values for $k$. \n\nLet $u = 5x$. As $x$ ranges over $(0, 2\\pi)$, $u$ ranges over $(0, 10\\pi)$, which covers exactly $5$ full periods of the s",
+      "reasoning_len": 27888
+    },
+    {
+      "problem_idx": 25,
+      "expected": 907,
+      "predicted": null,
+      "correct": false,
+      "elapsed": 153.0,
+      "finish_reason": "length",
+      "content": "",
+      "reasoning_len": 60341
+    },
+    {
+      "problem_idx": 26,
+      "expected": 113,
+      "predicted": 113,
+      "correct": true,
+      "elapsed": 65.6,
+      "finish_reason": "stop",
+      "content": "To find the number of ways to draw 12 segments of equal lengths such that each vertex of a regular 24-gon is an endpoint of exactly one segment, we are essentially looking for the number of perfect matchings of the 24 vertices where all edges in the matching have the exact same length.\n\nLet the vertices of the 24-gon be labeled $0, 1, 2, \\dots, 23$ in order. The length of a segment connecting two vertices is determined by the shortest distance along the perimeter of the polygon. The possible len",
+      "reasoning_len": 29942
+    },
+    {
+      "problem_idx": 27,
+      "expected": 19,
+      "predicted": 19,
+      "correct": true,
+      "elapsed": 89.0,
+      "finish_reason": "stop",
+      "content": "To find the value of $A_1 A_2 + A_1 A_{11}$, let's analyze the given properties of the polygon. \nLet $r_i = A_1 A_i$ for $i = 1, 2, \\dots, 11$. \nThe area of $\\triangle A_i A_1 A_{i+1}$ is given by:\n$$ \\frac{1}{2} r_i r_{i+1} \\sin(\\angle A_i A_1 A_{i+1}) = 1 $$\nWe are given that $\\cos(\\angle A_i A_1 A_{i+1}) = \\frac{12}{13}$. Since the angle is between $0$ and $\\pi$, its sine is positive:\n$$ \\sin(\\angle A_i A_1 A_{i+1}) = \\sqrt{1 - \\left(\\frac{12}{13}\\right)^2} = \\frac{5}{13} $$\nSubstituting this",
+      "reasoning_len": 37694
+    },
+    {
+      "problem_idx": 28,
+      "expected": 248,
+      "predicted": 248,
+      "correct": true,
+      "elapsed": 150.3,
+      "finish_reason": "stop",
+      "content": "To find the remainder when $m+n$ is divided by $1000$, we first analyze the given sequence:\n$$x_{k+1} = \\frac{1}{3}\\left(x_k + \\frac{1}{x_k} - 1\\right)$$\nLet $x_k = \\frac{u_k}{v_k}$, where $u_k$ and $v_k$ are relatively prime positive integers. Substituting this into the recurrence relation, we get:\n$$x_{k+1} = \\frac{1}{3}\\left(\\frac{u_k}{v_k} + \\frac{v_k}{u_k} - 1\\right) = \\frac{u_k^2 + v_k^2 - u_k v_k}{3 u_k v_k}$$\nThis suggests the recurrence relations for the numerator and denominator:\n$$u_{",
+      "reasoning_len": 54463
+    },
+    {
+      "problem_idx": 29,
+      "expected": 104,
+      "predicted": 104,
+      "correct": true,
+      "elapsed": 96.8,
+      "finish_reason": "stop",
+      "content": "To find the area of the quadrilateral $BKLC$, we can set up a coordinate system. Let $A$ be the origin $(0,0)$. Since $\\triangle ABC$ is a right triangle with $\\angle A = 90^\\circ$, we can place $B$ on the x-axis and $C$ on the y-axis. Let $B = (b, 0)$ and $C = (0, c)$. We are given $BC = 38$, so by the Pythagorean theorem:\n$$b^2 + c^2 = 38^2 = 1444$$\n\nWe are given that $AK = BK = 14$. The locus of points equidistant from $A$ and $B$ is the perpendicular bisector of $AB$. Thus, the x-coordinate ",
+      "reasoning_len": 43348
+    },
+    {
+      "problem_idx": 30,
+      "expected": 240,
+      "predicted": 240,
+      "correct": true,
+      "elapsed": 70.0,
+      "finish_reason": "stop",
+      "content": "To find the values of $k$ for which the function \n$$f(x) = \\frac{(x - 18)(x - 72)(x - 98)(x - k)}{x}$$\nachieves its minimum value at exactly two positive real numbers, we can analyze the function's behavior. \n\nLet $g(x) = (x - 18)(x - 72)(x - 98)(x - k) = x^4 - S_1 x^3 + S_2 x^2 - S_3 x + S_4$, so $f(x) = \\frac{g(x)}{x}$.\nThe minimum of $f(x)$ occurs where $f'(x) = 0$. Using the quotient rule, we get:\n$$f'(x) = \\frac{x g'(x) - g(x)}{x^2}$$\nSetting the numerator to zero gives $x g'(x) - g(x) = 0$",
+      "reasoning_len": 28110
+    }
+  ]
+}
