@@ -1,0 +1,42 @@
+[
+  {
+    "concurrency": 1,
+    "wall_time": 9.484120845794678,
+    "completion_tokens": 1689,
+    "reasoning_tokens": 1082,
+    "total_output": 2771,
+    "output_throughput": 292.17257403765365,
+    "completion_throughput": 178.0871445505583,
+    "ok": 1
+  },
+  {
+    "concurrency": 2,
+    "wall_time": 11.10923433303833,
+    "completion_tokens": 3532,
+    "reasoning_tokens": 2355,
+    "total_output": 5887,
+    "output_throughput": 529.9195087182871,
+    "completion_throughput": 317.9337021900782,
+    "ok": 2
+  },
+  {
+    "concurrency": 4,
+    "wall_time": 13.431743621826172,
+    "completion_tokens": 7850,
+    "reasoning_tokens": 6313,
+    "total_output": 14163,
+    "output_throughput": 1054.4424014307092,
+    "completion_throughput": 584.4364083337617,
+    "ok": 4
+  },
+  {
+    "concurrency": 8,
+    "wall_time": 15.367095708847046,
+    "completion_tokens": 14153,
+    "reasoning_tokens": 9361,
+    "total_output": 23514,
+    "output_throughput": 1530.1525054251254,
+    "completion_throughput": 920.9938083389385,
+    "ok": 8
+  }
+]
