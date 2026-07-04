@@ -1,0 +1,34 @@
+{
+  "HLE": {
+    "correct": 7,
+    "total": 10,
+    "accuracy": 70.0,
+    "target": 40.5
+  },
+  "AIME": {
+    "correct": 6,
+    "total": 10,
+    "accuracy": 60.0,
+    "target": 99.2
+  },
+  "SWE": {
+    "correct": 2,
+    "total": 8,
+    "accuracy": 25.0,
+    "target": 62.1
+  },
+  "Terminal": {
+    "correct": 8,
+    "total": 10,
+    "accuracy": 80.0,
+    "target": 81.0
+  },
+  "LongContext_35K": {
+    "elapsed": 21.972262144088745,
+    "answer": ""
+  },
+  "LongContext_105K": {
+    "elapsed": 12.765807867050171,
+    "answer": ""
+  }
+}
