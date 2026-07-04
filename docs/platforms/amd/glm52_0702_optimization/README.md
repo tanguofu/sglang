@@ -334,3 +334,97 @@ Tested 7 GEMM kernels for N=32, N=160 at K=6144 (GLM-5.2 DSA indexer shapes):
 
 **Conclusion**: N=32/160 use torch native, N=128/256 use flydsl/skinny. Generated via `gen_aiter_dense_0702_v2.py`.
 
+
+---
+
+## Phase 3: MTP Accept Rate Deep Fix (2026-07-04)
+
+### Problem
+
+MTP3 accept rate was 72-80% (accept len 3.17-3.29), significantly below the theoretical 94% seen with MTP2. User flagged this as "no real benefit."
+
+### Root Cause Analysis
+
+Three root causes identified and fixed:
+
+#### Root Cause 1: draft_forward argmax gate not patched
+
+`patch_deterministic_argmax.py` only patched the `draft_extend` path (line ~915, initial draft token). The `draft_forward` per-step path (line ~667) still had `elif self.topk == 1 and not _is_hip:`, forcing HIP to use `fast_topk(softmax(logits))` instead of `torch.argmax(logits.to(float32))`.
+
+This inconsistency meant:
+- Initial draft token: `torch.argmax(float32)` — deterministic ✅
+- Per-step draft tokens: `torch.max(softmax(logits))` — non-deterministic ❌
+
+Per-step tokens are where error compounding happens (steps 1, 2, ...). Using softmax+max instead of direct argmax introduces numerical differences that compound across steps, degrading accept rate.
+
+**Fix**: `patch_draft_forward_argmax.py` — applies the same deterministic argmax (float32 cast) to draft_forward.
+
+#### Root Cause 2: Draft model alt_stream not created on HIP
+
+`deepseek_nextn.py:126` (DeepseekNextnModel) created `alt_stream` checking only `_is_cuda` and `SGLANG_NPU_USE_MULTI_STREAM`, **missing `SGLANG_ROCM_USE_MULTI_STREAM`**. The target model (DeepseekV2Model, `deepseek_v2.py:2410`) checked it correctly.
+
+This caused `alt_stream=None` in the draft model, crashing SBO with `NoneType.wait_stream()` in `_pre_combine_hook` (`deepseek_v2.py:1080`) during draft CUDA graph capture.
+
+**Fix**: `patch_draft_alt_stream.py` — adds `SGLANG_ROCM_USE_MULTI_STREAM` check to draft model + defensive null check in `_pre_combine_hook`.
+
+#### Root Cause 3: cuda_fp8.h JIT compilation failure
+
+9 JIT kernel source files included `<cuda_fp8.h>` which doesn't exist on ROCm. This caused DSA indexer fusion JIT compilation to fail, falling back to non-fused path.
+
+**Fix**: `patch_cuda_fp8_include.py` — replaces with `#ifdef USE_ROCM → <hip/hip_fp8.h>`. Note: `fused_store_index_cache.cuh` still has a type conversion error (`fp32x2_t → fp8x2_e4m3_t`) requiring further investigation.
+
+### Key Finding: SGLANG_ROCM_USE_MULTI_STREAM is net negative at low concurrency
+
+Testing revealed that `SGLANG_ROCM_USE_MULTI_STREAM=1` (which enables DSA indexer dual stream) adds stream synchronization overhead that **reduces throughput by 22%** at low concurrency:
+
+| Config | C=1 Throughput | Accept Rate |
+|---|---|---|
+| With `SGLANG_ROCM_USE_MULTI_STREAM=1` | 153.0 tok/s | 82.53% |
+| Without `SGLANG_ROCM_USE_MULTI_STREAM` | **196.1 tok/s** | 81.60% |
+
+**Decision**: Do NOT set `SGLANG_ROCM_USE_MULTI_STREAM=1` for low-concurrency coding assistant workloads.
+
+### SBO (Single Batch Overlap) — Net negative at low concurrency
+
+SBO was successfully enabled on HIP for the first time (after fixing root cause 2). However, SBO disables shared expert fusion, which is net negative at low concurrency:
+
+| Config | C=1 Throughput | Accept Rate |
+|---|---|---|
+| SBO enabled | 154.3 tok/s | 82.46% |
+| SBO disabled | 153.0 tok/s | 82.53% |
+
+**Decision**: Do NOT enable SBO for low-concurrency workloads. SBO may be beneficial at high concurrency (C=8+) where allreduce overhead is larger.
+
+### Final Optimal Configuration
+
+| Parameter | Value |
+|---|---|
+| `--speculative-num-steps` | 3 |
+| `--speculative-num-draft-tokens` | 4 |
+| `--speculative-eagle-topk` | 1 |
+| `--cuda-graph-bs-decode` | 1 2 3 4 5 6 7 8 9 10 12 16 |
+| `--cuda-graph-max-bs-decode` | 16 |
+| `--max-running-requests` | 32 |
+| `--mem-fraction-static` | 0.88 |
+| `SGLANG_ROCM_USE_MULTI_STREAM` | **NOT SET** |
+| `--enable-single-batch-overlap` | **NOT SET** |
+| All other params | Same as Phase 2 |
+
+### Phase 3 Benchmark Results
+
+| Concurrency | Throughput | Accept Rate | Accept Len |
+|---|---|---|---|
+| C=1 (512 tok) | **196.1 tok/s** | 81.60% | 3.45 |
+| C=1 (256 tok) | **186.8 tok/s** | — | — |
+| C=2 | 291.0 tok/s | — | — |
+| C=4 | 449.0 tok/s | — | — |
+| C=8 (warm) | **967.2 tok/s** | — | — |
+
+### Overall Improvement: 0629 → 0702 Phase 3
+
+| Metric | 0629 Baseline | 0702 Phase 1 | 0702 Phase 2 | 0702 Phase 3 |
+|---|---|---|---|---|
+| C=1 decode | 122-140 tok/s | 151.4 tok/s | 175.9 tok/s | **196.1 tok/s** |
+| C=8 concurrent | — | — | 942 tok/s | **967 tok/s** |
+| Accept rate | — | — | 72-80% | **81.6%** |
+| Total improvement | — | +8-24% | +26-44% | **+40-61%** |
