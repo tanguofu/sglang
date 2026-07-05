@@ -1,0 +1,115 @@
+{
+  "hostname": "node1",
+  "results": [
+    {
+      "test": "decode_1024",
+      "concurrency": 1,
+      "wall": 6.7,
+      "completion_tokens": 1024,
+      "reasoning_tokens": 1024,
+      "output_throughput": 305.5,
+      "completion_throughput": 152.7,
+      "ok": 1
+    },
+    {
+      "test": "decode_1024",
+      "concurrency": 2,
+      "wall": 6.8,
+      "completion_tokens": 2048,
+      "reasoning_tokens": 2052,
+      "output_throughput": 601.2,
+      "completion_throughput": 300.3,
+      "ok": 2
+    },
+    {
+      "test": "decode_1024",
+      "concurrency": 4,
+      "wall": 7.4,
+      "completion_tokens": 4096,
+      "reasoning_tokens": 4099,
+      "output_throughput": 1104.5,
+      "completion_throughput": 552.0,
+      "ok": 4
+    },
+    {
+      "test": "decode_1024",
+      "concurrency": 8,
+      "wall": 9.3,
+      "completion_tokens": 8192,
+      "reasoning_tokens": 8203,
+      "output_throughput": 1767.0,
+      "completion_throughput": 882.9,
+      "ok": 8
+    },
+    {
+      "test": "decode_2048",
+      "concurrency": 1,
+      "wall": 13.0,
+      "completion_tokens": 2048,
+      "reasoning_tokens": 1342,
+      "output_throughput": 260.0,
+      "completion_throughput": 157.1,
+      "ok": 1
+    },
+    {
+      "test": "decode_2048",
+      "concurrency": 4,
+      "wall": 15.2,
+      "completion_tokens": 8192,
+      "reasoning_tokens": 6269,
+      "output_throughput": 949.9,
+      "completion_throughput": 538.1,
+      "ok": 4
+    },
+    {
+      "test": "decode_2048",
+      "concurrency": 8,
+      "wall": 18.5,
+      "completion_tokens": 16384,
+      "reasoning_tokens": 12398,
+      "output_throughput": 1553.7,
+      "completion_throughput": 884.4,
+      "ok": 8
+    },
+    {
+      "test": "qa_thinking",
+      "concurrency": 1,
+      "wall": 3.2,
+      "completion_tokens": 548,
+      "reasoning_tokens": 301,
+      "output_throughput": 261.3,
+      "completion_throughput": 168.7,
+      "ok": 1
+    },
+    {
+      "test": "qa_thinking",
+      "concurrency": 4,
+      "wall": 6.2,
+      "completion_tokens": 3052,
+      "reasoning_tokens": 1806,
+      "output_throughput": 780.1,
+      "completion_throughput": 490.1,
+      "ok": 4
+    },
+    {
+      "test": "medium_ctx",
+      "concurrency": 1,
+      "wall": 2.9,
+      "completion_tokens": 512,
+      "reasoning_tokens": 513,
+      "output_throughput": 358.5,
+      "completion_throughput": 179.1,
+      "ok": 1
+    },
+    {
+      "test": "medium_ctx",
+      "concurrency": 4,
+      "wall": 3.3,
+      "completion_tokens": 2048,
+      "reasoning_tokens": 2055,
+      "output_throughput": 1251.5,
+      "completion_throughput": 624.7,
+      "ok": 4
+    }
+  ]
+}
