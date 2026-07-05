@@ -1,0 +1,409 @@
+{
+  "benchmark": "AIME 2025",
+  "greedy_correct": 22,
+  "greedy_accuracy": 73.3,
+  "maj4_correct": 29,
+  "maj4_accuracy": 96.7,
+  "total": 30,
+  "target": 99.2,
+  "greedy_results": [
+    {
+      "idx": 1,
+      "expected": 70,
+      "predicted": 70,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 9.9,
+      "content": "To find the bases $b > 9$ for which $17_b$ is a divisor of $97_b$, we first convert the numbers from base $b$ to base 10:\n$$17_b = 1 \\cdot b + 7 = b + 7$$\n$$97_b = 9 \\cdot b + 7 = 9b + 7$$\n\nWe are given that $b + 7$ divides $9b + 7$. We can simplify this division by rewriting $9b + 7$ in terms of $b",
+      "reasoning_len": 3265
+    },
+    {
+      "idx": 2,
+      "expected": 588,
+      "predicted": 588,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 69.8,
+      "content": "To find the area of heptagon $AFNBCEM$, we first determine the positions of the given points along the sides of $\\triangle ABC$.\n\nThe length of $AB$ is $AD + DE + EB = 4 + 16 + 8 = 28$.\nThe length of $AC$ is $AF + FG + GC = 13 + 52 + 26 = 91$.\n\nThe positions of the points as fractions of the side le",
+      "reasoning_len": 27141
+    },
+    {
+      "idx": 3,
+      "expected": 16,
+      "predicted": 16,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 13.0,
+      "content": "To find the number of different assignments of flavors to the 9 players, we first need to determine the possible combinations of the number of players who chose chocolate ($c$), vanilla ($v$), and strawberry ($s$). \n\nWe are given the following conditions:\n1. $c + v + s = 9$\n2. $c \\ge 1$, $v \\ge 1$, ",
+      "reasoning_len": 4886
+    },
+    {
+      "idx": 4,
+      "expected": 117,
+      "predicted": 117,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 25.6,
+      "content": "To find the number of ordered pairs $(x,y)$ of integers such that $-100 \\le x \\le 100$, $-100 \\le y \\le 100$, and $12x^2 - xy - 6y^2 = 0$, we can start by factoring the given quadratic equation.\n\nThe equation is:\n$$12x^2 - xy - 6y^2 = 0$$\n\nWe can factor this by grouping or by treating it as a quadra",
+      "reasoning_len": 9820
+    },
+    {
+      "idx": 5,
+      "expected": 279,
+      "predicted": 279,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 75.9,
+      "content": "To find the number of 8-digit positive integers using the digits 1 through 8 exactly once that are divisible by 22, we must ensure they are divisible by both 2 and 11.\n\n**Step 1: Divisibility by 2**\nFor a number to be divisible by 2, its last digit must be even. The available even digits are 2, 4, 6",
+      "reasoning_len": 31261
+    },
+    {
+      "idx": 6,
+      "expected": 504,
+      "predicted": 504,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 10.6,
+      "content": "To find $r^2 + s^2$, we can use the properties of the given isosceles trapezoid and its inscribed circle. \n\n1. **Find the height of the trapezoid:**\nSince the trapezoid has an inscribed circle tangent to all four sides, the distance between the parallel sides (which are tangent to the top and bottom",
+      "reasoning_len": 3557
+    },
+    {
+      "idx": 7,
+      "expected": 821,
+      "predicted": null,
+      "correct": false,
+      "finish_reason": "length",
+      "elapsed": 310.7,
+      "content": "",
+      "reasoning_len": 171948
+    },
+    {
+      "idx": 8,
+      "expected": 77,
+      "predicted": 75,
+      "correct": false,
+      "finish_reason": "stop",
+      "elapsed": 30.3,
+      "content": "To find the values of $k$ for which the system has exactly one complex solution $z$, we first analyze the two equations. Let $z = x + iy$.\n\nThe first equation is $|25+20i-z| = 5$, which can be rewritten as:\n$$|z - (25+20i)| = 5$$\nThis represents a circle in the complex plane centered at $C = (25, 20",
+      "reasoning_len": 12295
+    },
+    {
+      "idx": 9,
+      "expected": 62,
+      "predicted": null,
+      "correct": false,
+      "finish_reason": "length",
+      "elapsed": 307.6,
+      "content": "",
+      "reasoning_len": 113352
+    },
+    {
+      "idx": 10,
+      "expected": 81,
+      "predicted": null,
+      "correct": false,
+      "finish_reason": "length",
+      "elapsed": 313.0,
+      "content": "",
+      "reasoning_len": 185270
+    },
+    {
+      "idx": 11,
+      "expected": 259,
+      "predicted": null,
+      "correct": false,
+      "finish_reason": "length",
+      "elapsed": 306.7,
+      "content": "",
+      "reasoning_len": 135959
+    },
+    {
+      "idx": 12,
+      "expected": 510,
+      "predicted": 510,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 143.6,
+      "content": "To find the area of the finite region, we first simplify the given inequalities using the plane equation $x+y+z=75$, which means $z = 75-x-y$.\n\nThe given inequalities are $x-yz < y-zx < z-xy$. We can split this into two parts:\n1) $x-yz < y-zx \\implies x - y + zx - yz < 0 \\implies (x-y) + z(x-y) < 0 ",
+      "reasoning_len": 61338
+    },
+    {
+      "idx": 13,
+      "expected": 204,
+      "predicted": 204,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 147.3,
+      "content": "To find the expected number of regions into which the 27 line segments divide the disk, we can use the formula for the number of regions formed by $n$ line segments in a circle. \nIf $V_i$ is the number of interior intersection points, the number of regions $R$ is given by:\n$$R = n + 1 + V_i$$\nThis f",
+      "reasoning_len": 73114
+    },
+    {
+      "idx": 14,
+      "expected": 60,
+      "predicted": null,
+      "correct": false,
+      "finish_reason": "length",
+      "elapsed": 321.8,
+      "content": "",
+      "reasoning_len": 150573
+    },
+    {
+      "idx": 15,
+      "expected": 735,
+      "predicted": 771,
+      "correct": false,
+      "finish_reason": "stop",
+      "elapsed": 204.5,
+      "content": "To find the number of ordered triples of positive integers $(a, b, c)$ such that $a, b, c \\le 3^6$ and $a^3 + b^3 + c^3 \\equiv 0 \\pmod{3^7}$, we can use the discrete Fourier transform. Let $\\omega = e^{2\\pi i / 3^7}$. The number of such triples is given by\n$$ N = \\frac{1}{3^7} \\sum_{t=0}^{3^7-1} S(t",
+      "reasoning_len": 74547
+    },
+    {
+      "idx": 16,
+      "expected": 468,
+      "predicted": 468,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 19.0,
+      "content": "To find the area of $\\triangle BGE$, we first determine the distances between the consecutive points on the line. Let the distances between the points be:\n$AB = x_1$\n$BC = x_2$\n$CD = x_3$\n$DE = x_4$\n$EF = x_5$\n\nFrom the given information, we have the following system of equations:\n1) $x_1 + x_2 = AC",
+      "reasoning_len": 6500
+    },
+    {
+      "idx": 17,
+      "expected": 49,
+      "predicted": 49,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 17.1,
+      "content": "To find all positive integers $n$ such that $n+2$ divides $3(n+3)(n^2+9)$, we can use polynomial division or modular arithmetic. \n\nFirst, let's set $d = n+2$. Since $n$ is a positive integer, we have $n \\ge 1$, which means $d \\ge 3$.\nWe can rewrite the expression $3(n+3)(n^2+9)$ in terms of $d$:\n1. ",
+      "reasoning_len": 5890
+    },
+    {
+      "idx": 18,
+      "expected": 82,
+      "predicted": 82,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 119.4,
+      "content": "To find the number of valid colorings of the $2 \\times 2$ grid, we can represent the grid as a system of equations. \n\nLet the 12 unit line segments be variables that can take the value $1$ (for red) or $0$ (for blue). The grid consists of 4 unit squares, and the condition that each square has exactl",
+      "reasoning_len": 50103
+    },
+    {
+      "idx": 19,
+      "expected": 106,
+      "predicted": 106,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 23.4,
+      "content": "To find the value of the given product, we can analyze the general term in the product. The product is given by:\n$$ \\prod_{k=4}^{63} \\frac{\\log_k \\left(5^{k^2 - 1}\\right)}{\\log_{k+1} \\left(5^{k^2 - 4}\\right)} $$\n\nUsing the logarithm power rule, $\\log_a(b^c) = c \\log_a b$, we can rewrite the general ",
+      "reasoning_len": 8604
+    },
+    {
+      "idx": 20,
+      "expected": 336,
+      "predicted": 336,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 169.4,
+      "content": "To find the value of $\\wideparen{DE} + 2 \\cdot \\wideparen{HJ} + 3 \\cdot \\wideparen{FG}$, we first determine the positions of the points $G, H, J$ on the circumcircle of $\\triangle DEF$.\n\nThe circle passing through the midpoints $D, E, F$ of $\\triangle ABC$ is the nine-point circle of $\\triangle ABC$",
+      "reasoning_len": 83641
+    },
+    {
+      "idx": 21,
+      "expected": 293,
+      "predicted": 293,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 28.1,
+      "content": "To find the area of rectangle $EFGH$, we first set up a coordinate system. \nLet the center of $\\omega_1$, point $A$, be at the origin $(0,0)$. \nSince $\\omega_1$ has radius $6$ and is internally tangent to $\\omega_2$ at $B$, we can place $B$ at $(6,0)$. \nThe radius of $\\omega_2$ is $15$, so its cente",
+      "reasoning_len": 10539
+    },
+    {
+      "idx": 22,
+      "expected": 237,
+      "predicted": 237,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 24.0,
+      "content": "To find the probability that a randomly selected subset $B$ of $A$ is nonempty and has a least common multiple (LCM) of $2025$, we first determine the prime factorization of $2025$.\n$$2025 = 45^2 = (3^2 \\times 5)^2 = 3^4 \\times 5^2$$\nThe positive integer divisors of $2025$ are of the form $3^a \\time",
+      "reasoning_len": 9693
+    },
+    {
+      "idx": 23,
+      "expected": 610,
+      "predicted": 610,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 122.5,
+      "content": "To determine the number of values of $N$ between $1$ and $1000$ inclusive for which the greedy algorithm succeeds, we analyze the number of coins used by the greedy algorithm and compare it to the optimal number of coins.\n\nLet the greedy algorithm choose $q$ 25-cent coins, $d$ 10-cent coins, and $p$",
+      "reasoning_len": 50845
+    },
+    {
+      "idx": 24,
+      "expected": 149,
+      "predicted": 149,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 60.5,
+      "content": "To find the number of values of $x$ in the interval $0 < x < 2\\pi$ where $f(x) = \\sin(7\\pi \\sin(5x)) = 0$, we set the argument of the sine function to an integer multiple of $\\pi$:\n$$7\\pi \\sin(5x) = k\\pi \\implies \\sin(5x) = \\frac{k}{7}$$\nSince the range of the sine function is $[-1, 1]$, the integer",
+      "reasoning_len": 24326
+    },
+    {
+      "idx": 25,
+      "expected": 907,
+      "predicted": 907,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 154.9,
+      "content": "To find the number of subsets of 8 chairs out of 16 such that no person sits next to two other people, we are looking for the number of ways to choose 8 chairs such that there are no 3 consecutive chairs selected.\n\nLet the 8 selected chairs be grouped into blocks of size 1 or 2. Since no 3 chairs ca",
+      "reasoning_len": 68361
+    },
+    {
+      "idx": 26,
+      "expected": 113,
+      "predicted": 113,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 65.9,
+      "content": "To find the number of ways to draw 12 segments of equal lengths such that each vertex of a regular 24-gon is an endpoint of exactly one segment, we are looking for the number of perfect matchings in the complete graph on 24 vertices where all edges in the matching have the same length.\n\nLet the vert",
+      "reasoning_len": 31071
+    },
+    {
+      "idx": 27,
+      "expected": 19,
+      "predicted": 19,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 109.9,
+      "content": "To find the value of $A_1 A_2 + A_1 A_{11}$, let's analyze the given properties of the polygon $A_1 A_2 \\ldots A_{11}$.\n\nLet $x_i = A_1 A_i$ for $i = 2, 3, \\ldots, 11$. \nThe area of $\\triangle A_i A_1 A_{i+1}$ is given by:\n$$\\text{Area} = \\frac{1}{2} x_i x_{i+1} \\sin(\\angle A_i A_1 A_{i+1}) = 1$$\nWe",
+      "reasoning_len": 47918
+    },
+    {
+      "idx": 28,
+      "expected": 248,
+      "predicted": null,
+      "correct": false,
+      "finish_reason": "length",
+      "elapsed": 308.0,
+      "content": "",
+      "reasoning_len": 128492
+    },
+    {
+      "idx": 29,
+      "expected": 104,
+      "predicted": 104,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 75.2,
+      "content": "To find the area of the quadrilateral $BKLC$, we can set up a coordinate system. Let $A$ be the origin $(0,0)$. Since $\\triangle ABC$ is a right triangle with $\\angle A = 90^\\circ$, we can place $B$ on the x-axis and $C$ on the y-axis. Let $B = (b, 0)$ and $C = (0, c)$. We are given that $BC = 38$, ",
+      "reasoning_len": 31379
+    },
+    {
+      "idx": 30,
+      "expected": 240,
+      "predicted": 240,
+      "correct": true,
+      "finish_reason": "stop",
+      "elapsed": 68.9,
+      "content": "To find the values of $k$ for which the function $f(x) = \\frac{(x - 18)(x - 72)(x - 98)(x - k)}{x}$ achieves its minimum value at exactly two positive real numbers, we can analyze the numerator of $f(x) - c$, where $c$ is the minimum value. \n\nLet $g(x) = (x - 18)(x - 72)(x - 98)(x - k)$. Then $f(x) ",
+      "reasoning_len": 27698
+    }
+  ],
+  "maj4_results": [
+    {
+      "idx": 7,
+      "expected": 821,
+      "majority": 821,
+      "correct": true,
+      "all_preds": [
+        821,
+        null,
+        null,
+        821
+      ]
+    },
+    {
+      "idx": 8,
+      "expected": 77,
+      "majority": 77,
+      "correct": true,
+      "all_preds": [
+        77,
+        77,
+        77,
+        77
+      ]
+    },
+    {
+      "idx": 9,
+      "expected": 62,
+      "majority": 62,
+      "correct": true,
+      "all_preds": [
+        62,
+        62,
+        62,
+        null
+      ]
+    },
+    {
+      "idx": 10,
+      "expected": 81,
+      "majority": 81,
+      "correct": true,
+      "all_preds": [
+        null,
+        null,
+        81,
+        81
+      ]
+    },
+    {
+      "idx": 11,
+      "expected": 259,
+      "majority": 259,
+      "correct": true,
+      "all_preds": [
+        259,
+        259,
+        259,
+        null
+      ]
+    },
+    {
+      "idx": 14,
+      "expected": 60,
+      "majority": 60,
+      "correct": true,
+      "all_preds": [
+        null,
+        null,
+        null,
+        60
+      ]
+    },
+    {
+      "idx": 15,
+      "expected": 735,
+      "majority": 199,
+      "correct": false,
+      "all_preds": [
+        null,
+        199,
+        3,
+        145
+      ]
+    },
+    {
+      "idx": 28,
+      "expected": 248,
+      "majority": 248,
+      "correct": true,
+      "all_preds": [
+        248,
+        248,
+        null,
+        null
+      ]
+    }
+  ]
+}
