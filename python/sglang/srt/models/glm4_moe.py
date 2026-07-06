@@ -1496,7 +1496,10 @@ class GlmMoeDsaForCausalLM(DeepseekV2ForCausalLM):
                 "DSpark requires explicit layer_ids for aux hidden capture."
             )
         self.capture_aux_hidden_states = True
-        self.model.layers_to_capture = list(layer_ids)
+        # Plus 1: SGLang captures BEFORE layer i (input = output of layer i-1).
+        # DeepSpec training extract_context_feature uses hidden_states[layer_id + 1]
+        # = OUTPUT of layer_id. To match, capture at layer_id + 1.
+        self.model.layers_to_capture = [val + 1 for val in layer_ids]
 
 
 EntryClass = [Glm4MoeForCausalLM, GlmMoeDsaForCausalLM]

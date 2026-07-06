@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Optional, Tuple
 import torch
 
 from sglang.srt.layers.attention.utils import create_flashinfer_kv_indices_triton
-from sglang.srt.managers.schedule_batch import ScheduleBatch
+from sglang.srt.managers.schedule_batch import Req, ScheduleBatch
 from sglang.srt.mem_cache.common import (
     alloc_paged_token_slots_extend,
     alloc_token_slots,
@@ -142,10 +142,9 @@ class DSparkDraftInputV2(SpecInput):
     new_seq_lens: torch.Tensor
     main_hidden: Optional[torch.Tensor] = None
     confidence: Optional[torch.Tensor] = None
-    verify_done: Optional[torch.cuda.Event] = None
-    cur_allocated_seq_lens_cpu: Optional[torch.Tensor] = None
-    reserved_seq_lens_cpu: Optional[torch.Tensor] = None
-    reserved_seq_lens_sum: Optional[int] = None
+    # Top-k scalars precomputed in prepare_for_decode to avoid a GPU->CPU sync at verify.
+    max_top_k: int = 1
+    uniform_top_k_value: Optional[int] = None
     topk_p: torch.Tensor = field(
         default_factory=lambda: torch.empty((0, 0), dtype=torch.float32)
     )
@@ -172,13 +171,9 @@ class DSparkDraftInputV2(SpecInput):
             topk_p=torch.empty((0, 0), device=device, dtype=torch.float32),
             topk_index=torch.empty((0, 0), device=device, dtype=torch.int64),
             hidden_states=torch.empty((0, 0), device=device, dtype=torch.float16),
-            verify_done=None,
         )
 
     def prepare_for_decode(self, batch: ScheduleBatch):
-        if self.verify_done is not None:
-            self.verify_done.synchronize()
-
         bs = batch.batch_size()
         if bs == 0:
             return
@@ -191,27 +186,33 @@ class DSparkDraftInputV2(SpecInput):
 
         device = batch.device
         page_size = batch.token_to_kv_pool_allocator.page_size
-        cur_alloc = self.cur_allocated_seq_lens_cpu
 
         cur_kv_lens_cpu = torch.empty((bs,), dtype=torch.int32, device="cpu")
         nxt_kv_lens_cpu = torch.empty((bs,), dtype=torch.int32, device="cpu")
         committed_cpu = torch.empty((bs,), dtype=torch.int64, device="cpu")
         committed_sum = 0
-        reserved_sum = 0
         num_needed_tokens = 0
+        max_top_k = 1
+        uniform_top_k_value = None
+        uniform_top_k = True
         for i, req in enumerate(batch.reqs):
             committed_len = int(req.kv_committed_len)
-            if cur_alloc is not None and i < len(cur_alloc):
-                cur_alloc_len = int(cur_alloc[i])
-            else:
-                cur_alloc_len = int(req.kv_allocated_len)
+            # req.kv_allocated_len is the real watermark; a carried CPU copy underestimates under page_size>1 rounding.
+            cur_alloc_len = int(req.kv_allocated_len)
             reserved_len = max(cur_alloc_len, committed_len + 2 * block_size)
             cur_kv_lens_cpu[i] = cur_alloc_len
             nxt_kv_lens_cpu[i] = reserved_len
             committed_cpu[i] = committed_len
             committed_sum += committed_len
-            reserved_sum += reserved_len
             num_needed_tokens += reserved_len - cur_alloc_len
+
+            top_k = int(req.sampling_params.top_k)
+            if top_k > max_top_k:
+                max_top_k = top_k
+            if i == 0:
+                uniform_top_k_value = top_k
+            elif uniform_top_k and top_k != uniform_top_k_value:
+                uniform_top_k = False
 
         cur_kv_lens = cur_kv_lens_cpu.to(device, non_blocking=True)
         nxt_kv_lens = nxt_kv_lens_cpu.to(device, non_blocking=True)
@@ -248,19 +249,10 @@ class DSparkDraftInputV2(SpecInput):
 
         batch.seq_lens_cpu = committed_cpu
         batch.seq_lens_sum = committed_sum
-        self.reserved_seq_lens_cpu = nxt_kv_lens_cpu
-        self.reserved_seq_lens_sum = reserved_sum
+        self.max_top_k = max(max_top_k, 1)
+        self.uniform_top_k_value = uniform_top_k_value if uniform_top_k else None
 
     def filter_batch(self, new_indices: torch.Tensor, has_been_filtered: bool = True):
-        cpu_indices = new_indices.cpu()
-        if self.cur_allocated_seq_lens_cpu is not None:
-            self.cur_allocated_seq_lens_cpu = self.cur_allocated_seq_lens_cpu[
-                cpu_indices
-            ]
-        if self.reserved_seq_lens_cpu is not None:
-            self.reserved_seq_lens_cpu = self.reserved_seq_lens_cpu[cpu_indices]
-            self.reserved_seq_lens_sum = int(self.reserved_seq_lens_cpu.sum().item())
-
         if self.future_indices is not None:
             self.future_indices = self.future_indices[new_indices]
             self.direct_carry_valid = False
@@ -280,28 +272,6 @@ class DSparkDraftInputV2(SpecInput):
             self.hidden_states = self.hidden_states[new_indices]
 
     def merge_batch(self, spec_info: DSparkDraftInputV2):
-        if (
-            self.cur_allocated_seq_lens_cpu is not None
-            and spec_info.cur_allocated_seq_lens_cpu is not None
-        ):
-            self.cur_allocated_seq_lens_cpu = torch.cat(
-                [self.cur_allocated_seq_lens_cpu, spec_info.cur_allocated_seq_lens_cpu]
-            )
-        else:
-            self.cur_allocated_seq_lens_cpu = None
-
-        if (
-            self.reserved_seq_lens_cpu is not None
-            and spec_info.reserved_seq_lens_cpu is not None
-        ):
-            self.reserved_seq_lens_cpu = torch.cat(
-                [self.reserved_seq_lens_cpu, spec_info.reserved_seq_lens_cpu]
-            )
-            self.reserved_seq_lens_sum = int(self.reserved_seq_lens_cpu.sum().item())
-        else:
-            self.reserved_seq_lens_cpu = None
-            self.reserved_seq_lens_sum = None
-
         if self.future_indices is not None:
             assert spec_info.future_indices is not None
             self.future_indices = torch.cat(
@@ -327,3 +297,25 @@ class DSparkDraftInputV2(SpecInput):
         self.hidden_states = torch.cat(
             [self.hidden_states, spec_info.hidden_states], dim=0
         )
+
+
+def validate_dspark_request(req: Req) -> Optional[str]:
+    if req.return_logprob:
+        return "DSpark speculative decoding does not support return_logprob yet."
+
+    # The target hidden states are consumed and nulled during draft, so they cannot be returned.
+    if req.return_hidden_states:
+        return "DSpark speculative decoding does not support return_hidden_states yet."
+
+    if (
+        req.sampling_params.json_schema is not None
+        or req.sampling_params.regex is not None
+        or req.sampling_params.ebnf is not None
+        or req.sampling_params.structural_tag is not None
+    ):
+        return (
+            "DSpark speculative decoding does not support "
+            "grammar-constrained decoding yet."
+        )
+
+    return None

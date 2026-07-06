@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from sglang.srt.distributed import (
     get_tensor_model_parallel_world_size,
-    tensor_model_parallel_all_gather,
+    get_tp_group,
 )
 from sglang.srt.managers.schedule_batch import ScheduleBatch
 from sglang.srt.managers.scheduler import GenerationBatchResult
@@ -36,6 +36,166 @@ from sglang.srt.speculative.triton_ops.cache_locs import assign_extend_cache_loc
 from sglang.srt.utils import get_available_gpu_memory, is_cuda, is_hip
 
 logger = logging.getLogger(__name__)
+
+# -inf maps to the smallest radix key, so a masked padding column never wins the argmax.
+_DSPARK_NEG_INF = float("-inf")
+
+
+def _dspark_pack_value_index(
+    values: torch.Tensor, global_indices: torch.Tensor
+) -> torch.Tensor:
+    """Pack a bf16 value and global vocab index into a positive int64 ordered
+    value DESC, index ASC, so a cross-shard MAX reproduces argmax's first-index tie-break.
+
+    The order-preserving 16-bit key of the value goes in bits [32, 48); the index
+    goes in bits [0, 32) inverted so the smallest index wins ties.
+    """
+    # IEEE order-preserving flip so the 16-bit key sorts like the bf16 value.
+    bits = values.view(torch.int16).to(torch.int64)
+    mask = (bits >> 15) | 0x8000
+    key16 = (bits ^ mask) & 0xFFFF
+    inv_index = 0xFFFFFFFF - global_indices
+    return (key16 << 32) | inv_index
+
+
+def _dspark_decode_index(packed: torch.Tensor) -> torch.Tensor:
+    """Recover the winning global vocab index from a packed int64 produced by
+    _dspark_pack_value_index."""
+    return 0xFFFFFFFF - (packed & 0xFFFFFFFF)
+
+
+def _dspark_shard_argmax_pack(
+    refined_shard: torch.Tensor,
+    org_vocab_start: int,
+    pad_mask: Optional[torch.Tensor],
+) -> torch.Tensor:
+    """Shard-local argmax packed for a cross-shard MAX reduction. One packed int64
+    per row (see _dspark_pack_value_index).
+
+    The +0.0 collapses -0.0 to +0.0 so ties match torch.argmax.
+    """
+    refined = refined_shard + 0.0
+    if pad_mask is not None:
+        refined = refined.masked_fill(pad_mask, _DSPARK_NEG_INF)
+    local_val, local_arg = refined.max(dim=-1)
+    global_indices = local_arg.to(torch.int64) + org_vocab_start
+    return _dspark_pack_value_index(local_val, global_indices)
+
+
+class _DSparkRefineRefs:
+    """Static references and precomputed shard geometry shared by the eager and
+    cuda-graph-captured Markov refine paths (see _refine_block_markov_sharded)."""
+
+    def __init__(
+        self,
+        *,
+        norm,
+        lm_head_weight,
+        markov_w1,
+        markov_w2_weight,
+        confidence_head,
+        org_vocab_start,
+        pad_mask,
+        block_size,
+        tp_size,
+        tp_group_device,
+        use_confidence,
+    ):
+        self.norm = norm
+        self.lm_head_weight = lm_head_weight
+        self.markov_w1 = markov_w1
+        self.markov_w2_weight = markov_w2_weight
+        self.confidence_head = confidence_head
+        self.org_vocab_start = int(org_vocab_start)
+        self.pad_mask = pad_mask
+        self.block_size = int(block_size)
+        self.tp_size = int(tp_size)
+        self.tp_group_device = tp_group_device
+        self.use_confidence = bool(use_confidence)
+
+
+def _refine_block_markov_sharded(
+    block_hidden: torch.Tensor,
+    seeds: torch.Tensor,
+    refs: _DSparkRefineRefs,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Collective-free block Markov refine.
+
+    Each step computes a vocab-shard of the refined logits, takes a shard-local
+    argmax, and under TP resolves the global argmax with one int64 MAX all-reduce
+    (skipped at tp_size==1). Returns candidates [bs, block_size] and per-position
+    confidence [bs, block_size] (None when the confidence head is gated off).
+    """
+    bs = int(block_hidden.shape[0])
+    block_size = refs.block_size
+    out_tokens = torch.empty(
+        (bs, block_size + 1), dtype=torch.int64, device=block_hidden.device
+    )
+    out_tokens[:, 0] = seeds.view(-1).to(torch.int64)
+    markov_embeds = [] if refs.use_confidence else None
+
+    normed_hidden = refs.norm(block_hidden)
+    base_shard = F.linear(normed_hidden, refs.lm_head_weight)
+    for i in range(block_size):
+        prev_embed = refs.markov_w1(out_tokens[:, i])
+        bias_shard = F.linear(prev_embed, refs.markov_w2_weight)
+        refined_shard = base_shard[:, i] + bias_shard
+        packed = _dspark_shard_argmax_pack(
+            refined_shard, refs.org_vocab_start, refs.pad_mask
+        )
+        if refs.tp_size > 1:
+            torch.distributed.all_reduce(
+                packed,
+                op=torch.distributed.ReduceOp.MAX,
+                group=refs.tp_group_device,
+            )
+        out_tokens[:, i + 1] = _dspark_decode_index(packed)
+        if refs.use_confidence:
+            markov_embeds.append(prev_embed)
+
+    if refs.use_confidence:
+        stacked_embed = torch.stack(markov_embeds, dim=1)
+        confidence = refs.confidence_head(block_hidden, stacked_embed)
+    else:
+        confidence = None
+
+    candidates = out_tokens[:, :block_size].contiguous()
+    return candidates, confidence
+
+
+class _DSparkDraftSampler:
+    """Runs the Markov refine inside the draft decode cuda graph.
+
+    Candidates and confidence land in persistent buffers; the worker consumes
+    them into the verify input before the next replay, so the buffers are never
+    overwritten while still in use.
+    """
+
+    def __init__(self, *, refs: _DSparkRefineRefs, max_bs: int, device):
+        self.refs = refs
+        self.candidates_buf = torch.empty(
+            (int(max_bs), refs.block_size), dtype=torch.int64, device=device
+        )
+        self.confidence_buf = (
+            torch.empty(
+                (int(max_bs), refs.block_size), dtype=torch.float32, device=device
+            )
+            if refs.use_confidence
+            else None
+        )
+
+    def __call__(self, hidden_states: torch.Tensor, input_ids: torch.Tensor) -> None:
+        block_size = self.refs.block_size
+        bs = hidden_states.shape[0] // block_size
+        block_hidden = hidden_states.view(bs, block_size, -1)
+        # Column 0 is the seed bonus token the worker wrote into the static input before replay.
+        seeds = input_ids.view(bs, block_size)[:, 0]
+        candidates, confidence = _refine_block_markov_sharded(
+            block_hidden, seeds, self.refs
+        )
+        self.candidates_buf[:bs].copy_(candidates)
+        if self.confidence_buf is not None:
+            self.confidence_buf[:bs].copy_(confidence)
 
 
 class DSparkWorkerV2(BaseSpecWorker):
@@ -112,22 +272,38 @@ class DSparkWorkerV2(BaseSpecWorker):
         self.confidence_threshold = float(
             server_args.speculative_dspark_confidence_threshold
         )
+        # sigmoid(x) >= 0, so a 0.0 threshold never truncates; skip the confidence head then.
+        self.use_confidence = self.confidence_threshold > 0.0
 
         self._block_pos_offsets = torch.arange(
             self.block_size, device=self.device, dtype=torch.int64
         )
+        self._sampling_verify_logged = False
+
+        # Ping-pong slots: the previous step's tensors may still be read D2H, so alternate.
+        self._decode_buffer_cap = 0
+        self._decode_buffer_slot = 0
+        self._block_ids_bufs = []
+        self._out_tokens_bufs = []
+        self._commit_lens_bufs = []
+        self._new_seq_lens_bufs = []
+
+        self._refine_refs = self._build_refine_refs()
+        self._draft_sampler = None
 
         if self.tp_rank == 0:
             logger.info(
                 "Initialized DSpark draft runner. model=%s, block_size=%s, "
                 "num_dspark_layers=%s, noise_token_id=%s, markov_rank=%s, "
-                "confidence_threshold=%s",
+                "confidence_threshold=%s, collective_free_refine=True, "
+                "use_confidence=%s",
                 self.draft_model.__class__.__name__,
                 self.block_size,
                 self.num_dspark_layers,
                 self.noise_token_id,
                 self.markov_rank,
                 self.confidence_threshold,
+                self.use_confidence,
             )
 
     @property
@@ -171,8 +347,26 @@ class DSparkWorkerV2(BaseSpecWorker):
                     "memory is available after target backend initialization.",
                     available_mem,
                 )
+        if capture_decode_cuda_graph:
+            # Must run before capture so the draft graph folds the refine in.
+            self._draft_sampler = self._maybe_build_draft_sampler()
+            self.draft_model_runner.dspark_draft_sampler = self._draft_sampler
         self._draft_worker.init_cuda_graphs(
             capture_decode_cuda_graph=capture_decode_cuda_graph
+        )
+
+    def _maybe_build_draft_sampler(self):
+        if not torch.is_floating_point(self.draft_model.lm_head.weight):
+            # Quantized lm_head would break the static F.linear in the refine.
+            if self.tp_rank == 0:
+                logger.info("DSpark Markov refine kept eager (quantized lm_head).")
+            return None
+        if self.tp_rank == 0:
+            logger.info("DSpark Markov refine folded into the draft cuda graph.")
+        return _DSparkDraftSampler(
+            refs=self._refine_refs,
+            max_bs=max(self.server_args.cuda_graph_config.decode.bs),
+            device=self.device,
         )
 
     def clear_cache_pool(self):
@@ -231,17 +425,15 @@ class DSparkWorkerV2(BaseSpecWorker):
         verify_out_cache_loc: torch.Tensor,
         prefix_lens: torch.Tensor,
         req_pool_indices: torch.Tensor,
-        reserved_seq_lens_cpu: Optional[torch.Tensor] = None,
-        reserved_seq_lens_sum: Optional[int] = None,
-    ) -> torch.Tensor:
+        seq_lens_cpu: Optional[torch.Tensor] = None,
+        seq_lens_sum: Optional[int] = None,
+    ) -> Tuple[torch.Tensor, bool]:
         device = self.device
-        if reserved_seq_lens_cpu is not None:
-            seq_lens_cpu = reserved_seq_lens_cpu
-        else:
+        # Host seq_lens must be the committed lengths, not the reserved over-alloc:
+        # the backend adds +block for TARGET_VERIFY, so committed+block is the verify extent.
+        if seq_lens_cpu is None:
             seq_lens_cpu = prefix_lens.to(device="cpu", dtype=torch.int32)
-        if reserved_seq_lens_sum is not None:
-            seq_lens_sum = int(reserved_seq_lens_sum)
-        else:
+        if seq_lens_sum is None:
             seq_lens_sum = int(seq_lens_cpu.sum().item())
         draft_block_spec_info = DSparkVerifyInput(
             draft_token=block_ids.reshape(-1),
@@ -273,66 +465,118 @@ class DSparkWorkerV2(BaseSpecWorker):
         block_hidden = raw if isinstance(raw, torch.Tensor) else raw.hidden_states
         if block_hidden is None:
             raise RuntimeError("DSpark draft model returned no block hidden states.")
-        return block_hidden.view(bs, int(self.block_size), -1)
+        return (
+            block_hidden.view(bs, int(self.block_size), -1),
+            bool(draft_runner_out.can_run_graph),
+        )
 
-    def _refine_block_markov(
-        self,
-        *,
-        block_hidden: torch.Tensor,
-        bonus_tokens: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        bs = int(block_hidden.shape[0])
-        block_size = int(self.block_size)
-        markov_head = self._draft_inner.markov_head
-        confidence_head = self._draft_inner.confidence_head
+    def _build_refine_refs(self) -> _DSparkRefineRefs:
         lm_head = self.draft_model.lm_head
-
-        tp_size = get_tensor_model_parallel_world_size()
+        markov_head = self._draft_inner.markov_head
+        markov_w2 = markov_head.markov_w2
         vocab_size = int(self._draft_inner.vocab_size)
 
-        def _gather_full_vocab(logits_shard: torch.Tensor) -> torch.Tensor:
-            if tp_size == 1:
-                return logits_shard
-            return tensor_model_parallel_all_gather(logits_shard, dim=-1)[
-                ..., :vocab_size
-            ]
+        # lm_head base logits and markov_w2 bias must share the vocab partition, else
+        # the shard-local refine adds misaligned columns.
+        lm_shard = lm_head.shard_indices
+        w2_shard = markov_w2.shard_indices
+        if (
+            lm_shard.org_vocab_start_index != w2_shard.org_vocab_start_index
+            or lm_shard.num_org_elements_padded != w2_shard.num_org_elements_padded
+            or int(lm_shard.num_added_elements) != 0
+            or int(w2_shard.num_added_elements) != 0
+        ):
+            raise RuntimeError(
+                "DSpark shard-local refine requires markov_w2 and the tied lm_head "
+                "to share the vocab partition with no added vocab, but got "
+                f"lm_head(start={lm_shard.org_vocab_start_index}, "
+                f"added={lm_shard.num_added_elements}) vs "
+                f"markov_w2(start={w2_shard.org_vocab_start_index}, "
+                f"added={w2_shard.num_added_elements})."
+            )
 
-        out_tokens = torch.empty(
-            (bs, block_size + 1), dtype=torch.int64, device=block_hidden.device
+        org_vocab_start = int(lm_shard.org_vocab_start_index)
+        shard_width = int(lm_head.weight.shape[0])
+        # Shard column c is global id org_vocab_start + c; ids >= vocab_size are padding
+        # and must never win the argmax.
+        pad_mask = (
+            org_vocab_start
+            + torch.arange(shard_width, device=self.device, dtype=torch.int64)
+        ) >= vocab_size
+        if not bool(pad_mask.any()):
+            pad_mask = None
+
+        tp_size = get_tensor_model_parallel_world_size()
+        tp_group_device = get_tp_group().device_group if tp_size > 1 else None
+
+        return _DSparkRefineRefs(
+            norm=self._draft_inner.shared_head.norm,
+            lm_head_weight=lm_head.weight,
+            markov_w1=markov_head.markov_w1,
+            markov_w2_weight=markov_w2.weight,
+            confidence_head=self._draft_inner.confidence_head,
+            org_vocab_start=org_vocab_start,
+            pad_mask=pad_mask,
+            block_size=self.block_size,
+            tp_size=tp_size,
+            tp_group_device=tp_group_device,
+            use_confidence=self.use_confidence,
         )
-        out_tokens[:, 0] = bonus_tokens.view(-1).to(torch.int64)
-        markov_embeds = []
-        with torch.inference_mode():
-            normed_hidden = self._draft_inner.shared_head.norm(block_hidden)
-            base_logits = _gather_full_vocab(F.linear(normed_hidden, lm_head.weight))
-            for i in range(block_size):
-                prev_embed = markov_head.get_prev_embeddings(out_tokens[:, i])
-                bias = _gather_full_vocab(markov_head.project_bias(prev_embed))
-                refined = base_logits[:, i] + bias
-                out_tokens[:, i + 1] = torch.argmax(refined, dim=-1)
-                markov_embeds.append(prev_embed)
-
-            stacked_embed = torch.stack(markov_embeds, dim=1)
-            confidence = confidence_head(block_hidden, stacked_embed)
-
-        candidates = out_tokens[:, :block_size].contiguous()
-        return candidates, confidence
 
     def _confident_prefix(self, confidence: torch.Tensor) -> torch.Tensor:
         keep = torch.sigmoid(confidence) >= self.confidence_threshold
         return keep.to(torch.int32).cumprod(dim=1).sum(dim=1)
+
+    def _ensure_decode_buffers(self, bs: int) -> None:
+        if self._decode_buffer_cap >= int(bs):
+            return
+        new_cap = max(
+            int(bs),
+            self._decode_buffer_cap * 2 if self._decode_buffer_cap > 0 else int(bs),
+        )
+        device = self.device
+        block_size = int(self.block_size)
+        self._block_ids_bufs = [
+            torch.empty((new_cap, block_size), dtype=torch.int64, device=device)
+            for _ in range(2)
+        ]
+        self._out_tokens_bufs = [
+            torch.empty((new_cap, block_size), dtype=torch.int64, device=device)
+            for _ in range(2)
+        ]
+        self._commit_lens_bufs = [
+            torch.empty((new_cap,), dtype=torch.int32, device=device) for _ in range(2)
+        ]
+        self._new_seq_lens_bufs = [
+            torch.empty((new_cap,), dtype=torch.int64, device=device) for _ in range(2)
+        ]
+        self._decode_buffer_cap = new_cap
+
+    def _next_decode_buffers(self, bs: int) -> Tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        self._ensure_decode_buffers(bs)
+        slot = self._decode_buffer_slot
+        self._decode_buffer_slot = (slot + 1) % 2
+        return (
+            self._block_ids_bufs[slot][:bs],
+            self._out_tokens_bufs[slot][:bs],
+            self._commit_lens_bufs[slot][:bs],
+            self._new_seq_lens_bufs[slot][:bs],
+        )
 
     def _make_next_draft_input_prefill(
         self,
         *,
         bonus_tokens: torch.Tensor,
         seq_lens: torch.Tensor,
-        cur_allocated_seq_lens_cpu: Optional[torch.Tensor] = None,
     ) -> DSparkDraftInputV2:
         return DSparkDraftInputV2(
             bonus_tokens=bonus_tokens.to(dtype=torch.int64),
             new_seq_lens=seq_lens.to(dtype=torch.int64),
-            cur_allocated_seq_lens_cpu=cur_allocated_seq_lens_cpu,
         )
 
     def _make_next_draft_input_decode(
@@ -340,12 +584,10 @@ class DSparkWorkerV2(BaseSpecWorker):
         *,
         bonus_tokens: torch.Tensor,
         new_seq_lens: torch.Tensor,
-        cur_allocated_seq_lens_cpu: Optional[torch.Tensor] = None,
     ) -> DSparkDraftInputV2:
         return DSparkDraftInputV2(
             bonus_tokens=bonus_tokens.to(dtype=torch.int64),
             new_seq_lens=new_seq_lens.to(dtype=torch.int64),
-            cur_allocated_seq_lens_cpu=cur_allocated_seq_lens_cpu,
         )
 
     def forward_batch_generation(
@@ -431,11 +673,7 @@ class DSparkWorkerV2(BaseSpecWorker):
         batch_output.next_draft_input = self._make_next_draft_input_prefill(
             bonus_tokens=next_token_ids,
             seq_lens=model_worker_batch.seq_lens,
-            cur_allocated_seq_lens_cpu=model_worker_batch.seq_lens_cpu,
         )
-        verify_done = torch.get_device_module(device).Event()
-        verify_done.record()
-        batch_output.next_draft_input.verify_done = verify_done
         return batch_output
 
     def _forward_decode(
@@ -464,9 +702,8 @@ class DSparkWorkerV2(BaseSpecWorker):
         prefix_lens = model_worker_batch.seq_lens
         req_pool_indices = model_worker_batch.req_pool_indices
 
-        block_ids = torch.full(
-            (bs, block_size), self.noise_token_id, dtype=torch.int64, device=device
-        )
+        block_ids, out_tokens, commit_lens, new_seq_lens = self._next_decode_buffers(bs)
+        block_ids.fill_(self.noise_token_id)
         block_ids[:, 0].copy_(draft_input.bonus_tokens.view(-1))
 
         positions_2d = prefix_lens.unsqueeze(1) + self._block_pos_offsets
@@ -483,21 +720,30 @@ class DSparkWorkerV2(BaseSpecWorker):
             device=device,
         )
 
-        block_hidden = self._run_draft_block(
+        block_hidden, draft_ran_captured = self._run_draft_block(
             bs=bs,
             block_ids=block_ids,
             positions=positions,
             verify_out_cache_loc=verify_out_cache_loc,
             prefix_lens=prefix_lens,
             req_pool_indices=req_pool_indices,
-            reserved_seq_lens_cpu=draft_input.reserved_seq_lens_cpu,
-            reserved_seq_lens_sum=draft_input.reserved_seq_lens_sum,
+            seq_lens_cpu=model_worker_batch.seq_lens_cpu,
+            seq_lens_sum=model_worker_batch.seq_lens_sum,
         )
 
-        candidates, confidence = self._refine_block_markov(
-            block_hidden=block_hidden,
-            bonus_tokens=draft_input.bonus_tokens,
-        )
+        if self._draft_sampler is not None and draft_ran_captured:
+            # The captured refine already ran inside the draft graph replay.
+            candidates = self._draft_sampler.candidates_buf[:bs]
+            confidence = (
+                self._draft_sampler.confidence_buf[:bs]
+                if self._draft_sampler.confidence_buf is not None
+                else None
+            )
+        else:
+            with torch.inference_mode():
+                candidates, confidence = _refine_block_markov_sharded(
+                    block_hidden, draft_input.bonus_tokens, self._refine_refs
+                )
 
         verify_input = DSparkVerifyInput(
             draft_token=candidates.reshape(-1),
@@ -526,33 +772,59 @@ class DSparkWorkerV2(BaseSpecWorker):
                 sampling_info=sampling_info,
                 draft_token_num=block_size,
             )
-        confident_prefix = self._confident_prefix(confidence)
+        confident_prefix = (
+            self._confident_prefix(confidence) if confidence is not None else None
+        )
 
         if (
             sampling_info is not None
             and not sampling_info.is_all_greedy
             and is_dflash_sampling_verify_available()
         ):
+            if self.tp_rank == 0 and not self._sampling_verify_logged:
+                self._sampling_verify_logged = True
+                logger.info(
+                    "DSpark target-only sampling verify is engaged for "
+                    "temperature>0 requests."
+                )
             accept_len, sampled_bonus = (
                 compute_dflash_sampling_correct_drafts_and_bonus(
                     candidates=candidates,
                     next_token_logits=logits_output.next_token_logits,
                     sampling_info=sampling_info,
+                    max_top_k=draft_input.max_top_k,
+                    uniform_top_k_value=draft_input.uniform_top_k_value,
                 )
             )
+            # Broadcast rank 0's result so ranks commit identical tokens; diverging seq_lens hang collectives.
+            if get_tensor_model_parallel_world_size() > 1:
+                packed = torch.stack(
+                    [accept_len.to(torch.int64), sampled_bonus.to(torch.int64)],
+                    dim=0,
+                )
+                get_tp_group().broadcast(packed, src=0)
+                accept_len, sampled_bonus = packed[0], packed[1]
             accept_len = accept_len.to(torch.int64)
-            correct_len = torch.minimum(accept_len, confident_prefix.to(torch.int64))
-            truncated = correct_len < accept_len
-            next_draft = (
-                candidates.gather(
-                    1, (correct_len + 1).clamp(max=block_size - 1).unsqueeze(1)
+            if confident_prefix is not None:
+                # Lossless truncation: the bonus at candidates[correct_len+1] is a
+                # kernel-accepted token, so emitting it preserves the target distribution.
+                correct_len = torch.minimum(
+                    accept_len, confident_prefix.to(torch.int64)
                 )
-                .squeeze(1)
-                .to(torch.int64)
-            )
-            bonus_tokens = torch.where(
-                truncated, next_draft, sampled_bonus.to(torch.int64)
-            )
+                truncated = correct_len < accept_len
+                next_draft = (
+                    candidates.gather(
+                        1, (correct_len + 1).clamp(max=block_size - 1).unsqueeze(1)
+                    )
+                    .squeeze(1)
+                    .to(torch.int64)
+                )
+                bonus_tokens = torch.where(
+                    truncated, next_draft, sampled_bonus.to(torch.int64)
+                )
+            else:
+                correct_len = accept_len
+                bonus_tokens = sampled_bonus.to(torch.int64)
         else:
             target_predict = torch.argmax(logits_output.next_token_logits, dim=-1).view(
                 bs, block_size
@@ -561,14 +833,16 @@ class DSparkWorkerV2(BaseSpecWorker):
                 candidates=candidates,
                 target_predict=target_predict,
             )
-            correct_len = torch.minimum(
-                correct_len.to(torch.int64), confident_prefix.to(torch.int64)
-            )
+            correct_len = correct_len.to(torch.int64)
+            if confident_prefix is not None:
+                correct_len = torch.minimum(
+                    correct_len, confident_prefix.to(torch.int64)
+                )
             bonus_tokens = target_predict.gather(1, correct_len.unsqueeze(1)).squeeze(1)
 
-        commit_lens = correct_len.to(torch.int32) + 1
+        commit_lens.copy_(correct_len)
+        commit_lens.add_(1)
 
-        out_tokens = torch.empty((bs, block_size), dtype=torch.int64, device=device)
         if block_size > 1:
             out_tokens[:, : block_size - 1].copy_(candidates[:, 1:])
         out_tokens[:, block_size - 1].fill_(0)
@@ -576,7 +850,8 @@ class DSparkWorkerV2(BaseSpecWorker):
             1, correct_len.unsqueeze(1), bonus_tokens.unsqueeze(1).to(torch.int64)
         )
 
-        new_seq_lens = prefix_lens + commit_lens.to(prefix_lens.dtype)
+        new_seq_lens.copy_(prefix_lens)
+        new_seq_lens.add_(commit_lens)
         if on_publish is not None:
             on_publish(new_seq_lens)
 
@@ -585,15 +860,13 @@ class DSparkWorkerV2(BaseSpecWorker):
             raise RuntimeError(
                 "DSpark verify requires target main_hidden states, but got None."
             )
+        # Write KV for all block positions, not just the committed prefix: uncommitted
+        # slots are never read before the next verify overwrites them.
         hidden = hidden.view(bs, block_size, -1)
-        commit_mask = (
-            self._block_pos_offsets.unsqueeze(0)
-            < commit_lens.unsqueeze(1).to(torch.int64)
-        ).reshape(-1)
         self._materialize_main_hidden_to_draft_kv(
-            main_hidden=hidden.reshape(-1, hidden.shape[-1])[commit_mask],
-            cache_loc=verify_out_cache_loc[commit_mask],
-            positions=positions[commit_mask],
+            main_hidden=hidden.reshape(-1, hidden.shape[-1]),
+            cache_loc=verify_out_cache_loc,
+            positions=positions,
         )
 
         logits_output.hidden_states = None
@@ -601,11 +874,7 @@ class DSparkWorkerV2(BaseSpecWorker):
         next_draft_input = self._make_next_draft_input_decode(
             bonus_tokens=bonus_tokens,
             new_seq_lens=new_seq_lens,
-            cur_allocated_seq_lens_cpu=draft_input.reserved_seq_lens_cpu,
         )
-        verify_done = torch.get_device_module(device).Event()
-        verify_done.record()
-        next_draft_input.verify_done = verify_done
 
         return GenerationBatchResult(
             logits_output=logits_output,
@@ -626,9 +895,6 @@ class DSparkWorkerV2(BaseSpecWorker):
         )
         if on_publish is not None:
             on_publish(next_draft_input.new_seq_lens)
-        verify_done = torch.get_device_module(self.device).Event()
-        verify_done.record()
-        next_draft_input.verify_done = verify_done
         return GenerationBatchResult(
             logits_output=None,
             next_token_ids=empty_ids,
