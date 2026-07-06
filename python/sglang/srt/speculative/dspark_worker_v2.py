@@ -668,7 +668,10 @@ class DSparkWorkerV2(BaseSpecWorker):
             positions=positions,
         )
 
-        logits_output.hidden_states = None
+        # Preserve hidden_states for cache generation (return_hidden_states=True).
+        # Normal DSPARK inference clears it after materializing draft KV.
+        if not getattr(model_worker_batch, "return_hidden_states", False):
+            logits_output.hidden_states = None
 
         batch_output.next_draft_input = self._make_next_draft_input_prefill(
             bonus_tokens=next_token_ids,
@@ -869,7 +872,8 @@ class DSparkWorkerV2(BaseSpecWorker):
             positions=positions,
         )
 
-        logits_output.hidden_states = None
+        if not getattr(model_worker_batch, "return_hidden_states", False):
+            logits_output.hidden_states = None
 
         next_draft_input = self._make_next_draft_input_decode(
             bonus_tokens=bonus_tokens,

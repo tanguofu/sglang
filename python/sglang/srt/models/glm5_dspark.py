@@ -68,7 +68,7 @@ class DSparkMarkovHead(nn.Module):
         self.markov_w1 = VocabParallelEmbedding(
             vocab_size,
             markov_rank,
-            enable_tp=not is_dp_attention_enabled(),
+            enable_tp=False,
             prefix=add_prefix("markov_w1", prefix),
         )
         self.markov_w2 = ParallelLMHead(
@@ -245,8 +245,24 @@ class Glm5DSparkModel(nn.Module):
         return self.collapse_block_hidden(hidden_states)
 
 
+DSPARK_DEFAULT_NUM_LAYERS = 3
+_warned_dspark_num_layers_fallback = False
+
+
 def get_dspark_num_layers(config: PretrainedConfig) -> int:
-    return int(getattr(config, "dspark_num_layers", 0) or 3)
+    """Draft depth from the checkpoint config, or DSPARK_DEFAULT_NUM_LAYERS if unset."""
+    num_layers = getattr(config, "dspark_num_layers", None)
+    if num_layers is None or int(num_layers) <= 0:
+        global _warned_dspark_num_layers_fallback
+        if not _warned_dspark_num_layers_fallback:
+            _warned_dspark_num_layers_fallback = True
+            logger.warning(
+                "DSpark draft config has no positive dspark_num_layers; "
+                "falling back to %d layers.",
+                DSPARK_DEFAULT_NUM_LAYERS,
+            )
+        return DSPARK_DEFAULT_NUM_LAYERS
+    return int(num_layers)
 
 
 class Glm5ForCausalLMDSpark(GlmMoeDsaForCausalLM):
