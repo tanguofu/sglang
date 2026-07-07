@@ -1030,7 +1030,7 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
                 next_token_logits=next_token_logits,
                 full_logits=full_logits,
                 hidden_states=(
-                    output.hidden_states[: self.raw_num_token]
+                    output.hidden_states[: self.raw_num_token].clone()
                     if output.hidden_states is not None
                     else None
                 ),

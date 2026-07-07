@@ -962,7 +962,7 @@ class PrefillCudaGraphRunner(BaseCudaGraphRunner):
                 return LogitsProcessorOutput(
                     next_token_logits=output.next_token_logits[: self.raw_num_tokens],
                     hidden_states=(
-                        output.hidden_states[: self.raw_num_tokens]
+                        output.hidden_states[: self.raw_num_tokens].clone()
                         if output.hidden_states is not None
                         else None
                     ),
