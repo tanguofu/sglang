@@ -1,8 +1,9 @@
 #!/bin/bash
 # 2-node dspark v9 training (RDMA + Docker + mp.spawn)
+# node-2 = rank 0 (master), bare-metal-2 = rank 1
 # Usage: bash start_v9_2node.sh <node_rank>
-#   node-2 = 0 (master)
-#   node-3 = 1
+#   0 = node-2 (master, 66.42.112.222)
+#   1 = bare-metal-2 (149.28.114.238)
 set -e
 
 NODE_RANK=${1:?Usage: bash $0 <node_rank 0-1>}
