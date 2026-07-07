@@ -84,6 +84,7 @@ docker run -d \
   "$IMAGE" \
   bash -c "
     python3 $PATCH_BUNDLE && \
+    python3 /data/patch_0706_supplement_v4.py && \
     python3 $GEN_AITER && \
     python3 $GEN_A8W8 && \
     exec python3 -m sglang.launch_server \
