@@ -20,10 +20,8 @@ API_KEY=${API_KEY:-sk-46faecc9d0bc4dcd9db6a15c73ae91c8}
 MODEL_PATH=${MODEL_PATH:-/data/models/GLM-5.2-FP8}
 
 PATCH_BUNDLE=${PATCH_BUNDLE:-/data/patch_sglang_glm52_rocm_all.py}
-GEN_AITER=${GEN_AITER:-/data/gen_aiter_dense_0702_v2.py}
-GEN_A8W8=${GEN_A8W8:-/data/gen_a8w8_dense.py}
 
-for f in "$PATCH_BUNDLE" "$GEN_AITER" "$GEN_A8W8"; do
+for f in "$PATCH_BUNDLE"; do
   if [[ ! -f "$f" ]]; then
     echo "ERROR: required file not found: $f" >&2
     exit 1
@@ -83,10 +81,7 @@ docker run -d \
   -v /data:/data \
   "$IMAGE" \
   bash -c "
-    python3 $PATCH_BUNDLE && \
-    python3 /data/patch_0706_supplement_v4.py && \
-    python3 $GEN_AITER && \
-    python3 $GEN_A8W8 && \
+    python3 /data/patch_0706_unified.py && \
     exec python3 -m sglang.launch_server \
       --model-path $MODEL_PATH \
       --model-impl sglang \
