@@ -66,10 +66,32 @@ assert 'seq_lens_cpu is not None' in src11, 'PATCH MISSING: 06b frozen_kv_mtp D2
 print('[OK] All 16 key patches verified in image')"
 
 # ============================================================
-# Step 2: Generate AITER tuned GEMM configs for GLM-5.2
+# Step 2: Upgrade AITER to latest origin/main + rebuild kernels
 # ============================================================
-# Reads base configs from /sgl-workspace/aiter/ (already in base image)
-# and adds tuned entries for gfx950 / GLM-5.2 shapes.
+# The base image ships AITER at commit 9127c94a1 (2026-06-25).
+# origin/main has 118+ commits including GLM-5.2 tuned configs,
+# gfx950 MLA/MoE optimizations, and OPUS RMSNorm backend.
+#
+# We fetch latest, rebuild all prebuilt .so kernels, then regenerate
+# GLM-5.2 tuned GEMM configs (idempotent — dedupes vs upstream).
+WORKDIR /sgl-workspace/aiter
+RUN git fetch origin && \
+    git checkout origin/main && \
+    git submodule update --init --recursive && \
+    # Rebuild all prebuilt HIP kernels (no GPU needed for compilation)
+    PREBUILD_KERNELS=1 MAX_JOBS=32 pip install -e . --no-build-isolation 2>&1 | tail -5 && \
+    # Verify aiter imports
+    python3 -c "import aiter; print('[OK] AITER upgraded:', aiter.__version__ if hasattr(aiter, '__version__') else 'imported')" && \
+    # Record the exact commit
+    git log --oneline -1 > /aiter_version.txt && \
+    cat /aiter_version.txt
+WORKDIR /
+
+# ============================================================
+# Step 2b: Generate AITER tuned GEMM configs for GLM-5.2
+# ============================================================
+# Adds tuned entries for gfx950 / GLM-5.2 shapes on top of whatever
+# upstream already provides. Idempotent — skips existing (M,N,K) entries.
 COPY docker/rocm-mi355x-glm52-0708/gen_aiter_configs.py /tmp/gen_aiter_configs.py
 RUN python3 /tmp/gen_aiter_configs.py && rm /tmp/gen_aiter_configs.py
 
