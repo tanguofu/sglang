@@ -76,16 +76,19 @@ print('[OK] All 16 key patches verified in image')"
 # GLM-5.2 tuned GEMM configs (idempotent — dedupes vs upstream).
 WORKDIR /sgl-workspace/aiter
 RUN git fetch origin && \
-    git checkout origin/main && \
-    # Update CK submodule to the commit origin/main expects (avoid --recursive
-    # which fails on force-pushed CK branches). Use --force to handle ref changes.
-    git submodule update --init 3rdparty/composable_kernel 2>/dev/null || \
-    git -C 3rdparty/composable_kernel fetch origin && \
-    git -C 3rdparty/composable_kernel checkout $(git submodule status 3rdparty/composable_kernel | awk '{print $1}' | sed 's/[-+]//') && \
+    # Force checkout: base image has local modifications to config CSVs
+    # (from runtime patching) that would block a normal checkout.
+    git checkout -f origin/main && \
+    # Update CK submodule to the commit origin/main expects.
+    # Use targeted update (not --recursive) to avoid force-pushed CK branch failures.
+    (git submodule update --init 3rdparty/composable_kernel 2>/dev/null || \
+     git -C 3rdparty/composable_kernel fetch origin && \
+     git -C 3rdparty/composable_kernel checkout \
+       $(git submodule status 3rdparty/composable_kernel | awk '{print $1}' | sed 's/[-+]//')) && \
     # Rebuild all prebuilt HIP kernels (no GPU needed for compilation).
     # NOTE: `import aiter` fails without GPU (rocminfo), so we verify via .so count
-    # and version file instead.
-    PREBUILD_KERNELS=1 MAX_JOBS=32 pip install -e . --no-build-isolation 2>&1 | tail -5 && \
+    # and version file instead. Do NOT pipe through tail — we need the real exit code.
+    PREBUILD_KERNELS=1 MAX_JOBS=32 pip install -e . --no-build-isolation && \
     # Verify .so files were rebuilt
     SO_COUNT=$(find /sgl-workspace/aiter/aiter/jit/ -name "*.so" 2>/dev/null | wc -l) && \
     echo "[OK] AITER rebuilt: $SO_COUNT .so files" && \
