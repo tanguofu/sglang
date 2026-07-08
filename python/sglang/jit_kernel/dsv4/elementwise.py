@@ -157,7 +157,10 @@ def fused_q_indexer_rope_hadamard_quant(
     positions: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     freqs_real = torch.view_as_real(freqs_cis).flatten(-2)
-    q_fp8 = torch.empty(q_input.shape, dtype=torch.float8_e4m3fn, device=q_input.device)
+    if _is_hip:
+        q_fp8_raw = torch.empty(q_input.shape, dtype=torch.uint8, device=q_input.device)
+    else:
+        q_fp8_raw = torch.empty(q_input.shape, dtype=torch.float8_e4m3fn, device=q_input.device)
     weights_out = torch.empty(
         (*q_input.shape[:-1], 1), dtype=torch.float32, device=q_input.device
     )
@@ -182,6 +185,7 @@ def fused_q_indexer_rope_hadamard_quant(
             freqs_real,
             positions,
         )
+    q_fp8 = q_fp8_raw.view(torch.float8_e4m3fn) if _is_hip else q_fp8_raw
     return q_fp8, weights_out
 
 
@@ -193,20 +197,26 @@ def fused_q_indexer_rope_first_quant(
     positions: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """DeepSeek-V3.2 only. Indexer Q: RoPE on the leading dims + fp8 act-quant. CUDA only."""
-    q_fp8 = torch.empty(q_input.shape, dtype=torch.float8_e4m3fn, device=q_input.device)
+    from sglang.srt.utils import is_hip as _check_hip
+    _is_hip_local = _check_hip()
+    if _is_hip_local:
+        q_fp8_raw = torch.empty(q_input.shape, dtype=torch.uint8, device=q_input.device)
+    else:
+        q_fp8_raw = torch.empty(q_input.shape, dtype=torch.float8_e4m3fn, device=q_input.device)
     weights_out = torch.empty(
         (*q_input.shape[:-1], 1), dtype=torch.float32, device=q_input.device
     )
     module = _jit_main_q_indexer_rope_first_quant_module(q_input.dtype)
     module.forward(
         q_input,
-        q_fp8,
+        q_fp8_raw,
         weight,
         weights_out,
         float(weight_scale),
         cos_sin_cache,
         positions,
     )
+    q_fp8 = q_fp8_raw.view(torch.float8_e4m3fn) if _is_hip_local else q_fp8_raw
     return q_fp8, weights_out
 
 

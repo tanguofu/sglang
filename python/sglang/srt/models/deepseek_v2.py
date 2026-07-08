@@ -228,7 +228,7 @@ else:
 logger = logging.getLogger(__name__)
 
 _enable_pcg_dsv2_dual_stream = (
-    _is_cuda and envs.SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM.get()
+    (_is_cuda or _is_hip) and envs.SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM.get()
 )
 
 

@@ -57,6 +57,7 @@ logger = logging.getLogger(__name__)
 global _use_multi_stream
 _is_cuda = is_cuda()
 _is_hip = is_hip()
+_use_dsa_indexer_fusion = (_is_cuda or _is_hip) and not envs.SGLANG_DISABLE_DSA_INDEXER_FUSION.get()
 _is_npu = is_npu()
 
 if not _is_npu:
@@ -127,7 +128,7 @@ if TYPE_CHECKING:
     from sglang.srt.mem_cache.memory_pool import DSATokenToKVPool
 
 
-DUAL_STREAM_TOKEN_THRESHOLD = 1024 if _is_cuda else 0
+DUAL_STREAM_TOKEN_THRESHOLD = 1024
 GRAPH_WEIGHTS_PROJ_LORA_ERROR = (
     "DSA indexer weights_proj LoRA is incompatible with "
     "piecewise/breakable CUDA graph; remove the explicit "
@@ -168,12 +169,13 @@ def _uses_dsa_attention_backend(forward_batch: ForwardBatch) -> bool:
     return backend_name in ("dsa", "nsa")
 
 
-if _is_cuda:
-    from sglang.jit_kernel.dsv4 import fused_q_indexer_rope_first_quant
-    from sglang.jit_kernel.dsv32 import (
-        fused_k_indexer_norm_rope,
-        fused_k_indexer_norm_rope_store,
-    )
+if _is_cuda or _is_hip:
+    if True:
+        from sglang.jit_kernel.dsv4 import fused_q_indexer_rope_first_quant
+        from sglang.jit_kernel.dsv32 import (
+            fused_k_indexer_norm_rope,
+            fused_k_indexer_norm_rope_store,
+        )
 
     def _scale_head_gate_graph_fake_impl(
         weights_raw: torch.Tensor,
@@ -221,7 +223,8 @@ if _is_cuda:
         softmax_scale: float,
         q_scale: torch.Tensor,
     ) -> torch.Tensor:
-        out = torch.mm(x, weight.t(), out_dtype=torch.float32)
+        x_bf16 = x.to(torch.bfloat16) if x.dtype != torch.bfloat16 else x
+        out = torch.mm(x_bf16, weight.t(), out_dtype=torch.float32)
         weights = out * n_heads_inv_sqrt
         weights = weights.unsqueeze(-1) * q_scale * softmax_scale
         return weights
@@ -467,6 +470,12 @@ class Indexer(MultiPlatformOp):
         self.paged_mqa_logits_backend = DSAPagedMQALogitsBackend.resolve(
             get_server_args().dsa_paged_mqa_logits_backend
         )
+        if hasattr(self.rotary_emb, 'cos_sin_cache'):
+            self._cos_sin_cache_val = self.rotary_emb.cos_sin_cache
+        else:
+            self._cos_sin_cache_val = torch.cat([
+                self.rotary_emb.cos_cache, self.rotary_emb.sin_cache
+            ], dim=-1).reshape(self.rotary_emb.cos_cache.shape[0], -1).to(torch.float32)
 
     @contextlib.contextmanager
     def _with_real_sm_count(self):
@@ -485,7 +494,14 @@ class Indexer(MultiPlatformOp):
 
     @property
     def _indexer_cos_sin_cache(self) -> torch.Tensor:
-        return self.rotary_emb.cos_sin_cache
+        if hasattr(self, "_cos_sin_cache_val"):
+            return self._cos_sin_cache_val
+        cache = self.rotary_emb.cos_sin_cache
+        if _use_aiter and cache.dim() == 4:
+            cache = cache.reshape(cache.shape[0], -1)
+        if _use_aiter and cache.dtype != torch.float32:
+            cache = cache.to(torch.float32)
+        return cache
 
     def _weights_proj_bf16_in_fp32_out(
         self, x: Union[torch.Tensor, Tuple[torch.Tensor, ...]]
@@ -532,8 +548,22 @@ class Indexer(MultiPlatformOp):
         weights = weights_raw * self.n_heads**-0.5
         return weights.unsqueeze(-1) * q_scale * self.softmax_scale
 
+    @property
+    def _k_norm_weight_f32(self) -> torch.Tensor:
+        w = self.k_norm.weight
+        return w.float() if w.dtype != torch.float32 else w
+
+    @property
+    def _k_norm_bias_f32(self) -> torch.Tensor:
+        b = self.k_norm.bias
+        return b.float() if b is not None and b.dtype != torch.float32 else b
+
     def _fused_k_weights(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        kw, _ = self.wk_weights_proj(x)
+        if _use_aiter and isinstance(x, tuple) and len(x) == 3:
+            x = x[2]
+        elif isinstance(x, tuple) and len(x) == 2:
+            x = x[0]
+        kw, _ = self.wk_weights_proj(x[2] if (_use_aiter and isinstance(x, tuple) and len(x) == 3) else (x[0] if isinstance(x, tuple) and len(x) == 2 else x))
         return kw.split([self.head_dim, self.n_heads], dim=-1)
 
     def _maybe_rotate(self, x: torch.Tensor) -> torch.Tensor:
@@ -694,8 +724,8 @@ class Indexer(MultiPlatformOp):
                 key_raw,
                 pool.get_index_k_with_scale_buffer(layer_id=layer_id),
                 out_cache_loc,
-                self.k_norm.weight,
-                self.k_norm.bias,
+                self._k_norm_weight_f32,
+                self._k_norm_bias_f32,
                 self.k_norm.variance_epsilon,
                 self._indexer_cos_sin_cache,
                 positions,
@@ -706,8 +736,8 @@ class Indexer(MultiPlatformOp):
         # Fallback: separate K kernel + store kernel.
         key = fused_k_indexer_norm_rope(
             key_raw,
-            self.k_norm.weight,
-            self.k_norm.bias,
+            self._k_norm_weight_f32,
+            self._k_norm_bias_f32,
             self.k_norm.variance_epsilon,
             self._indexer_cos_sin_cache,
             positions,
@@ -741,7 +771,8 @@ class Indexer(MultiPlatformOp):
             out_cache_loc = out_cache_loc[:num_tokens]
 
         if self.alt_stream is None or not enable_dual_stream:
-            kw, _ = self.wk_weights_proj(x)
+            _x = x[2] if (_use_aiter and isinstance(x, tuple) and len(x) == 3) else (x[0] if isinstance(x, tuple) and len(x) == 2 else x)
+            kw, _ = self.wk_weights_proj(_x)
             key, weights_raw = kw.split([self.head_dim, self.n_heads], dim=-1)
             if num_tokens is not None:
                 key = key[:num_tokens]
@@ -776,7 +807,7 @@ class Indexer(MultiPlatformOp):
             if num_tokens is not None:
                 q = q[:num_tokens]
 
-        kw, _ = self.wk_weights_proj(x)
+        kw, _ = self.wk_weights_proj(x[2] if (_use_aiter and isinstance(x, tuple) and len(x) == 3) else (x[0] if isinstance(x, tuple) and len(x) == 2 else x))
         key, weights_raw = kw.split([self.head_dim, self.n_heads], dim=-1)
         if num_tokens is not None:
             key = key[:num_tokens]
@@ -1812,16 +1843,17 @@ class Indexer(MultiPlatformOp):
             # fusion-aware, so this also covers the fused path here.
             if weights_proj_lora:
                 raise RuntimeError(GRAPH_WEIGHTS_PROJ_LORA_ERROR)
+            _x_split = x[2] if (_use_aiter and isinstance(x, tuple) and len(x) == 3) else (x[0] if isinstance(x, tuple) and len(x) == 2 else x)
             if return_indices:
                 topk_result = torch.full(
-                    (x.shape[0], self.index_topk),
+                    (_x_split.shape[0], self.index_topk),
                     -1,
-                    device=x.device,
+                    device=_x_split.device,
                     dtype=torch.int32,
                 )
             else:
                 topk_result = torch.empty(
-                    (0, self.index_topk), device=x.device, dtype=torch.int32
+                    (0, self.index_topk), device=_x_split.device, dtype=torch.int32
                 )
             graph_dispatch_fn = (
                 bcg_dsa_indexer_prefill_split
@@ -1830,7 +1862,7 @@ class Indexer(MultiPlatformOp):
             )
             graph_dispatch_fn(
                 layer_id=layer_id,
-                x=x,
+                x=_x_split,
                 q_lora=q_lora,
                 positions=positions,
                 topk_result=topk_result,
@@ -1949,8 +1981,13 @@ class Indexer(MultiPlatformOp):
                 else:
                     if weights_proj_lora:
                         raise RuntimeError(GRAPH_WEIGHTS_PROJ_LORA_ERROR)
+                    x_gate = x_for_gate
+                    if isinstance(x_gate, tuple) and len(x_gate) == 3:
+                        x_gate = x_gate[2]
+                    elif isinstance(x_gate, tuple) and len(x_gate) == 2:
+                        x_gate = x_gate[0].to(torch.bfloat16)
                     weights = logits_head_gate_graph(
-                        x_for_gate,
+                        x_gate,
                         self.weights_proj.weight,
                         self.n_heads**-0.5,
                         self.softmax_scale,
@@ -1989,6 +2026,11 @@ class Indexer(MultiPlatformOp):
                 or forward_batch.forward_mode.is_target_verify()
                 or forward_batch.forward_mode.is_draft_extend_v2()
             ):
+                # FIX(breakable-target-verify): metadata None guard
+                if metadata is None:
+                    metadata = get_attn_backend().get_indexer_metadata(layer_id, forward_batch)
+                    if metadata is None:
+                        return None
                 topk_result = self._get_topk_paged(
                     forward_batch, layer_id, q_fp8, weights, metadata
                 )
@@ -2089,7 +2131,7 @@ class Indexer(MultiPlatformOp):
 
         if self.rotary_emb.is_neox_style:
             if not hasattr(forward_batch, "npu_indexer_sin_cos_cache"):
-                cos_sin = self.rotary_emb.cos_sin_cache[positions]
+                cos_sin = self._indexer_cos_sin_cache[positions]
                 cos, sin = cos_sin.chunk(2, dim=-1)
                 cos = cos.repeat(1, 2).view(-1, 1, 1, self.rope_head_dim)
                 sin = sin.repeat(1, 2).view(-1, 1, 1, self.rope_head_dim)
@@ -2205,7 +2247,7 @@ class Indexer(MultiPlatformOp):
 
             if layer_id == 0:
                 self.rotary_emb.sin_cos_cache = (
-                    self.rotary_emb.cos_sin_cache.index_select(0, positions)
+                    self._indexer_cos_sin_cache.index_select(0, positions)
                 )
 
             q_pe, k_pe = self.rotary_emb(positions, q_pe, k_pe)
@@ -2414,7 +2456,7 @@ def pcg_dsa_indexer_prefill_split(
     # call site pre-allocates it at a static, padded shape and a downstream
     # captured graph reads it at a fixed address; eager code instead allocates
     # and returns a fresh, naturally-sized tensor each call.
-    assert _is_cuda, "Internal error: DSA graph dispatch is only supported on CUDA"
+    assert _is_cuda or _is_hip, "Internal error: DSA graph dispatch is only supported on CUDA/HIP"
     from sglang.srt.layers.attention.dsa.triton_kernel import act_quant
 
     forward_context = get_tc_piecewise_forward_context()
