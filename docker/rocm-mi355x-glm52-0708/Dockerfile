@@ -82,10 +82,14 @@ RUN git fetch origin && \
     git submodule update --init 3rdparty/composable_kernel 2>/dev/null || \
     git -C 3rdparty/composable_kernel fetch origin && \
     git -C 3rdparty/composable_kernel checkout $(git submodule status 3rdparty/composable_kernel | awk '{print $1}' | sed 's/[-+]//') && \
-    # Rebuild all prebuilt HIP kernels (no GPU needed for compilation)
+    # Rebuild all prebuilt HIP kernels (no GPU needed for compilation).
+    # NOTE: `import aiter` fails without GPU (rocminfo), so we verify via .so count
+    # and version file instead.
     PREBUILD_KERNELS=1 MAX_JOBS=32 pip install -e . --no-build-isolation 2>&1 | tail -5 && \
-    # Verify aiter imports
-    python3 -c "import aiter; print('[OK] AITER upgraded:', aiter.__version__ if hasattr(aiter, '__version__') else 'imported')" && \
+    # Verify .so files were rebuilt
+    SO_COUNT=$(find /sgl-workspace/aiter/aiter/jit/ -name "*.so" 2>/dev/null | wc -l) && \
+    echo "[OK] AITER rebuilt: $SO_COUNT .so files" && \
+    test "$SO_COUNT" -gt 100 && \
     # Record the exact commit
     git log --oneline -1 > /aiter_version.txt && \
     cat /aiter_version.txt
