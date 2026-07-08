@@ -75,12 +75,12 @@ print('[OK] All 16 key patches verified in image')"
 # We fetch latest, rebuild all prebuilt .so kernels, then regenerate
 # GLM-5.2 tuned GEMM configs (idempotent — dedupes vs upstream).
 WORKDIR /sgl-workspace/aiter
-RUN git fetch origin && \
+RUN git fetch --no-recurse-submodules origin && \
     # Force checkout: base image has local modifications to config CSVs
     # (from runtime patching) that would block a normal checkout.
     git checkout -f origin/main && \
     # Skip CK submodule update — the base image's CK (af7118e34) is compatible.
-    # CK's remote has force-pushed branches that break `git submodule update`.
+    # CK's remote has force-pushed branches that break submodule fetch.
     # Rebuild all prebuilt HIP kernels (no GPU needed for compilation).
     # NOTE: `import aiter` fails without GPU (rocminfo), so we verify via .so count
     # and version file instead.
