@@ -81,10 +81,12 @@ RUN git fetch --no-recurse-submodules origin && \
     git checkout -f origin/main && \
     # Skip CK submodule update — the base image's CK (af7118e34) is compatible.
     # CK's remote has force-pushed branches that break submodule fetch.
-    # Rebuild all prebuilt HIP kernels (no GPU needed for compilation).
-    # NOTE: `import aiter` fails without GPU (rocminfo), so we verify via .so count
-    # and version file instead.
-    PREBUILD_KERNELS=1 MAX_JOBS=32 pip install -e . --no-build-isolation && \
+    # Step 1: Install Python package (no PREBUILD_KERNELS — it breaks metadata
+    # generation by importing jit before sys.path is set).
+    pip install -e . --no-build-isolation && \
+    # Step 2: Rebuild all prebuilt HIP kernels separately (no GPU needed).
+    # NOTE: `import aiter` fails without GPU (rocminfo), so we verify via .so count.
+    PREBUILD_KERNELS=1 MAX_JOBS=32 python setup.py build_ext --inplace && \
     # Verify .so files were rebuilt
     SO_COUNT=$(find /sgl-workspace/aiter/aiter/jit/ -name "*.so" 2>/dev/null | wc -l) && \
     echo "[OK] AITER rebuilt: $SO_COUNT .so files" && \
