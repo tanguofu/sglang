@@ -1493,13 +1493,17 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                 layer.w2_weight.data = shuffle_weight(
                     layer.w2_weight.contiguous(), (16, 16)
                 )
+                layer.w13_weight.is_shuffled = True
+                layer.w2_weight.is_shuffled = True
         elif _use_aiter:
             # Pre-shuffle weights
             t = shuffle_weight(layer.w13_weight, (16, 16))
             layer.w13_weight.copy_(t)
+            layer.w13_weight.is_shuffled = True
             del t
             t = shuffle_weight(layer.w2_weight, (16, 16))
             layer.w2_weight.copy_(t)
+            layer.w2_weight.is_shuffled = True
             del t
         elif _is_cpu:
             assert (
@@ -2022,11 +2026,13 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             shuffle_weight(layer.w13_weight.data, (16, 16)),
             requires_grad=False,
         )
+        layer.w13_weight.is_shuffled = True
         torch.cuda.empty_cache()
         layer.w2_weight = torch.nn.Parameter(
             shuffle_weight(layer.w2_weight.data, (16, 16)),
             requires_grad=False,
         )
+        layer.w2_weight.is_shuffled = True
         torch.cuda.empty_cache()
 
         # INT4-FP8 : offset INT4 w13_weight_scale1 to single w13_weight_scale
@@ -2064,11 +2070,13 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                 shuffle_weight(layer.w13_weight.data, (16, 16)),
                 requires_grad=False,
             )
+            layer.w13_weight.is_shuffled = True
             torch.cuda.empty_cache()
             layer.w2_weight = torch.nn.Parameter(
                 shuffle_weight(layer.w2_weight.data, (16, 16)),
                 requires_grad=False,
             )
+            layer.w2_weight.is_shuffled = True
             torch.cuda.empty_cache()
 
             # ROCm (_use_aiter): using column-wise scaling

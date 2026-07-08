@@ -59,6 +59,7 @@ from sglang.srt.models.deepseek_v2 import DeepseekV2DecoderLayer, DeepseekV3ForC
 from sglang.srt.models.utils import WeightsMapper
 from sglang.srt.runtime_context import get_parallel, get_server_args
 from sglang.srt.utils import BumpAllocator, add_prefix, is_cuda, is_npu
+from sglang.srt.utils.common import is_hip
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +126,7 @@ class DeepseekModelNextN(nn.Module):
 
         self.alt_stream = (
             torch.cuda.Stream()
-            if _is_cuda or envs.SGLANG_NPU_USE_MULTI_STREAM.get()
+            if _is_cuda or is_hip() or envs.SGLANG_NPU_USE_MULTI_STREAM.get()
             else None
         )
 
