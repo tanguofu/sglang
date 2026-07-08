@@ -3,6 +3,7 @@
 
 #include <sgl_kernel/math.cuh>
 #include <sgl_kernel/type.cuh>
+#include <sgl_kernel/deepseek_v4/fp8_utils.cuh>
 #include <sgl_kernel/utils.cuh>
 #include <sgl_kernel/vec.cuh>
 #include <sgl_kernel/warp.cuh>
@@ -12,7 +13,7 @@
 
 #include <bit>
 #include <cstdint>
-#include <cuda_fp8.h>
+#include <hip/hip_fp8.h>
 
 namespace {
 
@@ -29,10 +30,21 @@ SGL_DEVICE float fp8_e4m3_clip(float val) {
   return math::max(math::min(val, kFP8E4M3Max), -kFP8E4M3Max);
 }
 
+// FIX(rocm-fused-store-fp8): reuse deepseek_v4 ROCm pack_fp8
+// On ROCm/gfx950 fp8x2_e4m3_t is unsigned short (16-bit) and has no
+// constructor from fp32x2_t, so the original CUDA-style pack fails to
+// compile. Reuse the official ROCm software implementation.
+#ifdef USE_ROCM
+[[maybe_unused]]
+SGL_DEVICE fp8x2_e4m3_t pack_fp8(float x, float y) {
+  return deepseek_v4::fp8::pack_fp8(x, y);
+}
+#else
 [[maybe_unused]]
 SGL_DEVICE fp8x2_e4m3_t pack_fp8(float x, float y) {
   return fp8x2_e4m3_t{fp32x2_t{fp8_e4m3_clip(x), fp8_e4m3_clip(y)}};
 }
+#endif
 
 template <typename KeyT, typename IndicesT, uint32_t kPageBits, bool kUsePDL>
 __global__ void fused_store_indexer_cache(const __grid_constant__ FusedStoreCacheParam param) {
