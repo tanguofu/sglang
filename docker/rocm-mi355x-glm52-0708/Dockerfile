@@ -77,7 +77,11 @@ print('[OK] All 16 key patches verified in image')"
 WORKDIR /sgl-workspace/aiter
 RUN git fetch origin && \
     git checkout origin/main && \
-    git submodule update --init --recursive && \
+    # Update CK submodule to the commit origin/main expects (avoid --recursive
+    # which fails on force-pushed CK branches). Use --force to handle ref changes.
+    git submodule update --init 3rdparty/composable_kernel 2>/dev/null || \
+    git -C 3rdparty/composable_kernel fetch origin && \
+    git -C 3rdparty/composable_kernel checkout $(git submodule status 3rdparty/composable_kernel | awk '{print $1}' | sed 's/[-+]//') && \
     # Rebuild all prebuilt HIP kernels (no GPU needed for compilation)
     PREBUILD_KERNELS=1 MAX_JOBS=32 pip install -e . --no-build-isolation 2>&1 | tail -5 && \
     # Verify aiter imports
