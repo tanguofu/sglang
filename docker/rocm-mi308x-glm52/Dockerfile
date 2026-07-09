@@ -48,7 +48,7 @@ src3 = open('/sgl-workspace/sglang/python/sglang/srt/models/deepseek_nextn.py').
 assert 'is_hip() or envs.SGLANG_NPU_USE_MULTI_STREAM' in src3, 'PATCH MISSING: 3.1 alt_stream on HIP'; \
 src4 = open('/sgl-workspace/sglang/python/sglang/srt/models/transformers.py').read(); \
 assert 'mla_kv_a_proj' in src4, 'PATCH MISSING: 4.1 TP style'; \
-src5 = open('/sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_backend.py').read(); \
+src5 = open('/sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa_backend.py').read(); \
 assert 'q.reshape(-1, layer.tp_q_head_num' in src5, 'PATCH MISSING: 5c view->reshape'; \
 assert 'elif forward_batch.seq_lens_sum is not None' in src5, 'PATCH MISSING: 06b D2H sync elimination'; \
 src6 = open('/sgl-workspace/sglang/python/sglang/srt/layers/radix_attention.py').read(); \
