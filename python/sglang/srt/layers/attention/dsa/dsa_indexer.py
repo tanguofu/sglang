@@ -1871,8 +1871,11 @@ class Indexer(MultiPlatformOp):
             # creates a Dynamo shape guard. These graph modes never have empty
             # batches.
             if not in_piecewise_or_breakable_cuda_graph:
-                assert forward_batch.seq_lens_cpu is not None
-                if len(forward_batch.seq_lens_cpu) == 0:
+                if forward_batch.seq_lens_cpu is None:
+                    # Draft decode path may not populate seq_lens_cpu.
+                    # Fall through to the decode/verify path below which handles this.
+                    pass
+                elif len(forward_batch.seq_lens_cpu) == 0:
                     # this seems b/c max-pad, no worries?
                     # if x.shape[0] != 0:
                     #     print(
