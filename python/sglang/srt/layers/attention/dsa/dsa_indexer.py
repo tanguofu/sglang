@@ -1113,25 +1113,18 @@ class Indexer(MultiPlatformOp):
                 elif _is_hip and envs.SGLANG_FP8_PAGED_MQA_LOGITS_TORCH.get():
                     # On HIP/ROCm with SGLANG_FP8_PAGED_MQA_LOGITS_TORCH=1:
                     # deep_gemm is not available, use torch matmul fallback.
-                    # fp8_mqa_logits computes: logits[i, j] = sum_h(q[i,h,:] * kv[j,h,:] * scale * weight[i])
-                    # for j in [ks[i], ke[i]), else 0 (or -inf if clean_logits=True)
+                    # fp8_mqa_logits: logits[i, j] = sum_h(q[i,h,:] * kv[j,0,:] * scale[j] * weight[i])
+                    # scale is KV scale [k_offset, 1, 1], NOT q scale
                     kv, scale = kv_fp8
-                    q_f32 = q_fp8[:q_offset].to(torch.float32) * scale  # [q_offset, num_heads, head_dim]
-                    kv_f32 = kv.to(torch.float32)  # [k_offset, 1, head_dim]
-                    # Reshape for batch matmul: q [q_offset, num_heads*head_dim] @ kv^T [num_heads*head_dim, k_offset]
-                    q_flat = q_f32.reshape(q_f32.shape[0], -1)  # [q_offset, num_heads*head_dim]
-                    kv_flat = kv_f32.squeeze(1)  # [k_offset, head_dim]
-                    # Since kv has 1 head, broadcast: logits = q_flat[:, :head_dim] @ kv_flat.T
-                    # But q has num_heads heads, so we need to sum over heads
-                    # q [q_offset, num_heads, head_dim], kv [k_offset, 1, head_dim]
-                    # logits[i, j] = sum_h(q[i,h,:] * kv[j,0,:] * weight[i])
+                    q_f32 = q_fp8[:q_offset].to(torch.float32)  # [q_offset, num_heads, head_dim]
+                    kv_f32 = kv.to(torch.float32) * scale  # [k_offset, 1, head_dim] * [k_offset, 1, 1]
                     logits = torch.zeros(
                         q_f32.shape[0], kv_f32.shape[0],
                         dtype=torch.float32, device=q_f32.device,
                     )
                     for i in range(q_f32.shape[0]):
                         # q_f32[i]: [num_heads, head_dim], kv_f32[:, 0, :]: [k_offset, head_dim]
-                        # logits[i] = (q_f32[i] @ kv_f32[:, 0, :].T).sum(dim=0) * weights[i]
+                        # logits[i] = (q_f32[i] @ kv_f32[:, 0, :].T).sum(dim=0) * weight[i]
                         logits[i] = (q_f32[i] @ kv_f32[:, 0, :].T).sum(dim=0) * weights[:q_offset][i]
                 else:
                     logits = deep_gemm.fp8_mqa_logits(
@@ -1189,8 +1182,8 @@ class Indexer(MultiPlatformOp):
                     # On HIP/ROCm with SGLANG_FP8_PAGED_MQA_LOGITS_TORCH=1:
                     # deep_gemm is not available, use torch matmul fallback.
                     kv, scale = kv_fp8
-                    q_f32 = q_fp8[start:end].to(torch.float32) * scale
-                    kv_f32 = kv.to(torch.float32)
+                    q_f32 = q_fp8[start:end].to(torch.float32)
+                    kv_f32 = kv.to(torch.float32) * scale
                     logits_chunk = torch.zeros(
                         q_f32.shape[0], kv_f32.shape[0],
                         dtype=torch.float32, device=q_f32.device,
