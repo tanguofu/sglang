@@ -1,0 +1,38 @@
+# SGLang Service — ClusterIP for in-cluster discovery + envoy gateway routing.
+# With hostNetwork enabled, the pod is directly reachable at <nodeIP>:<port>.
+# This Service provides a stable DNS + endpoint for envoy gateway HTTPRoute.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-sglang
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sglang.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: sglang
+  ports:
+    - name: http
+      port: {{ .Values.port }}
+      targetPort: http
+      protocol: TCP
+---
+# Headless Service for StatefulSet (required by StatefulSet spec)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-sglang-headless
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sglang.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: sglang
+  ports:
+    - name: http
+      port: {{ .Values.port }}
+      targetPort: http
+      protocol: TCP
