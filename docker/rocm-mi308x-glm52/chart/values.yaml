@@ -3,10 +3,12 @@
 # ---------------------------------------------------------------------------
 # Image
 # ---------------------------------------------------------------------------
-image: ccr.ccs.tencentyun.com/qcloud-ti-platform/sglang-glm52-308x
+# Custom image on mirrors.tencent.com (requires /etc/hosts fix + imagePullSecret)
+# See README.md for /etc/hosts setup: mirrors.tencent.com → 30.163.240.137
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
 tag: latest
-pullPolicy: Always
-imagePullSecret: ""  # ccr.ccs.tencentyun.com is anonymous-pull, no secret needed
+pullPolicy: IfNotPresent
+imagePullSecret: tencent-registry  # mirrors.tencent.com requires /etc/hosts fix (30.163.240.137)
 
 # ---------------------------------------------------------------------------
 # Deployment
@@ -48,7 +50,7 @@ model:
 sglang:
   tpSize: 8
   ppSize: 1
-  contextLength: 1048576
+  contextLength: "1048576"
   memFractionStatic: 0.88
   kvCacheDtype: fp8_e4m3
   chunkedPrefillSize: 32768
