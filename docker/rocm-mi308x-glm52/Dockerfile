@@ -62,6 +62,13 @@ assert 'USE_ROCM' in src9, 'PATCH MISSING: 05 fused_store ROCm FP8'; \
 print('All 16 patches verified OK')"
 
 # ============================================================
+# Step 1b: Patch AITER fp8_mqa_logits for gfx942 shared memory limit
+# Original: BLOCK_KV=128, num_stages=2 → 80KB shared memory (exceeds 64KB)
+# Patched:  BLOCK_KV=64,  num_stages=1 → fits in 64KB
+# ============================================================
+COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/triton/attention/fp8_mqa_logits.py
+
+# ============================================================
 # Step 2: Environment Variables (21, based on MI355X production config)
 # Key change: PYTORCH_ROCM_ARCH=gfx942 (was gfx950 for MI355X)
 # ============================================================
