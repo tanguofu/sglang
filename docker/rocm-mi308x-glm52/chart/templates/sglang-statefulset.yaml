@@ -116,6 +116,8 @@ spec:
               value: "1"
             - name: SGLANG_USE_ROCM700A
               value: "1"
+            - name: SGLANG_FP8_PAGED_MQA_LOGITS_TORCH
+              value: "1"
           securityContext:
             privileged: true
             capabilities:
