@@ -1110,6 +1110,18 @@ class Indexer(MultiPlatformOp):
                         ke,
                         clean_logits=False,
                     )
+                elif _is_hip and envs.SGLANG_FP8_PAGED_MQA_LOGITS_TORCH.get():
+                    # On HIP/ROCm with SGLANG_FP8_PAGED_MQA_LOGITS_TORCH=1:
+                    # deep_gemm is not available, use torch matmul fallback
+                    kv, scale = kv_fp8
+                    q_f32 = q_fp8[:q_offset].to(torch.float32) * scale
+                    kv_f32 = kv.to(torch.float32)
+                    logits = torch.zeros(
+                        q_f32.shape[0], kv_f32.shape[0],
+                        dtype=torch.float32, device=q_f32.device,
+                    )
+                    for i in range(q_f32.shape[0]):
+                        logits[i] = (q_f32[i] * kv_f32 * weights[i]).sum(dim=-1)
                 else:
                     logits = deep_gemm.fp8_mqa_logits(
                         q_fp8[:q_offset],
@@ -1162,6 +1174,18 @@ class Indexer(MultiPlatformOp):
                         ke[start:end],
                         clean_logits=False,
                     )
+                elif _is_hip and envs.SGLANG_FP8_PAGED_MQA_LOGITS_TORCH.get():
+                    # On HIP/ROCm with SGLANG_FP8_PAGED_MQA_LOGITS_TORCH=1:
+                    # deep_gemm is not available, use torch matmul fallback
+                    kv, scale = kv_fp8
+                    q_f32 = q_fp8[start:end].to(torch.float32) * scale
+                    kv_f32 = kv.to(torch.float32)
+                    logits_chunk = torch.zeros(
+                        q_f32.shape[0], kv_f32.shape[0],
+                        dtype=torch.float32, device=q_f32.device,
+                    )
+                    for i in range(q_f32.shape[0]):
+                        logits_chunk[i] = (q_f32[i] * kv_f32 * weights[start + i]).sum(dim=-1)
                 else:
                     logits_chunk = deep_gemm.fp8_mqa_logits(
                         q_fp8[start:end],
