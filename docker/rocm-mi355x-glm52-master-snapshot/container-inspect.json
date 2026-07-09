@@ -1,0 +1,249 @@
+[
+    {
+        "Id": "7f46c745aa9fbb491661eab7632aedbc04ce849fc9c0d6996d209aa10ec52ce4",
+        "Created": "2026-07-08T06:53:12.904366627Z",
+        "Path": "bash",
+        "Args": [
+            "-c",
+            "\n    python3 /data/patch_0706_unified.py &&     python3 /data/disable_dsa_fused_store.py &&     exec python3 -m sglang.launch_server       --model-path /data/models/GLM-5.2-FP8       --model-impl sglang       --served-model-name glm-5.2       --api-key sk-46faecc9d0bc4dcd9db6a15c73ae91c8       --tp-size 8 --pp-size 1 --trust-remote-code       --host 0.0.0.0 --port 30000       --context-length 1048576       --tool-call-parser glm47 --reasoning-parser glm45       --mem-fraction-static 0.88       --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16       --cuda-graph-max-bs-decode 16       --enable-aiter-allreduce-fusion --enable-mixed-chunk       --chunked-prefill-size 32768       --enable-fused-qk-norm-rope       --schedule-conservativeness 0.5       --prefill-max-requests 32 --max-prefill-tokens 32768       --kv-cache-dtype fp8_e4m3       --speculative-algorithm NEXTN       --speculative-num-steps 3 --speculative-num-draft-tokens 4       --speculative-eagle-topk 1       --cuda-graph-backend-prefill breakable       --max-running-requests 32       --cuda-graph-bs-prefill 4 8 16 32       --enable-metrics --skip-server-warmup       --watchdog-timeout 3600 --log-level info\n  "
+        ],
+        "State": {
+            "Status": "running",
+            "Running": true,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 1691898,
+            "ExitCode": 0,
+            "Error": "",
+            "StartedAt": "2026-07-08T06:53:12.931495939Z",
+            "FinishedAt": "0001-01-01T00:00:00Z"
+        },
+        "Image": "sha256:9db4741d79e9d2a521cd678ec4df6a7cd69c9fa8df7781393ca08b6a3e9a3ee0",
+        "ResolvConfPath": "/data/docker/containers/7f46c745aa9fbb491661eab7632aedbc04ce849fc9c0d6996d209aa10ec52ce4/resolv.conf",
+        "HostnamePath": "/data/docker/containers/7f46c745aa9fbb491661eab7632aedbc04ce849fc9c0d6996d209aa10ec52ce4/hostname",
+        "HostsPath": "/data/docker/containers/7f46c745aa9fbb491661eab7632aedbc04ce849fc9c0d6996d209aa10ec52ce4/hosts",
+        "LogPath": "/data/docker/containers/7f46c745aa9fbb491661eab7632aedbc04ce849fc9c0d6996d209aa10ec52ce4/7f46c745aa9fbb491661eab7632aedbc04ce849fc9c0d6996d209aa10ec52ce4-json.log",
+        "Name": "/guofu-PROD-glm5.2-DONT-TOUCH",
+        "RestartCount": 0,
+        "Driver": "overlayfs",
+        "Platform": "linux",
+        "MountLabel": "",
+        "ProcessLabel": "",
+        "AppArmorProfile": "unconfined",
+        "ExecIDs": null,
+        "HostConfig": {
+            "Binds": [
+                "/data:/data"
+            ],
+            "ContainerIDFile": "",
+            "LogConfig": {
+                "Type": "json-file",
+                "Config": {}
+            },
+            "NetworkMode": "host",
+            "PortBindings": {},
+            "RestartPolicy": {
+                "Name": "no",
+                "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "ConsoleSize": [
+                0,
+                0
+            ],
+            "CapAdd": [
+                "CAP_SYS_PTRACE"
+            ],
+            "CapDrop": null,
+            "CgroupnsMode": "private",
+            "Dns": null,
+            "DnsOptions": [],
+            "DnsSearch": [],
+            "ExtraHosts": null,
+            "GroupAdd": [
+                "video"
+            ],
+            "IpcMode": "private",
+            "Cgroup": "",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "",
+            "Privileged": true,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": [
+                "seccomp=unconfined",
+                "label=disable"
+            ],
+            "UTSMode": "",
+            "UsernsMode": "",
+            "ShmSize": 34359738368,
+            "Runtime": "runc",
+            "Isolation": "",
+            "CpuShares": 0,
+            "Memory": 0,
+            "NanoCpus": 0,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": [],
+            "BlkioDeviceReadBps": [],
+            "BlkioDeviceWriteBps": [],
+            "BlkioDeviceReadIOps": [],
+            "BlkioDeviceWriteIOps": [],
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": [
+                {
+                    "PathOnHost": "/dev/kfd",
+                    "PathInContainer": "/dev/kfd",
+                    "CgroupPermissions": "rwm"
+                },
+                {
+                    "PathOnHost": "/dev/dri",
+                    "PathInContainer": "/dev/dri",
+                    "CgroupPermissions": "rwm"
+                }
+            ],
+            "DeviceCgroupRules": null,
+            "DeviceRequests": null,
+            "MemoryReservation": 0,
+            "MemorySwap": 0,
+            "MemorySwappiness": null,
+            "OomKillDisable": null,
+            "PidsLimit": null,
+            "Ulimits": [],
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "MaskedPaths": null,
+            "ReadonlyPaths": null
+        },
+        "Storage": {
+            "RootFS": {
+                "Snapshot": {
+                    "Name": "overlayfs"
+                }
+            }
+        },
+        "Mounts": [
+            {
+                "Type": "bind",
+                "Source": "/data",
+                "Destination": "/data",
+                "Mode": "",
+                "RW": true,
+                "Propagation": "rslave"
+            }
+        ],
+        "Config": {
+            "Hostname": "guest",
+            "Domainname": "",
+            "User": "root",
+            "AttachStdin": false,
+            "AttachStdout": false,
+            "AttachStderr": false,
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+                "SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM=1",
+                "SGLANG_ROCM_DISABLE_LINEARQUANT=0",
+                "SGLANG_USE_AITER=1",
+                "HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7",
+                "SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1",
+                "SGLANG_INT4_WEIGHT=0",
+                "SGLANG_MOE_PADDING=1",
+                "SGLANG_SET_CPU_AFFINITY=1",
+                "NCCL_DEBUG=INFO",
+                "NCCL_CUMEM_ENABLE=0",
+                "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
+                "PYTORCH_ROCM_ARCH=gfx950",
+                "ROCM_QUICK_REDUCE_QUANTIZATION=INT8",
+                "SGLANG_ROCM_FUSED_DECODE_MLA=1",
+                "SGLANG_USE_ROCM700A=1",
+                "HSA_ENABLE_SDMA=0",
+                "HIP_FORCE_DEV_KERNARG=1",
+                "NCCL_NVLS_ENABLE=0",
+                "SGLANG_DISABLE_CUDNN_CHECK=1",
+                "HSA_NO_SCRATCH_RECLAIM=1",
+                "NCCL_MIN_NCHANNELS=112",
+                "PATH=/root/.cargo/bin:/opt/venv/bin:/opt/rocm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin",
+                "DEBIAN_FRONTEND=noninteractive",
+                "LD_LIBRARY_PATH=/opt/rocm/lib",
+                "BUILD_VLLM=0",
+                "BUILD_TRITON=1",
+                "BUILD_LLVM=0",
+                "BUILD_AITER_ALL=1",
+                "BUILD_MOONCAKE=1",
+                "AITER_COMMIT_DEFAULT=9127c94a18e4398e1eba91f6639e910f0994ad02",
+                "GPU_ARCH_LIST=gfx950",
+                "AITER_COMMIT=9127c94a18e4398e1eba91f6639e910f0994ad02",
+                "SETUPTOOLS_SCM_PRETEND_VERSION=",
+                "AITER_USE_SYSTEM_TRITON=1",
+                "CARGO_BUILD_JOBS=4",
+                "LIBGL_ALWAYS_INDIRECT=1",
+                "TORCHINDUCTOR_MAX_AUTOTUNE=1",
+                "TORCHINDUCTOR_MAX_AUTOTUNE_POINTWISE=1"
+            ],
+            "Cmd": [
+                "bash",
+                "-c",
+                "\n    python3 /data/patch_0706_unified.py &&     python3 /data/disable_dsa_fused_store.py &&     exec python3 -m sglang.launch_server       --model-path /data/models/GLM-5.2-FP8       --model-impl sglang       --served-model-name glm-5.2       --api-key sk-46faecc9d0bc4dcd9db6a15c73ae91c8       --tp-size 8 --pp-size 1 --trust-remote-code       --host 0.0.0.0 --port 30000       --context-length 1048576       --tool-call-parser glm47 --reasoning-parser glm45       --mem-fraction-static 0.88       --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16       --cuda-graph-max-bs-decode 16       --enable-aiter-allreduce-fusion --enable-mixed-chunk       --chunked-prefill-size 32768       --enable-fused-qk-norm-rope       --schedule-conservativeness 0.5       --prefill-max-requests 32 --max-prefill-tokens 32768       --kv-cache-dtype fp8_e4m3       --speculative-algorithm NEXTN       --speculative-num-steps 3 --speculative-num-draft-tokens 4       --speculative-eagle-topk 1       --cuda-graph-backend-prefill breakable       --max-running-requests 32       --cuda-graph-bs-prefill 4 8 16 32       --enable-metrics --skip-server-warmup       --watchdog-timeout 3600 --log-level info\n  "
+            ],
+            "Image": "lmsysorg/sglang-rocm:v0.5.14-rocm720-mi35x-20260706",
+            "Volumes": null,
+            "WorkingDir": "/sgl-workspace",
+            "Entrypoint": null,
+            "Labels": {
+                "org.opencontainers.image.ref.name": "ubuntu",
+                "org.opencontainers.image.version": "22.04"
+            }
+        },
+        "NetworkSettings": {
+            "SandboxID": "4ae65847fd124c1133a553ccc4f1789f0c3551b572de6a826c462cba5fa41501",
+            "SandboxKey": "/var/run/docker/netns/default",
+            "Ports": {},
+            "Networks": {
+                "host": {
+                    "IPAMConfig": null,
+                    "Links": null,
+                    "Aliases": null,
+                    "DriverOpts": null,
+                    "GwPriority": 0,
+                    "NetworkID": "de6d00c4ce066c1c309255bc2874974bf65645b172d67deb6684fed8d4476cac",
+                    "EndpointID": "4712daeacc3bc6623c701250ed0b7fa57aed066a3b683f621d63c235cb5a3516",
+                    "Gateway": "",
+                    "IPAddress": "",
+                    "MacAddress": "",
+                    "IPPrefixLen": 0,
+                    "IPv6Gateway": "",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "DNSNames": [
+                        "guofu-PROD-glm5.2-DONT-TOUCH",
+                        "7f46c745aa9f",
+                        "guest"
+                    ]
+                }
+            }
+        },
+        "ImageManifestDescriptor": {
+            "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+            "digest": "sha256:9db4741d79e9d2a521cd678ec4df6a7cd69c9fa8df7781393ca08b6a3e9a3ee0",
+            "size": 8324,
+            "platform": {
+                "architecture": "amd64",
+                "os": "linux"
+            }
+        }
+    }
+]
