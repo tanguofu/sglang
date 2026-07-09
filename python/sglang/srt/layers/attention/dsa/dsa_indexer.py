@@ -91,7 +91,7 @@ if _use_aiter and not _use_aiter_preshuffle:
         "(needs Triton>=3.5.0 or AITER_ENABLE_AOT_GLUON_PA_MQA_LOGITS=1); "
         "falling back to legacy page_size=1 / KVBlockSize=1 path."
     )
-if _is_cuda:
+if _is_cuda or _is_hip:
     try:
         import deep_gemm
     except ImportError as e:
