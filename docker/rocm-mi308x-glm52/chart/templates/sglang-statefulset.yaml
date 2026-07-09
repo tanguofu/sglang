@@ -1,0 +1,86 @@
+# SGLang LLM Inference Service — StatefulSet for AMD MI308X (gfx942)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-sglang
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sglang.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-sglang
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: sglang
+  template:
+    metadata:
+      labels:
+        {{- include "sglang.labels" . | nindent 8 }}
+    spec:
+      hostNetwork: {{ .Values.hostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- if .Values.imagePullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.imagePullSecret }}
+      {{- end }}
+      terminationGracePeriodSeconds: 300
+      containers:
+        - name: sglang
+          image: {{ include "sglang.image" . }}
+          imagePullPolicy: {{ .Values.pullPolicy }}
+          env:
+            - name: MODEL_PATH
+              value: {{ .Values.model.path | quote }}
+            - name: PORT
+              value: {{ .Values.port | quote }}
+            - name: API_KEY
+              value: {{ .Values.model.apiKey | quote }}
+            - name: HIP_VISIBLE_DEVICES
+              value: "0,1,2,3,4,5,6,7"
+          securityContext:
+            privileged: true
+            capabilities:
+              add:
+                - SYS_PTRACE
+              drop: ["ALL"]
+            seccompProfile:
+              type: Unconfined
+          ports:
+            - name: http
+              containerPort: {{ .Values.port }}
+              hostPort: {{ .Values.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.hostPaths.data }}
+            - name: dev-kfd
+              mountPath: {{ .Values.hostPaths.devKfd }}
+            - name: dev-dri
+              mountPath: {{ .Values.hostPaths.devDri }}
+            - name: shm
+              mountPath: /dev/shm
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+      volumes:
+        - name: data
+          hostPath:
+            path: {{ .Values.hostPaths.data }}
+            type: Directory
+        - name: dev-kfd
+          hostPath:
+            path: {{ .Values.hostPaths.devKfd }}
+            type: CharDevice
+        - name: dev-dri
+          hostPath:
+            path: {{ .Values.hostPaths.devDri }}
+            type: Directory
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.shmSize }}

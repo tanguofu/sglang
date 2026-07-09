@@ -1,0 +1,120 @@
+# SGLang GLM-5.2 on AMD MI308X (gfx942) — Helm Chart Values
+
+# ---------------------------------------------------------------------------
+# Image
+# ---------------------------------------------------------------------------
+image: ccr.ccs.tencentyun.com/qcloud-ti-platform/sglang-glm52-308x
+tag: latest
+pullPolicy: Always
+imagePullSecret: ""  # ccr.ccs.tencentyun.com is anonymous-pull, no secret needed
+
+# ---------------------------------------------------------------------------
+# Deployment
+# ---------------------------------------------------------------------------
+namespace: kube-system
+replicas: 1
+hostNetwork: true
+port: 30000
+
+# ---------------------------------------------------------------------------
+# Node selection
+# ---------------------------------------------------------------------------
+nodeSelector:
+  accelerator: amd-gpu
+  sglang-model: ready
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 360
+    memory: 2100Gi
+    amd.com/gpu: 8
+  limits:
+    amd.com/gpu: 8
+
+# ---------------------------------------------------------------------------
+# Model
+# ---------------------------------------------------------------------------
+model:
+  path: /data/model/glm52-fp8
+  servedName: glm-5.2
+  apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
+
+# ---------------------------------------------------------------------------
+# Server launch parameters (based on MI355X production config)
+# ---------------------------------------------------------------------------
+sglang:
+  tpSize: 8
+  ppSize: 1
+  contextLength: 1048576
+  memFractionStatic: 0.88
+  kvCacheDtype: fp8_e4m3
+  chunkedPrefillSize: 32768
+  maxRunningRequests: 32
+  prefillMaxRequests: 32
+  maxPrefillTokens: 32768
+  scheduleConservativeness: 0.5
+  cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16"
+  cudaGraphMaxBsDecode: 16
+  cudaGraphBsPrefill: "4 8 16 32"
+  cudaGraphBackendPrefill: breakable
+  # MTP speculative decoding
+  speculativeAlgorithm: NEXTN
+  speculativeNumSteps: 3
+  speculativeNumDraftTokens: 4
+  speculativeEagleTopk: 1
+  # Feature flags
+  enableAiterAllreduceFusion: true
+  enableMixedChunk: true
+  enableFusedQkNormRope: true
+  enableMetrics: true
+  skipServerWarmup: true
+  watchdogTimeout: 3600
+  logLevel: info
+  # Parsers
+  toolCallParser: glm47
+  reasoningParser: glm45
+
+# ---------------------------------------------------------------------------
+# Host paths
+# ---------------------------------------------------------------------------
+hostPaths:
+  data: /data
+  devKfd: /dev/kfd
+  devDri: /dev/dri
+
+shmSize: 32Gi
+
+# ---------------------------------------------------------------------------
+# Envoy Gateway (eg-tke in ti-cloud namespace)
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  # Gateway to attach HTTPRoute to
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  # External hostname (must match *.jmpti.woa.com listener on eg-tke)
+  hostname: glm52-308x.jmpti.woa.com
+  # Envoy LB address (for reference)
+  lbAddress: 21.162.215.14
+
+# ---------------------------------------------------------------------------
+# Health checks
+# ---------------------------------------------------------------------------
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  failureThreshold: 10
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 300
+  periodSeconds: 60
+  failureThreshold: 5
