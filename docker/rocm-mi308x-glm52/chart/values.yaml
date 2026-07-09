@@ -117,6 +117,6 @@ livenessProbe:
   httpGet:
     path: /health
     port: 30000
-  initialDelaySeconds: 300
+  initialDelaySeconds: 600
   periodSeconds: 60
   failureThreshold: 5
