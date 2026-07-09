@@ -1216,7 +1216,7 @@ class Indexer(MultiPlatformOp):
         if not need_chunk:
             assert q_fp8[:q_offset].shape[0] != 0
             with self._with_real_sm_count():
-                if _is_hip:
+                if _is_hip and not envs.SGLANG_FP8_PAGED_MQA_LOGITS_TORCH.get():
                     from aiter.ops.triton.fp8_mqa_logits import fp8_mqa_logits
 
                     kv, scale = kv_fp8
@@ -1275,7 +1275,7 @@ class Indexer(MultiPlatformOp):
             end = min(start + max_rows, q_offset)
 
             with self._with_real_sm_count():
-                if _is_hip:
+                if _is_hip and not envs.SGLANG_FP8_PAGED_MQA_LOGITS_TORCH.get():
                     from aiter.ops.triton.fp8_mqa_logits import fp8_mqa_logits
 
                     kv, scale = kv_fp8
