@@ -114,7 +114,7 @@ def get_hidden_states(sglang_url, text, max_length):
         _arr = np.frombuffer(raw, dtype=np.uint16)
         hidden = torch.from_numpy(_arr.copy()).view(torch.bfloat16).reshape(-1, 30720).float()
     else:
-        hidden = torch.tensor(hs[0], dtype=torch.float32)
+        hidden = torch.from_numpy(np.array(hs[0], dtype=np.float32))
     return hidden
 
 
@@ -279,7 +279,7 @@ def main():
 
     with ThreadPoolExecutor(max_workers=args.num_workers) as executor:
         futures = {}
-        next_write_idx = 0  # local index into slice_samples
+        next_write_idx = start  # global idx, must match results_buffer keys
 
         for task in tasks:
             future = executor.submit(process_sample, task)
