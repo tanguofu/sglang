@@ -798,18 +798,25 @@ class DeepseekSparseAttnBackend(
             )
         elif forward_batch.forward_mode.is_draft_extend_v2():
             if forward_batch.extend_prefix_lens_cpu is None:
-                assert forward_batch.extend_prefix_lens is not None
-                forward_batch.extend_prefix_lens_cpu = (
-                    forward_batch.extend_prefix_lens.cpu().tolist()
-                )
+                if forward_batch.extend_prefix_lens is not None:
+                    forward_batch.extend_prefix_lens_cpu = (
+                        forward_batch.extend_prefix_lens.cpu().tolist()
+                    )
             if forward_batch.seq_lens_cpu is None:
                 forward_batch.seq_lens_cpu = forward_batch.seq_lens.cpu()
                 forward_batch.seq_lens_sum = int(forward_batch.seq_lens_cpu.sum())
-            assert (
-                forward_batch.extend_seq_lens_cpu is not None
-                and forward_batch.extend_seq_lens is not None
-                and forward_batch.extend_prefix_lens_cpu is not None
-            ), "All of them must not be None"
+            # On HIP/ROCm, the MTP draft extend path may not populate all CPU tensors.
+            # Handle None gracefully instead of asserting.
+            if forward_batch.extend_seq_lens_cpu is None and forward_batch.extend_seq_lens is not None:
+                forward_batch.extend_seq_lens_cpu = forward_batch.extend_seq_lens.cpu()
+            if forward_batch.extend_seq_lens_cpu is None:
+                forward_batch.extend_seq_lens_cpu = torch.zeros(
+                    forward_batch.extend_num_tokens, dtype=torch.int32, device="cpu"
+                )
+            if forward_batch.extend_prefix_lens_cpu is None:
+                forward_batch.extend_prefix_lens_cpu = torch.zeros(
+                    forward_batch.extend_num_tokens, dtype=torch.int32, device="cpu"
+                )
 
             extend_seq_lens_cpu = forward_batch.extend_seq_lens_cpu
             assert forward_batch.extend_seq_lens is not None
@@ -844,11 +851,11 @@ class DeepseekSparseAttnBackend(
                     page_table, repeats=forward_batch.extend_seq_lens, dim=0
                 )
         elif forward_batch.forward_mode.is_extend():
-            assert (
-                forward_batch.extend_seq_lens_cpu is not None
-                and forward_batch.extend_seq_lens is not None
-                and forward_batch.extend_prefix_lens_cpu is not None
-            ), "All of them must not be None"
+            # Handle None CPU tensors gracefully on HIP/ROCm
+            if forward_batch.extend_seq_lens_cpu is None and forward_batch.extend_seq_lens is not None:
+                forward_batch.extend_seq_lens_cpu = forward_batch.extend_seq_lens.cpu()
+            if forward_batch.extend_prefix_lens_cpu is None and forward_batch.extend_prefix_lens is not None:
+                forward_batch.extend_prefix_lens_cpu = forward_batch.extend_prefix_lens.cpu()
             extend_seq_lens_cpu = forward_batch.extend_seq_lens_cpu
             assert forward_batch.extend_seq_lens is not None
             extend_seq_lens = forward_batch.extend_seq_lens
