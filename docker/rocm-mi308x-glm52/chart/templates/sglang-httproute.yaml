@@ -26,8 +26,14 @@ spec:
       backendRefs:
         - group: ""
           kind: Service
+          {{- if .Values.router.enabled }}
+          name: {{ .Release.Name }}-router
+          namespace: {{ .Values.namespace }}
+          port: {{ .Values.router.port }}
+          {{- else }}
           name: {{ .Release.Name }}-sglang
           namespace: {{ .Values.namespace }}
           port: {{ .Values.port }}
+          {{- end }}
           weight: 1
 {{- end }}
