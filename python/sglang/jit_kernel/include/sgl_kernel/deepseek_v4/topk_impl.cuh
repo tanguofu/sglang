@@ -41,10 +41,10 @@
 namespace cooperative_groups {
 struct cluster_stub {
     template <typename T>
-    auto map_shared_rank(T* ptr, int) { return ptr; }
-    void sync() {}
+    __device__ T* map_shared_rank(T* ptr, int) { return ptr; }
+    __device__ void sync() {}
 };
-inline cluster_stub this_cluster() { return {}; }
+__device__ inline cluster_stub this_cluster() { return {}; }
 }  // namespace cooperative_groups
 #endif
 
