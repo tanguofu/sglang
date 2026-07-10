@@ -137,13 +137,7 @@ def _to_2d_context_lens(seqlens_32: torch.Tensor, batch_size: int) -> torch.Tens
 
 
 # Reuse this workspace buffer across all DSA backend instances
-
-# Control whether to use fused metadata copy kernel for cuda graph replay (default: enabled)
-# Set SGLANG_USE_FUSED_METADATA_COPY=0 or false to disable
-_USE_FUSED_METADATA_COPY = envs.SGLANG_USE_FUSED_METADATA_COPY.get() and not _is_hip
-_USE_FUSED_METADATA_GENERATION = (
-    envs.SGLANG_DSA_USE_FUSED_METADATA_GENERATION.get() and not _is_hip
-)
+global_workspace_buffer = None
 
 
 @dataclass(frozen=True)
@@ -805,18 +799,25 @@ class DeepseekSparseAttnBackend(
             )
         elif forward_batch.forward_mode.is_draft_extend_v2():
             if forward_batch.extend_prefix_lens_cpu is None:
-                assert forward_batch.extend_prefix_lens is not None
-                forward_batch.extend_prefix_lens_cpu = (
-                    forward_batch.extend_prefix_lens.cpu().tolist()
-                )
+                if forward_batch.extend_prefix_lens is not None:
+                    forward_batch.extend_prefix_lens_cpu = (
+                        forward_batch.extend_prefix_lens.cpu().tolist()
+                    )
             if forward_batch.seq_lens_cpu is None:
                 forward_batch.seq_lens_cpu = forward_batch.seq_lens.cpu()
                 forward_batch.seq_lens_sum = int(forward_batch.seq_lens_cpu.sum())
-            assert (
-                forward_batch.extend_seq_lens_cpu is not None
-                and forward_batch.extend_seq_lens is not None
-                and forward_batch.extend_prefix_lens_cpu is not None
-            ), "All of them must not be None"
+            # On HIP/ROCm, the MTP draft extend path may not populate all CPU tensors.
+            # Handle None gracefully instead of asserting.
+            if forward_batch.extend_seq_lens_cpu is None and forward_batch.extend_seq_lens is not None:
+                forward_batch.extend_seq_lens_cpu = forward_batch.extend_seq_lens.cpu()
+            if forward_batch.extend_seq_lens_cpu is None:
+                forward_batch.extend_seq_lens_cpu = torch.zeros(
+                    forward_batch.extend_num_tokens, dtype=torch.int32, device="cpu"
+                )
+            if forward_batch.extend_prefix_lens_cpu is None:
+                forward_batch.extend_prefix_lens_cpu = torch.zeros(
+                    forward_batch.extend_num_tokens, dtype=torch.int32, device="cpu"
+                )
 
             extend_seq_lens_cpu = forward_batch.extend_seq_lens_cpu
             assert forward_batch.extend_seq_lens is not None
@@ -851,11 +852,11 @@ class DeepseekSparseAttnBackend(
                     page_table, repeats=forward_batch.extend_seq_lens, dim=0
                 )
         elif forward_batch.forward_mode.is_extend():
-            assert (
-                forward_batch.extend_seq_lens_cpu is not None
-                and forward_batch.extend_seq_lens is not None
-                and forward_batch.extend_prefix_lens_cpu is not None
-            ), "All of them must not be None"
+            # Handle None CPU tensors gracefully on HIP/ROCm
+            if forward_batch.extend_seq_lens_cpu is None and forward_batch.extend_seq_lens is not None:
+                forward_batch.extend_seq_lens_cpu = forward_batch.extend_seq_lens.cpu()
+            if forward_batch.extend_prefix_lens_cpu is None and forward_batch.extend_prefix_lens is not None:
+                forward_batch.extend_prefix_lens_cpu = forward_batch.extend_prefix_lens.cpu()
             extend_seq_lens_cpu = forward_batch.extend_seq_lens_cpu
             assert forward_batch.extend_seq_lens is not None
             extend_seq_lens = forward_batch.extend_seq_lens
@@ -1385,8 +1386,8 @@ class DeepseekSparseAttnBackend(
             # Normal Decode
             max_len = self._graph_page_table_width(metadata)
 
-            if _USE_FUSED_METADATA_GENERATION and is_cuda() and not _is_hip:
-                from sglang.kernels.ops.attention.dsa_metadata import (
+            if is_cuda() and not _is_hip:
+                from sglang.srt.layers.attention.triton_ops.dsa_metadata import (
                     fused_dsa_decode_metadata,
                 )
 
@@ -1427,8 +1428,8 @@ class DeepseekSparseAttnBackend(
         elif forward_mode.is_target_verify():
             max_seqlen_k = self._graph_page_table_width(metadata)
 
-            if _USE_FUSED_METADATA_GENERATION and is_cuda() and not _is_hip:
-                from sglang.kernels.ops.attention.dsa_metadata import (
+            if is_cuda() and not _is_hip:
+                from sglang.srt.layers.attention.triton_ops.dsa_metadata import (
                     fused_dsa_target_verify_metadata,
                 )
 
@@ -1525,8 +1526,8 @@ class DeepseekSparseAttnBackend(
                 device=self.device,
             )
 
-            if _USE_FUSED_METADATA_GENERATION and is_cuda() and not _is_hip:
-                from sglang.kernels.ops.attention.dsa_metadata import (
+            if is_cuda() and not _is_hip:
+                from sglang.srt.layers.attention.triton_ops.dsa_metadata import (
                     fused_dsa_draft_extend_metadata,
                 )
 
