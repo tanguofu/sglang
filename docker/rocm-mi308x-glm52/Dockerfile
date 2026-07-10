@@ -63,8 +63,6 @@ assert 'USE_ROCM' in src9, 'PATCH MISSING: 05 fused_store ROCm FP8'; \
 fs = open('/sgl-workspace/sglang/python/sglang/jit_kernel/fused_store_index_cache.py').read(); \
 assert 'DISABLED on ROCm' not in fs, 'REVERT FAILED: fused-store is_hip guard still present'; \
 assert 'if is_hip():' not in fs, 'REVERT FAILED: fused-store is_hip() check still present'; \
-db = open('/sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa_backend.py').read(); \
-assert 'and not _is_hip' not in db.split('_USE_FUSED_METADATA_COPY')[1].split(')')[0] if '_USE_FUSED_METADATA_COPY' in db else True, 'REVERT FAILED: fused metadata copy still disabled on HIP'; \
 glm = open('/sgl-workspace/sglang/python/sglang/srt/models/glm4_moe.py').read(); \
 assert 'GlmMoeDsaForCausalLMNextN' in glm, 'UPSTREAM MISSING: MTP Quark fix (GlmMoeDsaForCausalLMNextN)'; \
 nxn = open('/sgl-workspace/sglang/python/sglang/srt/models/deepseek_nextn.py').read(); \

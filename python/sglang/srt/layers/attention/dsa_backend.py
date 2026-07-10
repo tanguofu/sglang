@@ -139,13 +139,6 @@ def _to_2d_context_lens(seqlens_32: torch.Tensor, batch_size: int) -> torch.Tens
 # Reuse this workspace buffer across all DSA backend instances
 global_workspace_buffer = None
 
-# Control whether to use fused metadata copy kernel for cuda graph replay (default: enabled)
-# Set SGLANG_USE_FUSED_METADATA_COPY=0 or false to disable
-_USE_FUSED_METADATA_COPY = envs.SGLANG_USE_FUSED_METADATA_COPY.get()
-_USE_FUSED_METADATA_GENERATION = (
-    envs.SGLANG_DSA_USE_FUSED_METADATA_GENERATION.get()
-)
-
 
 @dataclass(frozen=True)
 class DSAFlashMLAMetadata:
