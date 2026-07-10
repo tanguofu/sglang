@@ -24,9 +24,14 @@
 #include <sgl_kernel/warp.cuh>
 
 #include <cfloat>
-#include <cooperative_groups.h>
 #include <cstdint>
 #include <limits>
+
+#ifdef USE_ROCM
+#include <hip/hip_runtime.h>
+#else
+#include <cooperative_groups.h>
+#endif
 
 namespace device::topk {
 
