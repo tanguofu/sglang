@@ -31,8 +31,13 @@ spec:
       backendRefs:
         - group: ""
           kind: Service
-          {{- if .Values.router.enabled }}
-          # Route to SGLang Router (cache_aware prefix-aware load balancer)
+          {{- if .Values.llmDRouter.enabled }}
+          # Route to llm-d Router (EPP + Envoy, prefix-cache-aware)
+          name: {{ .Release.Name }}-llm-d-router
+          namespace: {{ .Values.namespace }}
+          port: {{ .Values.llmDRouter.port }}
+          {{- else if .Values.router.enabled }}
+          # Route to SGLang Router (sgl-model-gateway, cache_aware)
           name: {{ .Release.Name }}-router
           namespace: {{ .Values.namespace }}
           port: {{ .Values.router.port }}
