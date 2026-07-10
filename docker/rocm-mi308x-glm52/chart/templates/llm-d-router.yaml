@@ -18,11 +18,11 @@
 #   TEST:  4x GZ SGLang instances
 #   PROD:  2x ZW SGLang instances (configured via values-prod.yaml)
 ---
-# ConfigMap: EPP endpoints file (file-discovery plugin reads this)
+# ConfigMap: EPP plugin configuration + endpoints file (file-discovery reads this)
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Release.Name }}-llm-d-endpoints
+  name: {{ .Release.Name }}-llm-d-epp-config
   namespace: {{ .Values.namespace }}
   labels:
     {{- include "sglang.labels" . | nindent 4 }}
@@ -37,17 +37,6 @@ data:
           model: {{ $.Values.model.servedName }}
           llm-d.ai/engine-type: sglang
     {{- end }}
-
----
-# ConfigMap: EPP plugin configuration
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ .Release.Name }}-llm-d-epp-config
-  namespace: {{ .Values.namespace }}
-  labels:
-    {{- include "sglang.labels" . | nindent 4 }}
-data:
   config.yaml: |
     apiVersion: llm-d.ai/v1alpha1
     kind: EndpointPickerConfig
