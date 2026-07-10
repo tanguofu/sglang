@@ -1,0 +1,122 @@
+# SGLang LLM Inference Service — StatefulSet for AMD MI355X
+# Runs GLM-5.2-FP8 on AMD MI355X (8 GPUs, TP=8) with SGLang server.
+# Uses hostNetwork for direct node IP access on the configured port.
+#
+# Prerequisites:
+#   - AMD GPU device plugin installed (amd.com/gpu resource available)
+#   - Node labeled: accelerator=amd-gpu, sglang-model=ready
+#   - Model weights at /data/model/glm52-fp8/ on the node
+#   - Image: ccr.ccs.tencentyun.com/qcloud-ti-platform/sglang-glm52-0708:latest
+#   - imagePullSecret: tencent-registry (if registry requires auth)
+#
+# Usage:
+#   kubectl apply -f docker/rocm-mi355x-glm52-0708/k8s-sglang-statefulset.yaml
+#   kubectl apply -f docker/rocm-mi355x-glm52-0708/k8s-sglang-service.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sglang-glm52
+  namespace: kube-system
+  labels:
+    app: sglang
+    accelerator: amd-gpu
+spec:
+  serviceName: sglang-glm52
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sglang
+  template:
+    metadata:
+      labels:
+        app: sglang
+        accelerator: amd-gpu
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeSelector:
+        accelerator: amd-gpu
+        sglang-model: ready
+      imagePullSecrets:
+        - name: tencent-registry
+      terminationGracePeriodSeconds: 300
+      containers:
+        - name: sglang
+          image: ccr.ccs.tencentyun.com/qcloud-ti-platform/sglang-glm52-0708:latest
+          imagePullPolicy: Always
+          # Entrypoint is start_server.sh baked into the image.
+          # Environment variables control model path, port, and API key.
+          env:
+            - name: MODEL_PATH
+              value: "/data/model/glm52-fp8"
+            - name: PORT
+              value: "30000"
+            - name: API_KEY
+              value: "sk-46faecc9d0bc4dcd9db6a15c73ae91c8"
+            - name: SERVED_MODEL_NAME
+              value: "glm-5.2"
+            # ROCm environment — ensure all 8 GPUs are visible
+            - name: HIP_VISIBLE_DEVICES
+              value: "0,1,2,3,4,5,6,7"
+            - name: HSA_ENABLE_SDMA
+              value: "0"
+          securityContext:
+            privileged: true
+            capabilities:
+              add:
+                - SYS_PTRACE
+              drop: ["ALL"]
+            seccompProfile:
+              type: Unconfined
+          ports:
+            - name: http
+              containerPort: 30000
+              hostPort: 30000
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: dev-kfd
+              mountPath: /dev/kfd
+            - name: dev-dri
+              mountPath: /dev/dri
+            - name: shm
+              mountPath: /dev/shm
+          resources:
+            requests:
+              cpu: 360
+              memory: 2100Gi
+              amd.com/gpu: 8
+            limits:
+              amd.com/gpu: 8
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 30000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 30000
+            initialDelaySeconds: 300
+            periodSeconds: 60
+            failureThreshold: 5
+      volumes:
+        - name: data
+          hostPath:
+            path: /data
+            type: Directory
+        - name: dev-kfd
+          hostPath:
+            path: /dev/kfd
+            type: CharDevice
+        - name: dev-dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Gi
