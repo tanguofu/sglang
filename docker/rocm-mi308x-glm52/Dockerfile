@@ -68,13 +68,18 @@ assert 'and not _is_hip' not in db.split('_USE_FUSED_METADATA_COPY')[1].split(')
 print('All 16 patches verified + 308X workarounds reverted OK')"
 
 # ============================================================
-# Step 1b: Patch AITER fp8_mqa_logits for gfx942 shared memory limit
+# Step 1b: Add FlyDSL gfx942 fp8 MQA logits kernel + patch Triton path
 # MI308X (gfx942) has 64KB shared memory limit vs MI355X's 80KB+.
-# Original BLOCK_KV=128 → 80KB shared memory (exceeds 64KB → OutOfResources).
-# Patched: BLOCK_KV=64, num_stages=1 → fits in 64KB.
-# This is a HARDWARE LIMIT, not a precision tradeoff — the kernel math is identical,
-# just smaller tile size. No precision loss.
+# Strategy: Use FlyDSL kernel (designed for gfx942, adaptive grid split)
+# + patch Triton fp8_mqa_logits with FN→FNUZ conversion fix + BLOCK_KV=64
+# The FlyDSL kernel uses _BLOCK_KV=128 but with different memory layout
+# (waves_per_eu=2, no cross-wave LDS) that may fit in 64KB.
+# The Triton path is patched as fallback with BLOCK_KV=64.
 # ============================================================
+# Add FlyDSL kernel files
+COPY docker/rocm-mi308x-glm52/patches/flydsl/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/flydsl/kernels/fp8_mqa_logits.py
+COPY docker/rocm-mi308x-glm52/patches/flydsl/__init__.py /sgl-workspace/aiter/aiter/ops/flydsl/__init__.py
+# Patch Triton fp8_mqa_logits with FN→FNUZ fix + BLOCK_KV=64 (fallback)
 COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/triton/attention/fp8_mqa_logits.py
 
 # ============================================================
