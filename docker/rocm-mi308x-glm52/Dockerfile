@@ -35,6 +35,7 @@ LABEL branch="308x-glm52-opt"
 COPY python/sglang/ /sgl-workspace/sglang/python/sglang/
 
 # Verify key patches are present (fail build if any missing)
+# Also verify 308X-specific workarounds are REMOVED (matching 355X config)
 RUN python3 -c "\
 src = open('/sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_indexer.py').read(); \
 assert '_is_cuda or _is_hip' in src, 'PATCH MISSING: 1.1 JIT imports on HIP'; \
@@ -59,14 +60,28 @@ src8 = open('/sgl-workspace/sglang/python/sglang/jit_kernel/dsv4/elementwise.py'
 assert 'q_fp8_raw' in src8, 'PATCH MISSING: 03 FP8 view fix'; \
 src9 = open('/sgl-workspace/sglang/python/sglang/jit_kernel/csrc/dsa/fused_store_index_cache.cuh').read(); \
 assert 'USE_ROCM' in src9, 'PATCH MISSING: 05 fused_store ROCm FP8'; \
-print('All 16 patches verified OK')"
+fs = open('/sgl-workspace/sglang/python/sglang/jit_kernel/fused_store_index_cache.py').read(); \
+assert 'DISABLED on ROCm' not in fs, 'REVERT FAILED: fused-store is_hip guard still present'; \
+assert 'if is_hip():' not in fs, 'REVERT FAILED: fused-store is_hip() check still present'; \
+db = open('/sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa_backend.py').read(); \
+assert 'and not _is_hip' not in db.split('_USE_FUSED_METADATA_COPY')[1].split(')')[0] if '_USE_FUSED_METADATA_COPY' in db else True, 'REVERT FAILED: fused metadata copy still disabled on HIP'; \
+print('All 16 patches verified + 308X workarounds reverted OK')"
 
 # ============================================================
-# Step 1b: Patch AITER fp8_mqa_logits for gfx942 shared memory limit
-# Original: BLOCK_KV=128, num_stages=2 → 80KB shared memory (exceeds 64KB)
-# Patched:  BLOCK_KV=64,  num_stages=1 → fits in 64KB
+# Step 1b: Upgrade AITER to latest (gfx942 FlyDSL fp8 MQA logits kernel)
+# Base image has AITER 9127c94a1. Latest includes:
+# - FlyDSL gfx942 fp8 MQA logits kernel (drop-in for Triton fp8_mqa_logits)
+# - gfx942 flat_pf2 FMoE kernel for low-token decode
+# - GLM-5.1/5.2 FP8 blockscale GEMM/FMoE tunings for gfx942
+# - bf16 is_fn_pack path enabled on gfx942
+# Uses original BLOCK_KV=128 (matching MI355X production config, no precision loss)
 # ============================================================
-COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/triton/attention/fp8_mqa_logits.py
+RUN cd /sgl-workspace/aiter && \
+    git fetch origin && \
+    git checkout origin/main && \
+    pip install -e . --no-deps --no-build-isolation 2>/dev/null || true && \
+    pip install flydsl 2>/dev/null || true && \
+    echo "AITER upgraded to: $(git log --oneline -1)"
 
 # ============================================================
 # Step 2: Environment Variables (21, based on MI355X production config)
