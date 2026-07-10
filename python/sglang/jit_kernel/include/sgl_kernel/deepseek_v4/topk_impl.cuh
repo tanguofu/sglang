@@ -163,8 +163,8 @@ SGL_DEVICE uint32_t warp_inclusive_sum(uint32_t lane_id, uint32_t val) {
   return val;
 }
 
-SGL_DEVICE uint32_t warp_sum_bool(bool pred, uint32_t mask = 0xFFFFFFFF) {
-  return __popc(__ballot_sync(mask, pred));
+SGL_DEVICE uint32_t warp_sum_bool(bool pred, uint64_t mask = 0xFFFFFFFFull) {
+  return __popc(static_cast<uint32_t>(__ballot_sync(mask, pred)));
 }
 
 struct alignas(8) TieValue {
