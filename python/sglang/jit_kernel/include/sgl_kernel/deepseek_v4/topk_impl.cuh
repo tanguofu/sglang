@@ -29,8 +29,23 @@
 
 #ifdef USE_ROCM
 #include <hip/hip_runtime.h>
+#include <hip/amd_detail/amd_hip_cooperative_groups.h>
 #else
 #include <cooperative_groups.h>
+#endif
+
+#ifdef USE_ROCM
+// HIP does not support cluster groups; provide a stub so the cluster kernel
+// path compiles. This path is never taken at runtime on HIP (cluster_floor
+// exceeds any realistic seq_len for DSA indexer top-k).
+namespace cooperative_groups {
+struct cluster_stub {
+    template <typename T>
+    auto map_shared_rank(T* ptr, int) { return ptr; }
+    void sync() {}
+};
+inline cluster_stub this_cluster() { return {}; }
+}  // namespace cooperative_groups
 #endif
 
 namespace device::topk {
