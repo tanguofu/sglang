@@ -68,13 +68,14 @@ assert 'and not _is_hip' not in db.split('_USE_FUSED_METADATA_COPY')[1].split(')
 print('All 16 patches verified + 308X workarounds reverted OK')"
 
 # ============================================================
-# Step 1b: AITER — use base image version (9127c94a1, matching MI355X)
-# The base image already has AITER 9127c94a1 installed and working.
-# This is the exact same version used by MI355X production (xid18k-node-2).
-# Uses original BLOCK_KV=128 (matching MI355X production config, no precision loss).
-# No AITER upgrade — latest (8f86aad8b) has breaking API changes.
+# Step 1b: Patch AITER fp8_mqa_logits for gfx942 shared memory limit
+# MI308X (gfx942) has 64KB shared memory limit vs MI355X's 80KB+.
+# Original BLOCK_KV=128 → 80KB shared memory (exceeds 64KB → OutOfResources).
+# Patched: BLOCK_KV=64, num_stages=1 → fits in 64KB.
+# This is a HARDWARE LIMIT, not a precision tradeoff — the kernel math is identical,
+# just smaller tile size. No precision loss.
 # ============================================================
-# (No action needed — base image AITER is correct)
+COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/triton/attention/fp8_mqa_logits.py
 
 # ============================================================
 # Step 2: Environment Variables (21, based on MI355X production config)
