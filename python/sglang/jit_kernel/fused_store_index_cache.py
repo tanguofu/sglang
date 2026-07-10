@@ -56,6 +56,12 @@ def _jit_dsa_fused_store_module(
 def can_use_dsa_fused_store(
     key_dtype: torch.dtype, indices_dtype: torch.dtype, page_size: int
 ) -> bool:
+    # DISABLED on ROCm/HIP: fused-store kernel corrupts DSA index K cache
+    # on GLM-5.2 long context (>2K tokens), causing MTP accept rate collapse
+    # and garbled output. Same issue as 355X (iWiki 4024708625 §16).
+    from sglang.srt.utils import is_hip
+    if is_hip():
+        return False
     logger = logging.getLogger(__name__)
     try:
         _jit_dsa_fused_store_module(key_dtype, indices_dtype, page_size)
