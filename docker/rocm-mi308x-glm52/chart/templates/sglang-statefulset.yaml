@@ -58,12 +58,21 @@ spec:
                 --schedule-conservativeness {{ .Values.sglang.scheduleConservativeness }} \
                 --prefill-max-requests {{ .Values.sglang.prefillMaxRequests }} --max-prefill-tokens {{ .Values.sglang.maxPrefillTokens }} \
                 --kv-cache-dtype {{ .Values.sglang.kvCacheDtype }} \
+                {{- if ne .Values.sglang.speculativeAlgorithm "NONE" }}
                 --speculative-algorithm {{ .Values.sglang.speculativeAlgorithm }} \
                 --speculative-num-steps {{ .Values.sglang.speculativeNumSteps }} --speculative-num-draft-tokens {{ .Values.sglang.speculativeNumDraftTokens }} \
                 --speculative-eagle-topk {{ .Values.sglang.speculativeEagleTopk }} \
+                {{- end }}
                 --cuda-graph-backend-prefill {{ .Values.sglang.cudaGraphBackendPrefill }} \
                 --max-running-requests {{ .Values.sglang.maxRunningRequests }} \
                 --cuda-graph-bs-prefill {{ .Values.sglang.cudaGraphBsPrefill }} \
+                {{- if .Values.sglang.enableHierarchicalCache }}
+                --enable-hierarchical-cache \
+                --hicache-ratio {{ .Values.sglang.hicacheRatio }} \
+                --hicache-io-backend {{ .Values.sglang.hicacheIoBackend }} \
+                --hicache-mem-layout {{ .Values.sglang.hicacheMemLayout }} \
+                --hicache-write-policy {{ .Values.sglang.hicacheWritePolicy }} \
+                {{- end }}
                 --enable-metrics --skip-server-warmup \
                 --watchdog-timeout {{ .Values.sglang.watchdogTimeout }} --log-level {{ .Values.sglang.logLevel }}
           env:

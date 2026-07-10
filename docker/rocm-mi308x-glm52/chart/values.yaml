@@ -51,22 +51,28 @@ sglang:
   tpSize: 8
   ppSize: 1
   contextLength: "1048576"
-  memFractionStatic: 0.90
+  memFractionStatic: 0.88
   kvCacheDtype: fp8_e4m3
-  chunkedPrefillSize: 16384
+  chunkedPrefillSize: 32768
   maxRunningRequests: 32
   prefillMaxRequests: 32
-  maxPrefillTokens: 16384
+  maxPrefillTokens: 32768
   scheduleConservativeness: 0.5
   cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16"
   cudaGraphMaxBsDecode: 16
   cudaGraphBsPrefill: "4 8 16 32"
   cudaGraphBackendPrefill: breakable
-  # MTP speculative decoding
-  speculativeAlgorithm: NEXTN
-  speculativeNumSteps: 3
-  speculativeNumDraftTokens: 4
-  speculativeEagleTopk: 1
+  # MTP speculative decoding — disabled (detokenizer deadlock on gfx942)
+  speculativeAlgorithm: NONE
+  speculativeNumSteps: 0
+  speculativeNumDraftTokens: 0
+  speculativeEagleTopk: 0
+  # HiCache — hierarchical KV cache (GPU VRAM + CPU RAM)
+  enableHierarchicalCache: true
+  hicacheRatio: 2.0
+  hicacheIoBackend: direct
+  hicacheMemLayout: page_first_direct
+  hicacheWritePolicy: write_through
   # Feature flags
   enableAiterAllreduceFusion: true
   enableMixedChunk: true
