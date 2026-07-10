@@ -17,13 +17,13 @@
 # Environment variables are pre-set via ENV.
 # The entrypoint (start_server.sh) only needs MODEL_PATH, API_KEY, PORT.
 
-FROM lmsysorg/sglang-rocm:v0.5.14-rocm720-mi30x-20260708
+FROM lmsysorg/sglang-rocm:v0.5.14-rocm720-mi30x-20260710
 
 LABEL maintainer="guofutan"
-LABEL description="GLM-5.2-FP8 SGLang worker for AMD MI308X (gfx942) with 0708-opt patches"
-LABEL sglang-base-image="v0.5.14-rocm720-mi30x-20260708"
+LABEL description="GLM-5.2-FP8 SGLang worker for AMD MI308X (gfx942) with 0710-opt patches"
+LABEL sglang-base-image="v0.5.14-rocm720-mi30x-20260710"
 LABEL gpu-arch="gfx942"
-LABEL branch="308x-glm52-opt"
+LABEL branch="glm52-308x-0710-opt"
 
 # ============================================================
 # Step 1: Replace sglang source with pre-patched version (0708-opt)
@@ -65,7 +65,11 @@ assert 'DISABLED on ROCm' not in fs, 'REVERT FAILED: fused-store is_hip guard st
 assert 'if is_hip():' not in fs, 'REVERT FAILED: fused-store is_hip() check still present'; \
 db = open('/sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa_backend.py').read(); \
 assert 'and not _is_hip' not in db.split('_USE_FUSED_METADATA_COPY')[1].split(')')[0] if '_USE_FUSED_METADATA_COPY' in db else True, 'REVERT FAILED: fused metadata copy still disabled on HIP'; \
-print('All 16 patches verified + 308X workarounds reverted OK')"
+glm = open('/sgl-workspace/sglang/python/sglang/srt/models/glm4_moe.py').read(); \
+assert 'GlmMoeDsaForCausalLMNextN' in glm, 'UPSTREAM MISSING: MTP Quark fix (GlmMoeDsaForCausalLMNextN)'; \
+nxn = open('/sgl-workspace/sglang/python/sglang/srt/models/deepseek_nextn.py').read(); \
+assert '_resolve_nextn_quant_config' in nxn, 'UPSTREAM MISSING: MTP Quark fix (_resolve_nextn_quant_config)'; \
+print('All 16 patches verified + 308X workarounds reverted OK + upstream MTP fix present')"
 
 # ============================================================
 # Step 1b: Add FlyDSL gfx942 fp8 MQA logits kernel + patch Triton path
