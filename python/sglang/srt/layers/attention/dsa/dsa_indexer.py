@@ -374,7 +374,7 @@ class Indexer(MultiPlatformOp):
         else:
             self.cp_size = None
             self.cp_rank = None
-        if _is_cuda:
+        if _is_cuda or _is_hip:
             self.sm_count = deep_gemm.get_num_sms()
             self.half_device_sm_count = ceil_align(self.sm_count // 2, 8)
             pp_size = get_global_server_args().pp_size
