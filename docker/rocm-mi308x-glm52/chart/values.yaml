@@ -10,7 +10,7 @@
 # ---------------------------------------------------------------------------
 # Image
 # ---------------------------------------------------------------------------
-image: ccr.ccs.tencentyun.com/ti-platform/sglang-glm52-308x
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
 tag: "0710"
 pullPolicy: IfNotPresent
 imagePullSecret: tencent-registry
