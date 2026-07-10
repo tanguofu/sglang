@@ -21,6 +21,9 @@ port: 30000
 # ---------------------------------------------------------------------------
 # Node selection
 # ---------------------------------------------------------------------------
+# Set nodeName to pin to a specific node (overrides nodeSelector).
+# Leave empty to use nodeSelector (accelerator=amd-gpu, sglang-model=ready).
+nodeName: ""
 nodeSelector:
   accelerator: amd-gpu
   sglang-model: ready
@@ -118,6 +121,7 @@ readinessProbe:
     port: 30000
   initialDelaySeconds: 120
   periodSeconds: 30
+  timeoutSeconds: 10
   failureThreshold: 10
 
 livenessProbe:
@@ -126,4 +130,5 @@ livenessProbe:
     port: 30000
   initialDelaySeconds: 600
   periodSeconds: 60
+  timeoutSeconds: 10
   failureThreshold: 5
