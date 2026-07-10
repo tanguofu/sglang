@@ -13,8 +13,8 @@ router:
   port: 30001
   policy: cache_aware
   workerUrls:
-    - "http://21.234.170.19:30000"   # ZW prod-1 (ins-dewy6nun)
-    - "http://21.234.170.38:30000"   # ZW prod-2 (ins-qwn8n8ij)
+    - "http://21.234.170.103:30000"  # ZW prod-1 (node-21.234.170.103)
+    - "http://21.234.170.32:30000"   # ZW prod-2 (node-21.234.170.32)
   cacheThreshold: 0.3
   balanceAbsThreshold: 64
   balanceRelThreshold: 1.5
@@ -28,10 +28,10 @@ llmDRouter:
   port: 30001
   endpoints:
     - name: sglang-prod-1
-      address: 21.234.170.19
+      address: 21.234.170.103
       port: 30000
     - name: sglang-prod-2
-      address: 21.234.170.38
+      address: 21.234.170.32
       port: 30000
 
 # ---------------------------------------------------------------------------

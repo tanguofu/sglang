@@ -46,7 +46,12 @@ spec:
               # Install numactl if missing (required by SGLang NUMA binding V2)
               if ! command -v numactl &>/dev/null; then
                 echo "Installing numactl for NUMA memory binding..."
-                apt-get update -qq && apt-get install -y -qq numactl >/dev/null 2>&1
+                apt-get update -qq && apt-get install -y -qq numactl >/dev/null 2>&1 || true
+              fi
+              # Only pass --numa-node if numactl is available (SGLang requires it for NUMA binding)
+              NUMA_FLAG=""
+              if command -v numactl &>/dev/null && [ -n "{{ .Values.sglang.numaNode }}" ]; then
+                NUMA_FLAG="--numa-node {{ .Values.sglang.numaNode }}"
               fi
               echo "=== GLM-5.2-FP8 SGLang (MI308X gfx942) ==="
               exec python3 -m sglang.launch_server \
@@ -56,7 +61,7 @@ spec:
                 --api-key "$API_KEY" \
                 --tp-size {{ .Values.sglang.tpSize }} --pp-size {{ .Values.sglang.ppSize }} --trust-remote-code \
                 --host 0.0.0.0 --port "$PORT" \
-                --numa-node {{ .Values.sglang.numaNode }} \
+                $NUMA_FLAG \
                 --context-length {{ .Values.sglang.contextLength | quote }} \
                 --tool-call-parser {{ .Values.sglang.toolCallParser }} --reasoning-parser {{ .Values.sglang.reasoningParser }} \
                 --mem-fraction-static {{ .Values.sglang.memFractionStatic }} \
