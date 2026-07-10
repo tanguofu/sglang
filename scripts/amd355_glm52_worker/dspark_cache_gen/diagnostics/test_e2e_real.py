@@ -9,7 +9,7 @@ import numpy as np
 os.environ.setdefault("HIP_VISIBLE_DEVICES", "0")
 os.environ.setdefault("SGLANG_USE_AITER", "1")
 
-CKPT_DIR = "/data/checkpoints/deepspec/dspark_glm5_2_v9_256exp_clean/step_180"
+CKPT_DIR = "/data/checkpoints/deepspec/dspark_glm5_2_v9_256exp_clean/step_100"
 MODEL_PATH = "/data/models/GLM-5.2-FP8"
 CACHE_DIR = "/data/dspark_target_cache_v9_coding_clean_merged"
 DEEPSPEC_PATH = "/data/DeepSpec"
