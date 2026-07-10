@@ -57,6 +57,11 @@ sglang:
   tpSize: 8
   ppSize: 1
   contextLength: "1048576"
+  # NUMA memory binding — one entry per TP rank (space-separated, sglang uses nargs="+").
+  # MI308X has 2 NUMA nodes per socket; TP0-3 → NUMA 0, TP4-7 → NUMA 1.
+  # SGLang's auto NUMA detection returns False on ROCm (numa_utils.py only checks CUDA),
+  # so we must pass --numa-node explicitly to bind each rank's memory to its local NUMA node.
+  numaNode: "0 0 0 0 1 1 1 1"
   memFractionStatic: 0.88
   kvCacheDtype: fp8_e4m3
   chunkedPrefillSize: 32768
