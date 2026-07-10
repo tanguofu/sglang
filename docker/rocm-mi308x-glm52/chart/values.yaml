@@ -1,14 +1,19 @@
 # SGLang GLM-5.2 on AMD MI308X (gfx942) — Helm Chart Values
+#
+# Two environments:
+#   - test  (广州 GZ): 4x MI308X nodes, TKE cluster cls-bmmk3vtl
+#   - prod  (中卫 ZW): 2x MI308X nodes, bare-metal Docker (planned)
+#
+# Both use the same image, model, and sglang config.
+# Router and gateway are environment-specific.
 
 # ---------------------------------------------------------------------------
 # Image
 # ---------------------------------------------------------------------------
-# Custom image on mirrors.tencent.com (requires /etc/hosts fix + imagePullSecret)
-# See README.md for /etc/hosts setup: mirrors.tencent.com → 30.163.240.137
 image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
 tag: latest
 pullPolicy: IfNotPresent
-imagePullSecret: tencent-registry  # mirrors.tencent.com requires /etc/hosts fix (30.163.240.137)
+imagePullSecret: tencent-registry
 
 # ---------------------------------------------------------------------------
 # Deployment
@@ -21,8 +26,6 @@ port: 30000
 # ---------------------------------------------------------------------------
 # Node selection
 # ---------------------------------------------------------------------------
-# Set nodeName to pin to a specific node (overrides nodeSelector).
-# Leave empty to use nodeSelector (accelerator=amd-gpu, sglang-model=ready).
 nodeName: ""
 nodeSelector:
   accelerator: amd-gpu
@@ -40,7 +43,7 @@ resources:
     amd.com/gpu: 8
 
 # ---------------------------------------------------------------------------
-# Model
+# Model (same for both test and prod)
 # ---------------------------------------------------------------------------
 model:
   path: /data/model/glm52-fp8
@@ -48,7 +51,7 @@ model:
   apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
 
 # ---------------------------------------------------------------------------
-# Server launch parameters (based on MI355X production config)
+# Server launch parameters (same for both test and prod)
 # ---------------------------------------------------------------------------
 sglang:
   tpSize: 8
@@ -65,19 +68,15 @@ sglang:
   cudaGraphMaxBsDecode: 16
   cudaGraphBsPrefill: "4 8 16 32"
   cudaGraphBackendPrefill: breakable
-  # MTP speculative decoding — re-enabled (matching 355X config, iWiki 4024708625)
-  # DSA fused-store disabled to prevent long context corruption (same as 355X)
   speculativeAlgorithm: NEXTN
   speculativeNumSteps: 3
   speculativeNumDraftTokens: 4
   speculativeEagleTopk: 1
-  # HiCache — hierarchical KV cache (GPU VRAM + CPU RAM)
   enableHierarchicalCache: true
   hicacheRatio: 2.0
   hicacheIoBackend: direct
   hicacheMemLayout: page_first_direct
   hicacheWritePolicy: write_through
-  # Feature flags
   enableAiterAllreduceFusion: true
   enableMixedChunk: true
   enableFusedQkNormRope: true
@@ -85,7 +84,6 @@ sglang:
   skipServerWarmup: true
   watchdogTimeout: 3600
   logLevel: info
-  # Parsers
   toolCallParser: glm47
   reasoningParser: glm45
 
@@ -100,35 +98,37 @@ hostPaths:
 shmSize: 32Gi
 
 # ---------------------------------------------------------------------------
-# SGLang Router (cache_aware prefix-aware load balancer)
+# SGLang Router — TEST environment (广州 GZ, TKE cls-bmmk3vtl)
+# cache_aware prefix-aware load balancer across 4 GZ TP8 instances
 # ---------------------------------------------------------------------------
 router:
   enabled: true
   port: 30001
   policy: cache_aware
-  # Worker URLs (all TP8 instances, hostNetwork reachable via node IP)
   workerUrls:
-    - "http://21.151.225.144:30000"  # test-0
-    - "http://21.151.225.132:30000"  # test-1
-    - "http://21.151.225.172:30000"  # test-2
-    # - "http://21.151.225.152:30000"  # test-3 (uncomment when ready)
-  # cache_aware tuning (prefix match threshold, load balance thresholds)
+    - "http://21.151.225.144:30000"  # GZ test-0 (ins-bjoqlzak)
+    - "http://21.151.225.132:30000"  # GZ test-1 (ins-6qgdzzvu)
+    - "http://21.151.225.172:30000"  # GZ test-2 (ins-o8y5rwq2)
+    - "http://21.151.225.152:30000"  # GZ test-3 (ins-1g40idxe)
   cacheThreshold: 0.3
   balanceAbsThreshold: 64
   balanceRelThreshold: 1.5
 
 # ---------------------------------------------------------------------------
-# Envoy Gateway (eg-tke in ti-cloud namespace)
+# Envoy Gateway — TEST environment (广州 GZ)
+# External: http://glm52-308x-test.jmpti.woa.com → envoy LB → GZ router
 # ---------------------------------------------------------------------------
 gateway:
   enabled: true
-  # Gateway to attach HTTPRoute to
   gatewayName: eg-tke
   gatewayNamespace: ti-cloud
-  # External hostname (must match *.jmpti.woa.com listener on eg-tke)
-  hostname: glm52-308x.jmpti.woa.com
-  # Envoy LB address (for reference)
+  hostname: glm52-308x-test.jmpti.woa.com
   lbAddress: 21.162.215.14
+
+# ---------------------------------------------------------------------------
+# PROD environment (中卫 ZW) — separate values file: values-prod.yaml
+# Router and gateway for ZW are configured via --values values-prod.yaml
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Health checks
