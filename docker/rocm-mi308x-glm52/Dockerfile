@@ -68,21 +68,13 @@ assert 'and not _is_hip' not in db.split('_USE_FUSED_METADATA_COPY')[1].split(')
 print('All 16 patches verified + 308X workarounds reverted OK')"
 
 # ============================================================
-# Step 1b: Upgrade AITER to latest (gfx942 FlyDSL fp8 MQA logits kernel)
-# Base image has AITER 9127c94a1. Latest includes:
-# - FlyDSL gfx942 fp8 MQA logits kernel (drop-in for Triton fp8_mqa_logits)
-# - gfx942 flat_pf2 FMoE kernel for low-token decode
-# - GLM-5.1/5.2 FP8 blockscale GEMM/FMoE tunings for gfx942
-# - bf16 is_fn_pack path enabled on gfx942
-# Uses original BLOCK_KV=128 (matching MI355X production config, no precision loss)
+# Step 1b: AITER — use base image version (9127c94a1, matching MI355X)
+# The base image already has AITER 9127c94a1 installed and working.
+# This is the exact same version used by MI355X production (xid18k-node-2).
+# Uses original BLOCK_KV=128 (matching MI355X production config, no precision loss).
+# No AITER upgrade — latest (8f86aad8b) has breaking API changes.
 # ============================================================
-RUN cd /sgl-workspace/aiter && \
-    git fetch origin && \
-    git checkout origin/main && \
-    pip install -e . && \
-    pip install flydsl || true && \
-    echo "AITER upgraded to: $(git log --oneline -1)" && \
-    echo "Note: import aiter requires GPU (rocminfo) — verified at runtime"
+# (No action needed — base image AITER is correct)
 
 # ============================================================
 # Step 2: Environment Variables (21, based on MI355X production config)
