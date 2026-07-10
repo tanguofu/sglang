@@ -163,6 +163,89 @@ spec:
             {{- toYaml .Values.readinessProbe | nindent 12 }}
           livenessProbe:
             {{- toYaml .Values.livenessProbe | nindent 12 }}
+        {{- if .Values.llmDRouter.enabled }}
+        # EPP — llm-d Endpoint Picker (makes routing decisions via file-discovery)
+        - name: epp
+          image: "{{ .Values.llmDRouter.eppImage }}:{{ .Values.llmDRouter.eppVersion }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config-file=/etc/epp/config.yaml
+            - --pool-name=file-discovery
+            - --pool-namespace={{ .Values.namespace }}
+            - --grpc-port=9002
+            - --grpc-health-port=9003
+            - --metrics-port=9090
+            - --secure-serving=false
+            - --v=2
+          volumeMounts:
+            - name: epp-config
+              mountPath: /etc/epp
+              readOnly: true
+          resources:
+            requests:
+              cpu: "4"
+              memory: 8Gi
+            limits:
+              memory: 16Gi
+          readinessProbe:
+            grpc:
+              port: 9003
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 10
+          livenessProbe:
+            grpc:
+              port: 9003
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+        # Envoy — llm-d data plane (forwards to chosen SGLang instance)
+        - name: envoy
+          image: "{{ .Values.llmDRouter.envoyImage }}:{{ .Values.llmDRouter.envoyVersion }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--service-node"
+            - "llm-d-envoy"
+            - "--log-level"
+            - "warn"
+            - "--concurrency"
+            - "8"
+            - "--drain-strategy"
+            - "immediate"
+            - "--drain-time-s"
+            - "60"
+            - "-c"
+            - "/etc/envoy/envoy.yaml"
+          ports:
+            - name: router
+              containerPort: {{ .Values.llmDRouter.port }}
+              hostPort: {{ .Values.llmDRouter.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+              readOnly: true
+          resources:
+            requests:
+              cpu: "4"
+              memory: 8Gi
+            limits:
+              memory: 16Gi
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 19000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 19000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+        {{- end }}
       volumes:
         - name: data
           hostPath:
@@ -180,3 +263,11 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: {{ .Values.shmSize }}
+        {{- if .Values.llmDRouter.enabled }}
+        - name: epp-config
+          configMap:
+            name: {{ .Release.Name }}-llm-d-epp-config
+        - name: envoy-config
+          configMap:
+            name: {{ .Release.Name }}-llm-d-envoy-config
+        {{- end }}

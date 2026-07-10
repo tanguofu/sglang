@@ -5,10 +5,10 @@
 # Use it to be explicit about which environment you're deploying to.
 
 # ---------------------------------------------------------------------------
-# SGLang Router — TEST environment (广州 GZ)
+# SGLang Router (sgl-model-gateway) — DISABLED, replaced by llm-d router
 # ---------------------------------------------------------------------------
 router:
-  enabled: true
+  enabled: false
   port: 30001
   policy: cache_aware
   workerUrls:
@@ -19,6 +19,27 @@ router:
   cacheThreshold: 0.3
   balanceAbsThreshold: 64
   balanceRelThreshold: 1.5
+
+# ---------------------------------------------------------------------------
+# llm-d Router — TEST environment (广州 GZ)
+# EPP + Envoy with file-discovery plugin, 4 GZ SGLang instances
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: true
+  port: 30001
+  endpoints:
+    - name: sglang-test-0
+      address: 21.151.225.144
+      port: 30000
+    - name: sglang-test-1
+      address: 21.151.225.132
+      port: 30000
+    - name: sglang-test-2
+      address: 21.151.225.172
+      port: 30000
+    - name: sglang-test-3
+      address: 21.151.225.152
+      port: 30000
 
 # ---------------------------------------------------------------------------
 # Envoy Gateway — TEST environment (广州 GZ)

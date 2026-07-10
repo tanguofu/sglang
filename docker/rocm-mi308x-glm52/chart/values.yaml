@@ -103,11 +103,10 @@ hostPaths:
 shmSize: 32Gi
 
 # ---------------------------------------------------------------------------
-# SGLang Router — TEST environment (广州 GZ, TKE cls-bmmk3vtl)
-# cache_aware prefix-aware load balancer across 4 GZ TP8 instances
+# SGLang Router (sgl-model-gateway) — DISABLED, replaced by llm-d router
 # ---------------------------------------------------------------------------
 router:
-  enabled: true
+  enabled: false
   port: 30001
   policy: cache_aware
   workerUrls:
@@ -118,6 +117,33 @@ router:
   cacheThreshold: 0.3
   balanceAbsThreshold: 64
   balanceRelThreshold: 1.5
+
+# ---------------------------------------------------------------------------
+# llm-d Router — EPP (Endpoint Picker) + Envoy sidecar
+# Replaces sgl-model-gateway. Uses file-discovery plugin (no InferencePool CRD).
+# EPP scorers: prefix-cache (w3), queue (w2), kv-cache-util (w2), no-hit-lru (w2)
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: true
+  port: 30001
+  eppImage: mirrors.tencent.com/ti-platform/llm-d-router-endpoint-picker
+  eppVersion: v0.9.0-amd64
+  envoyImage: mirrors.tencent.com/ti-platform/envoy
+  envoyVersion: distroless-v1.33.2-amd64
+  nodeName: ""  # Set to pin router to a specific node
+  endpoints:
+    - name: sglang-test-0
+      address: 21.151.225.144
+      port: 30000
+    - name: sglang-test-1
+      address: 21.151.225.132
+      port: 30000
+    - name: sglang-test-2
+      address: 21.151.225.172
+      port: 30000
+    - name: sglang-test-3
+      address: 21.151.225.152
+      port: 30000
 
 # ---------------------------------------------------------------------------
 # Envoy Gateway — TEST environment (广州 GZ)

@@ -6,11 +6,10 @@
 # (image, model, sglang config) is identical.
 
 # ---------------------------------------------------------------------------
-# SGLang Router — PROD environment (中卫 ZW)
-# cache_aware prefix-aware load balancer across 2 ZW TP8 instances
+# SGLang Router (sgl-model-gateway) — DISABLED, replaced by llm-d router
 # ---------------------------------------------------------------------------
 router:
-  enabled: true
+  enabled: false
   port: 30001
   policy: cache_aware
   workerUrls:
@@ -19,6 +18,21 @@ router:
   cacheThreshold: 0.3
   balanceAbsThreshold: 64
   balanceRelThreshold: 1.5
+
+# ---------------------------------------------------------------------------
+# llm-d Router — PROD environment (中卫 ZW)
+# EPP + Envoy with file-discovery plugin, 2 ZW SGLang instances
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: true
+  port: 30001
+  endpoints:
+    - name: sglang-prod-1
+      address: 21.234.170.19
+      port: 30000
+    - name: sglang-prod-2
+      address: 21.234.170.38
+      port: 30000
 
 # ---------------------------------------------------------------------------
 # Envoy Gateway — PROD environment (中卫 ZW)
