@@ -100,6 +100,24 @@ hostPaths:
 shmSize: 32Gi
 
 # ---------------------------------------------------------------------------
+# SGLang Router (cache_aware prefix-aware load balancer)
+# ---------------------------------------------------------------------------
+router:
+  enabled: true
+  port: 30001
+  policy: cache_aware
+  # Worker URLs (all TP8 instances, hostNetwork reachable via node IP)
+  workerUrls:
+    - "http://21.151.225.144:30000"  # test-0
+    - "http://21.151.225.132:30000"  # test-1
+    - "http://21.151.225.172:30000"  # test-2
+    # - "http://21.151.225.152:30000"  # test-3 (uncomment when ready)
+  # cache_aware tuning (prefix match threshold, load balance thresholds)
+  cacheThreshold: 0.3
+  balanceAbsThreshold: 64
+  balanceRelThreshold: 1.5
+
+# ---------------------------------------------------------------------------
 # Envoy Gateway (eg-tke in ti-cloud namespace)
 # ---------------------------------------------------------------------------
 gateway:
