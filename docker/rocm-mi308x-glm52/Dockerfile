@@ -79,8 +79,9 @@ print('All 16 patches verified + 308X workarounds reverted OK')"
 RUN cd /sgl-workspace/aiter && \
     git fetch origin && \
     git checkout origin/main && \
-    pip install -e . --no-deps --no-build-isolation 2>/dev/null || true && \
-    pip install flydsl 2>/dev/null || true && \
+    pip install -e . && \
+    pip install flydsl || true && \
+    python3 -c "import aiter; print('AITER import OK')" && \
     echo "AITER upgraded to: $(git log --oneline -1)"
 
 # ============================================================
