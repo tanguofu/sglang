@@ -157,7 +157,7 @@ SGL_DEVICE float coarse_bin_lower_bound(uint32_t bin) {
 SGL_DEVICE uint32_t warp_inclusive_sum(uint32_t lane_id, uint32_t val) {
 #pragma unroll
   for (uint32_t offset = 1; offset < 32; offset *= 2) {
-    uint32_t n = __shfl_up_sync(0xFFFFFFFF, val, offset);
+    uint32_t n = __shfl_up_sync(0xFFFFFFFFull, val, offset);
     if (lane_id >= offset) val += n;
   }
   return val;
