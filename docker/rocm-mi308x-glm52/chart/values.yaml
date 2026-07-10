@@ -62,11 +62,12 @@ sglang:
   cudaGraphMaxBsDecode: 16
   cudaGraphBsPrefill: "4 8 16 32"
   cudaGraphBackendPrefill: breakable
-  # MTP speculative decoding — disabled (detokenizer deadlock on gfx942)
-  speculativeAlgorithm: NONE
-  speculativeNumSteps: 0
-  speculativeNumDraftTokens: 0
-  speculativeEagleTopk: 0
+  # MTP speculative decoding — re-enabled (matching 355X config, iWiki 4024708625)
+  # DSA fused-store disabled to prevent long context corruption (same as 355X)
+  speculativeAlgorithm: NEXTN
+  speculativeNumSteps: 3
+  speculativeNumDraftTokens: 4
+  speculativeEagleTopk: 1
   # HiCache — hierarchical KV cache (GPU VRAM + CPU RAM)
   enableHierarchicalCache: true
   hicacheRatio: 2.0
