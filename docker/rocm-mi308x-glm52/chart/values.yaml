@@ -79,8 +79,8 @@ sglang:
   speculativeEagleTopk: 1
   enableHierarchicalCache: true
   hicacheRatio: 2.0
-  hicacheIoBackend: direct
-  hicacheMemLayout: page_first_direct
+  hicacheIoBackend: kernel
+  hicacheMemLayout: page_first
   hicacheWritePolicy: write_through
   enableAiterAllreduceFusion: true
   enableMixedChunk: true
