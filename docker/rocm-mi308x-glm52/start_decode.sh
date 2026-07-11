@@ -27,18 +27,17 @@ exec python3 -m sglang.launch_server \
     --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 \
     --cuda-graph-max-bs-decode 16 \
     --enable-aiter-allreduce-fusion \
-    --chunked-prefill-size 32768 \
     --enable-fused-qk-norm-rope \
     --schedule-conservativeness 0.5 \
     --kv-cache-dtype fp8_e4m3 \
     --speculative-algorithm NEXTN \
     --speculative-num-steps 2 --speculative-num-draft-tokens 3 \
     --speculative-eagle-topk 1 \
-    --cuda-graph-backend-prefill breakable \
     --max-running-requests 128 \
-    --cuda-graph-bs-prefill 4 8 16 32 \
     --disaggregation-mode decode \
     --disaggregation-transfer-backend mooncake \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
+    --disaggregation-decode-enable-radix-cache \
+    --num-reserved-decode-tokens 1024 \
     --enable-metrics --skip-server-warmup \
     --watchdog-timeout 3600 --log-level info

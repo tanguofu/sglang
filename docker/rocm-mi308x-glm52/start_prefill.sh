@@ -23,14 +23,12 @@ exec python3 -m sglang.launch_server \
     --host 0.0.0.0 --port "$PORT" \
     --context-length 1048576 \
     --tool-call-parser glm47 --reasoning-parser glm45 \
-    --mem-fraction-static 0.88 \
-    --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 \
-    --cuda-graph-max-bs-decode 16 \
+    --mem-fraction-static 0.90 \
     --enable-aiter-allreduce-fusion \
     --chunked-prefill-size 32768 \
     --enable-fused-qk-norm-rope \
     --schedule-conservativeness 0.5 \
-    --prefill-max-requests 32 --max-prefill-tokens 32768 \
+    --prefill-max-requests 64 --max-prefill-tokens 32768 \
     --kv-cache-dtype fp8_e4m3 \
     --cuda-graph-backend-prefill breakable \
     --max-running-requests 128 \
@@ -38,5 +36,6 @@ exec python3 -m sglang.launch_server \
     --disaggregation-mode prefill \
     --disaggregation-transfer-backend mooncake \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
+    --num-reserved-decode-tokens 1024 \
     --enable-metrics --skip-server-warmup \
     --watchdog-timeout 3600 --log-level info

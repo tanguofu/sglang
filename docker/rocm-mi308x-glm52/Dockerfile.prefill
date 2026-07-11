@@ -1,0 +1,61 @@
+# GLM-5.2-FP8 SGLang PREFILL Worker for AMD MI308X (gfx942)
+# Optimized for prefill throughput — no MTP, higher mem fraction, larger prefill batches.
+#
+# Build: docker build -f docker/rocm-mi308x-glm52/Dockerfile.prefill -t sglang-glm52-308x-prefill:0711 .
+
+FROM lmsysorg/sglang-rocm:v0.5.14-rocm720-mi30x-20260710
+
+LABEL maintainer="guofutan"
+LABEL description="GLM-5.2-FP8 SGLang PREFILL worker (MI308X gfx942) — PD disaggregation"
+LABEL sglang-base-image="v0.5.14-rocm720-mi30x-20260710"
+LABEL gpu-arch="gfx942"
+LABEL branch="308x-pd-0711-opt"
+LABEL role="prefill"
+
+# Step 1: Replace sglang source with pre-patched version (0711-opt HIP fixes)
+COPY python/sglang/ /sgl-workspace/sglang/python/sglang/
+
+# Step 1b: FlyDSL gfx942 kernel + Triton fallback
+COPY docker/rocm-mi308x-glm52/patches/flydsl/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/flydsl/kernels/fp8_mqa_logits.py
+COPY docker/rocm-mi308x-glm52/patches/flydsl/__init__.py /sgl-workspace/aiter/aiter/ops/flydsl/__init__.py
+COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/triton/attention/fp8_mqa_logits.py
+
+# Step 2: Environment Variables — Prefill optimized
+ENV HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+ENV NCCL_DEBUG=INFO
+ENV HSA_ENABLE_SDMA=0
+ENV HIP_FORCE_DEV_KERNARG=1
+ENV HSA_NO_SCRATCH_RECLAIM=1
+ENV NCCL_CUMEM_ENABLE=0
+ENV NCCL_MIN_NCHANNELS=112
+ENV NCCL_NVLS_ENABLE=0
+ENV PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+ENV PYTORCH_ROCM_ARCH=gfx942
+ENV ROCM_QUICK_REDUCE_QUANTIZATION=INT8
+ENV SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN=1
+ENV SGLANG_DISABLE_CUDNN_CHECK=1
+ENV SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM=1
+ENV SGLANG_INT4_WEIGHT=0
+ENV SGLANG_MOE_PADDING=1
+ENV SGLANG_ROCM_DISABLE_LINEARQUANT=0
+ENV SGLANG_ROCM_FUSED_DECODE_MLA=1
+ENV SGLANG_SET_CPU_AFFINITY=1
+ENV SGLANG_USE_AITER=1
+ENV SGLANG_USE_ROCM700A=1
+# Disable topk_v2 JIT kernel (GPU hang on gfx942)
+ENV SGLANG_OPT_USE_TOPK_V2=0
+# Mooncake TCP mode (bnxt_re RDMA not fully compatible)
+ENV MC_FORCE_TCP=1
+ENV MC_TCP_ENABLE_CONNECTION_POOL=true
+
+# Runtime-overridable params
+ENV MODEL_PATH=/data/model/glm52-fp8
+ENV PORT=30000
+ENV API_KEY=sk-46faecc9d0bc4dcd9db6a15c73ae91c8
+ENV DISAGG_BOOTSTRAP_PORT=8998
+
+# Step 3: Entrypoint — Prefill optimized launch
+COPY docker/rocm-mi308x-glm52/start_prefill.sh /start_server.sh
+RUN chmod +x /start_server.sh
+
+ENTRYPOINT ["/start_server.sh"]
