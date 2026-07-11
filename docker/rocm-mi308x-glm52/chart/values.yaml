@@ -11,7 +11,7 @@
 # Image
 # ---------------------------------------------------------------------------
 image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
-tag: "0710"
+tag: latest
 pullPolicy: IfNotPresent
 imagePullSecret: tencent-registry
 
@@ -65,7 +65,7 @@ sglang:
   memFractionStatic: 0.88
   kvCacheDtype: fp8_e4m3
   chunkedPrefillSize: 32768
-  maxRunningRequests: 32
+  maxRunningRequests: 128
   prefillMaxRequests: 32
   maxPrefillTokens: 32768
   scheduleConservativeness: 0.5
@@ -74,8 +74,8 @@ sglang:
   cudaGraphBsPrefill: "4 8 16 32"
   cudaGraphBackendPrefill: breakable
   speculativeAlgorithm: NEXTN
-  speculativeNumSteps: 3
-  speculativeNumDraftTokens: 4
+  speculativeNumSteps: 2
+  speculativeNumDraftTokens: 3
   speculativeEagleTopk: 1
   enableHierarchicalCache: true
   hicacheRatio: 2.0
