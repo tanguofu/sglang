@@ -182,11 +182,6 @@ from sglang.version import __version__
 
 logger = logging.getLogger(__name__)
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-# PD disaggregation: bootstrap server thread uses SelectorEventLoop (not uvloop).
-# When disaggregation_mode != null, uvloop's socket accept can break due to
-# two event loops in the same process. Fall back to asyncio in PD mode.
-if os.environ.get("SGLANG_PD_DISABLE_UVLOOP") == "1":
-    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
 
 # Global constants
 HEALTH_CHECK_TIMEOUT = int(os.getenv("SGLANG_HEALTH_CHECK_TIMEOUT", 20))
@@ -2406,7 +2401,7 @@ def _setup_and_run_http_server(
                     root_path=server_args.fastapi_root_path,
                     log_level=server_args.log_level_http or server_args.log_level,
                     timeout_keep_alive=envs.SGLANG_TIMEOUT_KEEP_ALIVE.get(),
-                    loop="auto",
+                    loop="uvloop",
                     ssl_keyfile=server_args.ssl_keyfile,
                     ssl_certfile=server_args.ssl_certfile,
                     ssl_ca_certs=server_args.ssl_ca_certs,
@@ -2443,7 +2438,7 @@ def _setup_and_run_http_server(
                     root_path=server_args.fastapi_root_path,
                     log_level=server_args.log_level_http or server_args.log_level,
                     timeout_keep_alive=envs.SGLANG_TIMEOUT_KEEP_ALIVE.get(),
-                    loop="auto",
+                    loop="uvloop",
                     ssl_keyfile=server_args.ssl_keyfile,
                     ssl_certfile=server_args.ssl_certfile,
                     ssl_ca_certs=server_args.ssl_ca_certs,
@@ -2490,7 +2485,7 @@ def _setup_and_run_http_server(
                     log_level=server_args.log_level_http or server_args.log_level,
                     timeout_keep_alive=envs.SGLANG_TIMEOUT_KEEP_ALIVE.get(),
                     timeout_worker_healthcheck=envs.SGLANG_UVICORN_WORKER_HEALTHCHECK_TIMEOUT.get(),
-                    loop="auto",
+                    loop="uvloop",
                     workers=server_args.tokenizer_worker_num,
                     ssl_keyfile=server_args.ssl_keyfile,
                     ssl_certfile=server_args.ssl_certfile,

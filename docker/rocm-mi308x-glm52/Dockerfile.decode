@@ -49,7 +49,6 @@ ENV SGLANG_OPT_USE_TOPK_V2=0
 ENV MC_GID_INDEX=1
 ENV MC_TCP_ENABLE_CONNECTION_POOL=true
 # PD disaggregation: disable uvloop (breaks socket accept with bootstrap server thread)
-ENV SGLANG_PD_DISABLE_UVLOOP=1
 
 # Runtime-overridable params
 ENV MODEL_PATH=/data/model/glm52-fp8
