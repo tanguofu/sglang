@@ -39,6 +39,5 @@ exec python3 -m sglang.launch_server \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
     --num-reserved-decode-tokens 1024 \
     --disable-overlap-schedule \
-    --sleep-on-idle \
     --enable-metrics --skip-server-warmup \
     --watchdog-timeout 3600 --log-level info
