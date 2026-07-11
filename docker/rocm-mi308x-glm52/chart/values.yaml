@@ -77,7 +77,7 @@ sglang:
   speculativeNumSteps: 3
   speculativeNumDraftTokens: 4
   speculativeEagleTopk: 1
-  enableHierarchicalCache: true
+  enableHierarchicalCache: false
   hicacheRatio: 2.0
   hicacheIoBackend: direct
   hicacheMemLayout: page_first_direct
