@@ -65,7 +65,7 @@ sglang:
   memFractionStatic: 0.88
   kvCacheDtype: fp8_e4m3
   chunkedPrefillSize: 32768
-  maxRunningRequests: 128
+  maxRunningRequests: 32
   prefillMaxRequests: 32
   maxPrefillTokens: 32768
   scheduleConservativeness: 0.5
@@ -74,13 +74,13 @@ sglang:
   cudaGraphBsPrefill: "4 8 16 32"
   cudaGraphBackendPrefill: breakable
   speculativeAlgorithm: NEXTN
-  speculativeNumSteps: 2
-  speculativeNumDraftTokens: 3
+  speculativeNumSteps: 3
+  speculativeNumDraftTokens: 4
   speculativeEagleTopk: 1
   enableHierarchicalCache: true
   hicacheRatio: 2.0
-  hicacheIoBackend: kernel
-  hicacheMemLayout: page_first
+  hicacheIoBackend: direct
+  hicacheMemLayout: page_first_direct
   hicacheWritePolicy: write_through
   enableAiterAllreduceFusion: true
   enableMixedChunk: true
