@@ -20,7 +20,7 @@ from deepspec.trainer import Glm5DSparkTrainer
 BASE_TB_DIR = "/data/tensorboard"
 BASE_CKPT_DIR = "/data/checkpoints"
 project_name = "deepspec"
-exp_name = "dspark_glm5_2_v9_256exp_clean_4node"
+exp_name = "dspark_glm5_2_v10_256exp_4node"
 seed = 42
 
 model = dict(
@@ -46,8 +46,8 @@ train = dict(
     warmup_ratio=0.04,
     weight_decay=0.0,
     precision="bf16",
-    local_batch_size=8,                     # 4-node: 8 × 32 GPU = 256 = global_batch_size
-    global_batch_size=256,
+    local_batch_size=4,                     # 4-node: 8 × 32 GPU = 256 = global_batch_size
+    global_batch_size=128,
     num_train_epochs=200,                   # 39000 steps (195 steps/epoch × 200)
     max_train_steps=None,
     max_grad_norm=1.0,
@@ -61,8 +61,8 @@ logging = dict(
 )
 
 data = dict(
-    target_cache_path="/data/dspark_target_cache_v9_coding_clean_merged",
-    train_data_path="/data/dspark_v9_all_coding.jsonl",
+    target_cache_path="/data/dspark_target_cache_v10",
+    train_data_path="/data/dspark_v10_train.jsonl",
     chat_template="glm5",
     max_length=1000,
     num_workers=4,
@@ -84,8 +84,8 @@ model["confidence_head_alpha"] = 0.0
 model["loss_decay_gamma"] = 1.0
 model["learning_rate"] = 1e-4
 train["lr"] = 1e-4
-data["target_cache_path"] = "/data/dspark_target_cache_v9_coding_clean_merged"
-data["train_data_path"] = "/data/dspark_v9_all_coding.jsonl"
+data["target_cache_path"] = "/data/dspark_target_cache_v10"
+data["train_data_path"] = "/data/dspark_v10_train.jsonl"
 data["max_length"] = 1000
-logging["checkpoint_dir"] = "/data/checkpoints/deepspec/dspark_glm5_2_v9_256exp_clean_4node"
-logging["tensorboard_dir"] = "/data/tensorboard/deepspec/dspark_glm5_2_v9_256exp_clean_4node"
+logging["checkpoint_dir"] = "/data/checkpoints/deepspec/dspark_glm5_2_v10_256exp_4node"
+logging["tensorboard_dir"] = "/data/tensorboard/deepspec/dspark_glm5_2_v10_256exp_4node"
