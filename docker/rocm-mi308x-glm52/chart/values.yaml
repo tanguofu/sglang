@@ -1,0 +1,183 @@
+# SGLang GLM-5.2 on AMD MI308X (gfx942) — Helm Chart Values
+#
+# Two environments:
+#   - test  (广州 GZ): 4x MI308X nodes, TKE cluster cls-bmmk3vtl
+#   - prod  (中卫 ZW): 2x MI308X nodes, bare-metal Docker (planned)
+#
+# Both use the same image, model, and sglang config.
+# Router and gateway are environment-specific.
+
+# ---------------------------------------------------------------------------
+# Image
+# ---------------------------------------------------------------------------
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+tag: latest
+pullPolicy: IfNotPresent
+imagePullSecret: tencent-registry
+
+# ---------------------------------------------------------------------------
+# Deployment
+# ---------------------------------------------------------------------------
+namespace: kube-system
+replicas: 1
+hostNetwork: true
+port: 30000
+
+# ---------------------------------------------------------------------------
+# Node selection
+# ---------------------------------------------------------------------------
+nodeName: ""
+nodeSelector:
+  accelerator: amd-gpu
+  sglang-model: ready
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 360
+    memory: 2100Gi
+    amd.com/gpu: 8
+  limits:
+    amd.com/gpu: 8
+
+# ---------------------------------------------------------------------------
+# Model (same for both test and prod)
+# ---------------------------------------------------------------------------
+model:
+  path: /data/model/glm52-fp8
+  servedName: glm-5.2
+  apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
+
+# ---------------------------------------------------------------------------
+# Server launch parameters (same for both test and prod)
+# ---------------------------------------------------------------------------
+sglang:
+  tpSize: 8
+  ppSize: 1
+  contextLength: "1048576"
+  # NUMA memory binding — one entry per TP rank (space-separated, sglang uses nargs="+").
+  # MI308X has 2 NUMA nodes per socket; TP0-3 → NUMA 0, TP4-7 → NUMA 1.
+  # SGLang's auto NUMA detection returns False on ROCm (numa_utils.py only checks CUDA),
+  # so we must pass --numa-node explicitly to bind each rank's memory to its local NUMA node.
+  numaNode: "0 0 0 0 1 1 1 1"
+  memFractionStatic: 0.88
+  kvCacheDtype: fp8_e4m3
+  chunkedPrefillSize: 32768
+  maxRunningRequests: 32
+  prefillMaxRequests: 32
+  maxPrefillTokens: 32768
+  scheduleConservativeness: 0.5
+  cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16"
+  cudaGraphMaxBsDecode: 16
+  cudaGraphBsPrefill: "4 8 16 32"
+  cudaGraphBackendPrefill: breakable
+  speculativeAlgorithm: NEXTN
+  speculativeNumSteps: 3
+  speculativeNumDraftTokens: 4
+  speculativeEagleTopk: 1
+  enableHierarchicalCache: false
+  hicacheRatio: 2.0
+  hicacheIoBackend: direct
+  hicacheMemLayout: page_first_direct
+  hicacheWritePolicy: write_through
+  enableAiterAllreduceFusion: true
+  enableMixedChunk: true
+  enableFusedQkNormRope: true
+  enableMetrics: true
+  skipServerWarmup: true
+  watchdogTimeout: 3600
+  logLevel: info
+  toolCallParser: glm47
+  reasoningParser: glm45
+
+# ---------------------------------------------------------------------------
+# Host paths
+# ---------------------------------------------------------------------------
+hostPaths:
+  data: /data
+  devKfd: /dev/kfd
+  devDri: /dev/dri
+
+shmSize: 32Gi
+
+# ---------------------------------------------------------------------------
+# SGLang Router (sgl-model-gateway) — DISABLED, replaced by llm-d router
+# ---------------------------------------------------------------------------
+router:
+  enabled: false
+  port: 30001
+  policy: cache_aware
+  workerUrls:
+    - "http://21.151.225.144:30000"  # GZ test-0 (ins-bjoqlzak)
+    - "http://21.151.225.132:30000"  # GZ test-1 (ins-6qgdzzvu)
+    - "http://21.151.225.172:30000"  # GZ test-2 (ins-o8y5rwq2)
+    - "http://21.151.225.152:30000"  # GZ test-3 (ins-1g40idxe)
+  cacheThreshold: 0.3
+  balanceAbsThreshold: 64
+  balanceRelThreshold: 1.5
+
+# ---------------------------------------------------------------------------
+# llm-d Router — EPP (Endpoint Picker) + Envoy sidecar
+# Replaces sgl-model-gateway. Uses file-discovery plugin (no InferencePool CRD).
+# EPP scorers: prefix-cache (w3), queue (w2), kv-cache-util (w2), no-hit-lru (w2)
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: true
+  port: 30001
+  eppImage: mirrors.tencent.com/ti-platform/llm-d-router-endpoint-picker
+  eppVersion: v0.9.0-amd64
+  envoyImage: mirrors.tencent.com/ti-platform/envoy
+  envoyVersion: distroless-v1.33.2-amd64
+  nodeName: ""  # Set to pin router to a specific node
+  endpoints:
+    - name: sglang-test-0
+      address: 21.151.225.144
+      port: 30000
+    - name: sglang-test-1
+      address: 21.151.225.132
+      port: 30000
+    - name: sglang-test-2
+      address: 21.151.225.172
+      port: 30000
+    - name: sglang-test-3
+      address: 21.151.225.152
+      port: 30000
+
+# ---------------------------------------------------------------------------
+# Envoy Gateway — TEST environment (广州 GZ)
+# External: http://glm52-308x-test.jmpti.woa.com → envoy LB → GZ router
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-308x-test.jmpti.woa.com
+  lbAddress: 21.162.215.14
+
+# ---------------------------------------------------------------------------
+# PROD environment (中卫 ZW) — separate values file: values-prod.yaml
+# Router and gateway for ZW are configured via --values values-prod.yaml
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Health checks
+# ---------------------------------------------------------------------------
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 10
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 600
+  periodSeconds: 60
+  timeoutSeconds: 10
+  failureThreshold: 5

@@ -1,0 +1,46 @@
+# PROD environment overrides — 中卫 ZW (2x MI308X nodes)
+# Usage: helm install sglang-glm52-prod .../chart/ -f values-prod.yaml
+#
+# This file overrides the test environment values in values.yaml.
+# Only the router and gateway sections need to change — everything else
+# (image, model, sglang config) is identical.
+
+# ---------------------------------------------------------------------------
+# SGLang Router (sgl-model-gateway) — DISABLED, replaced by llm-d router
+# ---------------------------------------------------------------------------
+router:
+  enabled: false
+  port: 30001
+  policy: cache_aware
+  workerUrls:
+    - "http://21.234.170.103:30000"  # ZW prod-1 (node-21.234.170.103)
+    - "http://21.234.170.32:30000"   # ZW prod-2 (node-21.234.170.32)
+  cacheThreshold: 0.3
+  balanceAbsThreshold: 64
+  balanceRelThreshold: 1.5
+
+# ---------------------------------------------------------------------------
+# llm-d Router — PROD environment (中卫 ZW)
+# EPP + Envoy with file-discovery plugin, 2 ZW SGLang instances
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: true
+  port: 30001
+  endpoints:
+    - name: sglang-prod-1
+      address: 21.234.170.103
+      port: 30000
+    - name: sglang-prod-2
+      address: 21.234.170.32
+      port: 30000
+
+# ---------------------------------------------------------------------------
+# Envoy Gateway — PROD environment (中卫 ZW)
+# External: http://glm52-308x-prod.jmpti.woa.com → envoy LB → ZW router
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-308x-prod.jmpti.woa.com
+  lbAddress: 21.162.215.14
