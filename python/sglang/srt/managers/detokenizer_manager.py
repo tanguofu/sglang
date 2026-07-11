@@ -162,7 +162,10 @@ class DetokenizerManager(MultiHttpWorkerDetokenizerMixin):
         """The event loop that handles requests"""
         while True:
             with self.soft_watchdog.disable():
-                recv_obj = sock_recv(self.recv_from_scheduler)
+                if self.recv_from_scheduler.poll(timeout=1000):
+                    recv_obj = sock_recv(self.recv_from_scheduler)
+                else:
+                    continue
             output = self._request_dispatcher(recv_obj)
             if output is not None:
                 sock_send(self.send_to_tokenizer, output)
