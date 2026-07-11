@@ -357,6 +357,7 @@ class Indexer(MultiPlatformOp):
         prefix: str = "",
         quant_config: Optional[QuantizationConfig] = None,
         alt_stream: Optional[torch.cuda.Stream] = None,
+        config=None,
     ):
         super().__init__()
         self.hidden_size = hidden_size
