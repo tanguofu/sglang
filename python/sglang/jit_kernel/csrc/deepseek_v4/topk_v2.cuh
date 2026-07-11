@@ -427,7 +427,14 @@ struct TopKKernel {
         .cluster_floor = (batch_size <= kSmallBatchLowFloor) ? kClusterFloorSmall : kClusterFloor,
     };
 
-    const bool use_cluster = (max_seq_len > params.cluster_floor) && (batch_size <= kClusterMaxBatch);
+    // HIP does not support cooperative groups cluster API; always use non-cluster path.
+    const bool use_cluster =
+#ifndef USE_ROCM
+        (max_seq_len > params.cluster_floor) && (batch_size <= kClusterMaxBatch)
+#else
+        false
+#endif
+        ;
     constexpr bool kUsePDL = true;
     if (use_cluster) {
       if (batch_size <= kNumPersistentClusters) {
