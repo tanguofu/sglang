@@ -37,7 +37,6 @@ exec python3 -m sglang.launch_server \
     --disaggregation-mode decode \
     --disaggregation-transfer-backend mooncake \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
-    --disaggregation-decode-enable-radix-cache \
     --num-reserved-decode-tokens 1024 \
     --enable-metrics --skip-server-warmup \
     --watchdog-timeout 3600 --log-level info
