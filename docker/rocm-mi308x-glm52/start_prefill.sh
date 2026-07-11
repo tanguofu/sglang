@@ -35,6 +35,7 @@ exec python3 -m sglang.launch_server \
     --cuda-graph-bs-prefill 4 8 16 32 \
     --disaggregation-mode prefill \
     --disaggregation-transfer-backend mooncake \
+    --disaggregation-ib-device bnxt_re_bond0 \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
     --num-reserved-decode-tokens 1024 \
     --enable-metrics --skip-server-warmup \

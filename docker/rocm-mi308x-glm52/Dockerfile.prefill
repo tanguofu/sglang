@@ -45,7 +45,8 @@ ENV SGLANG_USE_ROCM700A=1
 # Disable topk_v2 JIT kernel (GPU hang on gfx942)
 ENV SGLANG_OPT_USE_TOPK_V2=0
 # Mooncake TCP mode (bnxt_re RDMA not fully compatible)
-ENV MC_FORCE_TCP=1
+# Mooncake RDMA mode (bnxt_re RoCE v2)
+ENV MC_GID_INDEX=1
 ENV MC_TCP_ENABLE_CONNECTION_POOL=true
 
 # Runtime-overridable params

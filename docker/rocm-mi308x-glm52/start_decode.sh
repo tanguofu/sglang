@@ -36,6 +36,7 @@ exec python3 -m sglang.launch_server \
     --max-running-requests 128 \
     --disaggregation-mode decode \
     --disaggregation-transfer-backend mooncake \
+    --disaggregation-ib-device bnxt_re_bond0 \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
     --num-reserved-decode-tokens 1024 \
     --enable-metrics --skip-server-warmup \
