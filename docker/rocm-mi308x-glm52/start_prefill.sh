@@ -35,7 +35,7 @@ exec python3 -m sglang.launch_server \
     --cuda-graph-bs-prefill 4 8 16 32 \
     --disaggregation-mode prefill \
     --disaggregation-transfer-backend mooncake \
-    --disaggregation-ib-device bnxt_re_bond0 \
+    --disaggregation-ib-device '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}' \
     --disaggregation-bootstrap-port "$BOOTSTRAP_PORT" \
     --num-reserved-decode-tokens 1024 \
     --enable-metrics --skip-server-warmup \
