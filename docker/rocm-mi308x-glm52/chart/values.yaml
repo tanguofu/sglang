@@ -146,8 +146,29 @@ llmDRouter:
       port: 30000
 
 # ---------------------------------------------------------------------------
-# Envoy Gateway — TEST environment (广州 GZ)
-# External: http://glm52-308x-test.jmpti.woa.com → envoy LB → GZ router
+# Envoy Gateway — TKE envoy gateway (eg-tke) routing
+#
+# Architecture:
+#   Client → LB (21.162.215.14:80) → envoy proxy (eg-tke, HTTP listener :80)
+#         → HTTPRoute (hostname match) → backend Service
+#
+# The eg-tke gateway is in ti-cloud namespace with 3 listeners:
+#   - tls-443 (TLS Passthrough, for TLSRoutes)
+#   - http (HTTP, port 80, hostname: *.jmpti.woa.com, for HTTPRoutes)
+#   - tcp (TCP, port 8080)
+#
+# HTTPRoute backend selection (priority):
+#   1. llm-d router Service (port 30001) — if llmDRouter.enabled
+#   2. sgl-model-gateway router Service (port 30001) — if router.enabled
+#   3. SGLang Service direct (port 30000) — fallback (no router)
+#
+# IMPORTANT: The envoy proxy pods run on GZ nodes. Backend Services must
+# be reachable from GZ. Cross-region (GZ→ZW) ClusterIP routing does NOT
+# work — deploy SGLang on GZ nodes for gateway access.
+#
+# Two environments, each with its own HTTPRoute hostname:
+#   TEST:  glm52-308x-test.jmpti.woa.com  → GZ SGLang
+#   PROD:  glm52-308x-prod.jmpti.woa.com  → ZW SGLang (requires GZ proxy or CLB)
 # ---------------------------------------------------------------------------
 gateway:
   enabled: true
