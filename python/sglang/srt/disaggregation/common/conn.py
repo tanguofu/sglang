@@ -1654,7 +1654,9 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
 
     def _run_server(self):
         try:
-            # Event Loop
+            # Event Loop — use default asyncio loop (not uvloop) to avoid
+            # conflict with uvicorn's uvloop running in the main thread.
+            asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
 
