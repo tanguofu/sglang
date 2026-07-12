@@ -262,6 +262,12 @@ class MooncakeKVManager(CommonKVManager):
                 self.engine.batch_register(
                     self._host_staging_ptrs, self._host_staging_lens
                 )
+                # Replace kv_data_ptrs with host staging pointers so that
+                # the decode sends host buffer addresses (not GPU addresses)
+                # to the prefill via the bootstrap server. The prefill uses
+                # these as RDMA write destinations, which must be registered
+                # host memory (not unregistered GPU memory).
+                self.kv_args.kv_data_ptrs = list(self._host_staging_ptrs)
                 logger.info(
                     f"Host staging: registered {len(self._host_staging_ptrs)} "
                     f"host buffers for KV data (total "
