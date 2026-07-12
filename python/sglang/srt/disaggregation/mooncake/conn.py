@@ -314,6 +314,29 @@ class MooncakeKVManager(CommonKVManager):
             f"buffers (total {sum(self._host_staging_lens)} bytes)"
         )
 
+    def _copy_gpu_to_host(self):
+        """Copy KV data from GPU to host staging buffers before PD transfer."""
+        import ctypes
+
+        hip_lib = ctypes.CDLL("libamdhip64.so")
+        for gpu_ptr, host_ptr, length in zip(
+            self._gpu_ptrs,
+            self._host_staging_ptrs,
+            self._host_staging_lens,
+        ):
+            ret = hip_lib.hipMemcpy(
+                ctypes.c_void_p(int(host_ptr)),
+                ctypes.c_void_p(int(gpu_ptr)),
+                ctypes.c_size_t(length),
+                ctypes.c_int(2),  # hipMemcpyDeviceToHost
+            )
+            if ret != 0:
+                logger.error(
+                    f"_copy_gpu_to_host: hipMemcpy failed: ret={ret}, "
+                    f"gpu=0x{int(gpu_ptr):x}, host=0x{int(host_ptr):x}, "
+                    f"len={length}"
+                )
+
     def deregister_buffer_to_engine(self):
         if self.kv_args.kv_data_ptrs:
             self.engine.batch_deregister(self.kv_args.kv_data_ptrs)
@@ -756,9 +779,18 @@ class MooncakeKVManager(CommonKVManager):
         dst_kv_indices: npt.NDArray[np.int32],
         executor: concurrent.futures.ThreadPoolExecutor,
     ):
+        # When host staging is enabled, copy GPU KV data to host buffers
+        # before transfer and use host buffer pointers (which are registered
+        # with Mooncake RDMA) instead of GPU pointers (which are not).
+        if hasattr(self, "_host_staging_ptrs") and self._host_staging_ptrs:
+            self._copy_gpu_to_host()
+            src_ptrs = self._host_staging_ptrs
+        else:
+            src_ptrs = self.kv_args.kv_data_ptrs
+
         return self._send_kvcache_generic(
             mooncake_session_id=mooncake_session_id,
-            src_data_ptrs=self.kv_args.kv_data_ptrs,
+            src_data_ptrs=src_ptrs,
             dst_data_ptrs=dst_kv_ptrs,
             item_lens=self.kv_args.kv_item_lens,
             prefill_data_indices=prefill_kv_indices,
