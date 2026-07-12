@@ -74,7 +74,8 @@ def handle_pd_disaggregation(server_args: ServerArgs) -> None:
             server_args.disaggregation_transfer_backend != "fake"
         ), "Prefill server does not support 'fake' as the transfer backend"
 
-        server_args.disable_cuda_graph = True
+        # Allow prefill CUDA graph (breakable backend supports variable batch sizes)
+        # server_args.disable_cuda_graph = True
 
     if server_args.disaggregation_mode in ("prefill", "decode"):
         if (
