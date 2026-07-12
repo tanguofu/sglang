@@ -1,15 +1,3 @@
-# Patch for Mooncake rdma_context.cpp: host staging for bnxt_re RDMA
-# 
-# Problem: bnxt_re driver doesn't support GPU Direct RDMA. ibv_reg_mr on GPU
-# memory succeeds but transfers fail with "local protection error".
-# CONFIG_PCI_P2PDMA and CONFIG_DMABUF_MOVE_NOTIFY are not set in kernel 5.4.119.
-#
-# Fix: In the #else block (compiled when USE_HIP_DMABUF is not a preprocessor
-# define), when hipPointerGetAttributes returns hipMemoryTypeDevice, use
-# hipMallocHost + hipMemcpy D2H + ibv_reg_mr on host memory instead of
-# directly registering GPU memory.
-#
-# Key: mrMeta.addr = addr (original GPU address) so MR lookup works correctly.
 --- a/mooncake-transfer-engine/src/transport/rdma_transport/rdma_context.cpp
 +++ b/mooncake-transfer-engine/src/transport/rdma_transport/rdma_context.cpp
 @@ -527,9 +527,27 @@
