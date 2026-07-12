@@ -24,7 +24,10 @@ PREFILL_IB="${PREFILL_IB:-ionic_0,ionic_1,ionic_3,ionic_4,ionic_5,ionic_6,ionic_
 DECODE_IB="${DECODE_IB:-ionic_0,ionic_1,ionic_2,ionic_3,ionic_4,ionic_5,ionic_6,ionic_7}"
 
 # --- Transfer backend: mooncake | mori ---
-BACKEND="${BACKEND:-mooncake}"
+# Default mori: cross-node RDMA over ionic (Pensando RoCE) only works with mori.
+# mooncake's RDMA path fails ibv_reg_mr on ionic (EINVAL). Use mooncake only on
+# mlx5 (Mellanox) HCAs.
+BACKEND="${BACKEND:-mori}"
 
 # Per-backend GID / env. ionic interfaces are IPv6-only; the two nodes share
 # the fd93:16d3:59b6::/64 prefix so RoCE GIDs are mutually reachable.

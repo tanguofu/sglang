@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Launch GLM-5.2-FP8 prefill worker (run on bm1 = 216.128.154.57).
 # Usage:
-#   ./start_prefill.sh                 # default backend=mooncake
-#   BACKEND=mori ./start_prefill.sh    # use mori backend
+#   ./start_prefill.sh                 # default backend=mori (cross-node RDMA)
+#   BACKEND=mooncake ./start_prefill.sh  # only on mlx5 HCAs
 source "$(dirname "$0")/common.sh"
 
 CONTAINER_NAME="${PREFILL_NAME:-glm52_prefill}"
