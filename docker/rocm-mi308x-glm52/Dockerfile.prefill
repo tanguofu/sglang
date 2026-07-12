@@ -23,7 +23,7 @@ COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/ait
 # Step 1c: Patch Mooncake C++ source to add MC_DISABLE_HIP_TRANSPORT env var
 COPY docker/rocm-mi308x-glm52/patches/mooncake/patch_mooncake.py /tmp/patch_mooncake.py
 RUN python3 /tmp/patch_mooncake.py && \
-    cd /sgl-workspace/Mooncake/mooncake-wheel && python3 setup.py build_ext --inplace && pip install --force-reinstall --no-deps --no-build-isolation . && \
+    cd /sgl-workspace/Mooncake/mooncake-wheel && pip install --force-reinstall --no-deps --no-build-isolation --no-binary :all: . && \
     rm /tmp/patch_mooncake.py
 
 # Step 2: Environment Variables — Prefill optimized
