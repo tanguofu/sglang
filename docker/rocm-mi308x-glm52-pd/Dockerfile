@@ -39,7 +39,9 @@ RUN set -eux; \
 COPY docker/rocm-mi308x-glm52-pd/patches/mooncake/apply_host_staging.sh /tmp/apply_host_staging.sh
 RUN set -eux; \
     chmod +x /tmp/apply_host_staging.sh && /tmp/apply_host_staging.sh; \
-    cd /sgl-workspace/Mooncake/build && make -j "$(nproc)" && make install; ldconfig; \
+    cd /sgl-workspace/Mooncake/build && \
+    find . -name "*.o" -delete && \
+    make -j "$(nproc)" && make install; ldconfig; \
     echo "[Mooncake] host staging patches applied and rebuilt"
 
 # ============================================================
