@@ -85,6 +85,16 @@ COPY docker/rocm-mi308x-glm52/patches/flydsl/__init__.py /sgl-workspace/aiter/ai
 COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/triton/attention/fp8_mqa_logits.py
 
 # ============================================================
+# Step 1c: Deploy gfx942 AITER tuned GEMM + fMoE configs
+# The base image has gfx950 configs only; gfx942 needs its own.
+# gen_aiter_configs_gfx942.py fills missing MoE shapes with torch fallback.
+# ============================================================
+COPY docker/rocm-mi308x-glm52/patches/glm5_1_gemm_gfx942.csv /sgl-workspace/aiter/aiter/configs/model_configs/glm5_a8w8_blockscale_bpreshuffle_tuned_gemm.csv
+COPY docker/rocm-mi308x-glm52/patches/glm5_1_fmoe_gfx942.csv /sgl-workspace/aiter/aiter/configs/model_configs/glm5_fmoe_tuned_config.csv
+COPY docker/rocm-mi308x-glm52/gen_aiter_configs_gfx942.py /tmp/gen_aiter_configs_gfx942.py
+RUN python3 /tmp/gen_aiter_configs_gfx942.py && rm /tmp/gen_aiter_configs_gfx942.py
+
+# ============================================================
 # Step 2: Environment Variables (21, based on MI355X production config)
 # Key change: PYTORCH_ROCM_ARCH=gfx942 (was gfx950 for MI355X)
 # ============================================================
