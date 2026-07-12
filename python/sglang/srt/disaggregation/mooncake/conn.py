@@ -292,6 +292,9 @@ class MooncakeKVManager(CommonKVManager):
         import ctypes
 
         hip_lib = ctypes.CDLL("libamdhip64.so")
+        # Set the HIP device for this process (each TP rank is a separate process)
+        gpu_id = getattr(self, "gpu_id", 0)
+        hip_lib.hipSetDevice(ctypes.c_int(gpu_id))
         for host_ptr, gpu_ptr, length in zip(
             self._host_staging_ptrs,
             self.kv_args.kv_data_ptrs,
@@ -319,6 +322,9 @@ class MooncakeKVManager(CommonKVManager):
         import ctypes
 
         hip_lib = ctypes.CDLL("libamdhip64.so")
+        # Set the HIP device for this process (each TP rank is a separate process)
+        gpu_id = getattr(self, "gpu_id", 0)
+        hip_lib.hipSetDevice(ctypes.c_int(gpu_id))
         for gpu_ptr, host_ptr, length in zip(
             self._gpu_ptrs,
             self._host_staging_ptrs,
