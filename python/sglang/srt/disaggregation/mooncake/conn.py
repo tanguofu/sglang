@@ -239,11 +239,38 @@ class MooncakeKVManager(CommonKVManager):
         self.engine = get_mooncake_transfer_engine()
 
     def register_buffer_to_engine(self):
-        # Batch register KV data buffers
-        if self.kv_args.kv_data_ptrs and self.kv_args.kv_data_lens:
-            self.engine.batch_register(
+        # On HIP/ROCm, the Mooncake TCP transport cannot correctly copy
+        # from host staging buffer to GPU memory in the ASIO event loop
+        # thread (cudaMemcpy fails silently). Register host staging buffers
+        # instead of GPU buffers, then copy host→GPU after each transfer.
+        if os.environ.get("SGLANG_PD_HOST_STAGING") == "1":
+            import ctypes
+            self._host_staging_buffers = []
+            self._host_staging_ptrs = []
+            self._host_staging_lens = []
+            for ptr, length in zip(
                 self.kv_args.kv_data_ptrs, self.kv_args.kv_data_lens
-            )
+            ):
+                host_buf = (ctypes.c_char * length)()
+                host_ptr = ctypes.addressof(host_buf)
+                self._host_staging_buffers.append(host_buf)
+                self._host_staging_ptrs.append(host_ptr)
+                self._host_staging_lens.append(length)
+            if self._host_staging_ptrs:
+                self.engine.batch_register(
+                    self._host_staging_ptrs, self._host_staging_lens
+                )
+                logger.info(
+                    f"Host staging: registered {len(self._host_staging_ptrs)} "
+                    f"host buffers for KV data (total "
+                    f"{sum(self._host_staging_lens)} bytes)"
+                )
+        else:
+            # Batch register KV data buffers
+            if self.kv_args.kv_data_ptrs and self.kv_args.kv_data_lens:
+                self.engine.batch_register(
+                    self.kv_args.kv_data_ptrs, self.kv_args.kv_data_lens
+                )
 
         # Batch register auxiliary data buffers
         if self.kv_args.aux_data_ptrs and self.kv_args.aux_data_lens:
@@ -256,6 +283,33 @@ class MooncakeKVManager(CommonKVManager):
         ):
             if ptrs and lens:
                 self.engine.batch_register(ptrs, lens)
+
+    def _copy_host_to_gpu(self):
+        """Copy KV data from host staging buffers to GPU after PD transfer."""
+        import ctypes
+
+        hip_lib = ctypes.CDLL("libamdhip64.so")
+        for host_ptr, gpu_ptr, length in zip(
+            self._host_staging_ptrs,
+            self.kv_args.kv_data_ptrs,
+            self._host_staging_lens,
+        ):
+            ret = hip_lib.hipMemcpy(
+                ctypes.c_void_p(int(gpu_ptr)),
+                ctypes.c_void_p(int(host_ptr)),
+                ctypes.c_size_t(length),
+                ctypes.c_int(1),  # hipMemcpyHostToDevice
+            )
+            if ret != 0:
+                logger.error(
+                    f"_copy_host_to_gpu: hipMemcpy failed: ret={ret}, "
+                    f"gpu=0x{int(gpu_ptr):x}, host=0x{int(host_ptr):x}, "
+                    f"len={length}"
+                )
+        logger.info(
+            f"_copy_host_to_gpu: copied {len(self._host_staging_ptrs)} "
+            f"buffers (total {sum(self._host_staging_lens)} bytes)"
+        )
 
     def deregister_buffer_to_engine(self):
         if self.kv_args.kv_data_ptrs:
@@ -1994,6 +2048,8 @@ class MooncakeKVReceiver(CommonKVReceiver):
 
         status = self.kv_mgr.check_status(self.bootstrap_room)
         if status in (KVPoll.Success, KVPoll.Failed):
+            if status == KVPoll.Success and hasattr(self.kv_mgr, '_host_staging_buffers'):
+                self.kv_mgr._copy_host_to_gpu()
             self.conclude_state = status
         elif status == KVPoll.WaitingForInput:
             timeout_result = self._check_waiting_timeout()
