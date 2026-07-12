@@ -1,0 +1,59 @@
+# GLM-5.2-FP8 PD Router on MI308X node 152
+# Routes: prefill (152:30000) → decode (172:30000), router port 30001
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pd-router-152
+  namespace: kube-system
+  labels:
+    app: pd-router
+    pd-role: router
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeName: node-21.151.225.152
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 60
+  imagePullSecrets:
+    - name: tencent-registry
+  containers:
+    - name: router
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd:latest
+      imagePullPolicy: Always
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -euo pipefail
+          exec python3 -m sglang_router.launch_router \
+            --pd-disaggregation \
+            --prefill http://21.151.225.152:30000 \
+            --decode http://21.151.225.172:30000 \
+            --host 0.0.0.0 --port 30001 \
+            --model-path /data/model/glm52-fp8
+      env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["SYS_PTRACE"]
+          drop: ["ALL"]
+        seccompProfile:
+          type: Unconfined
+      ports:
+        - name: http
+          containerPort: 30001
+          hostPort: 30001
+          protocol: TCP
+      volumeMounts:
+        - name: data
+          mountPath: /data
+      resources:
+        requests:
+          cpu: "8"
+          memory: 16Gi
+  volumes:
+    - name: data
+      hostPath:
+        path: /data
+        type: Directory
