@@ -1,0 +1,85 @@
+# GLM-5.2-FP8 SGLang DECODE Worker — PD RDMA Disaggregation + MTP
+# Deploy: kubectl apply -f decode.yaml
+#
+# Node: ZW prod-2 (21.234.170.32)
+# RDMA NIC: bnxt_re_bond0 (29.198.252.190)
+# Image: 0712-rdma10
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pd-decode-rdma
+  namespace: kube-system
+  labels:
+    app: pd-decode-rdma
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeName: node-21.234.170.32
+  terminationGracePeriodSeconds: 300
+  containers:
+    - name: sglang
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-decode:0712-rdma10
+      imagePullPolicy: Always
+      securityContext:
+        privileged: true
+        capabilities:
+          add: [SYS_PTRACE, IPC_LOCK, NET_ADMIN]
+          drop: ["ALL"]
+        seccompProfile:
+          type: Unconfined
+      env:
+        - name: SGLANG_HOST_IP
+          value: "21.234.170.32"
+        - name: MODEL_PATH
+          value: "/data/model/glm52-fp8"
+        - name: PORT
+          value: "13000"
+        - name: API_KEY
+          value: "sk-46faecc9d0bc4dcd9db6a15c73ae91c8"
+        - name: DISAGG_BOOTSTRAP_PORT
+          value: "12999"
+        - name: MOONCAKE_PROTOCOL
+          value: "rdma"
+      ports:
+        - containerPort: 13000
+          hostPort: 13000
+          protocol: TCP
+      volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: dev-kfd
+          mountPath: /dev/kfd
+        - name: dev-dri
+          mountPath: /dev/dri
+        - name: dev-infiniband
+          mountPath: /dev/infiniband
+        - name: shm
+          mountPath: /dev/shm
+      resources:
+        requests:
+          cpu: "360"
+          memory: "2100Gi"
+          amd.com/gpu: "8"
+        limits:
+          amd.com/gpu: "8"
+  volumes:
+    - name: data
+      hostPath:
+        path: /data
+        type: Directory
+    - name: dev-kfd
+      hostPath:
+        path: /dev/kfd
+        type: CharDevice
+    - name: dev-dri
+      hostPath:
+        path: /dev/dri
+        type: Directory
+    - name: dev-infiniband
+      hostPath:
+        path: /dev/infiniband
+        type: Directory
+    - name: shm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 64Gi

@@ -1,0 +1,40 @@
+# SGLang PD Router — Routes requests to prefill, then forwards to decode
+# Deploy: kubectl apply -f router.yaml
+#
+# Runs on the prefill node (lightweight Rust binary)
+# Port 13002 (within security group range 10000-13000)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pd-router-rdma
+  namespace: kube-system
+  labels:
+    app: pd-router-rdma
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeName: node-21.234.170.19
+  terminationGracePeriodSeconds: 30
+  containers:
+    - name: router
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-prefill:0712-rdma10
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          exec python3 -m sglang_router.launch_router \
+            --pd-disaggregation \
+            --prefill http://21.234.170.19:13000 12999 \
+            --decode http://21.234.170.32:13000 \
+            --host 0.0.0.0 --port 13002 \
+            --log-level info
+      ports:
+        - containerPort: 13002
+          hostPort: 13002
+          protocol: TCP
+      resources:
+        requests:
+          cpu: "4"
+          memory: "4Gi"
+        limits:
+          memory: "8Gi"
