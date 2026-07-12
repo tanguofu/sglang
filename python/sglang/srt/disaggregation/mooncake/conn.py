@@ -714,7 +714,7 @@ class MooncakeKVManager(CommonKVManager):
                 if not found:
                     # Address not in any pre-registered host staging buffer.
                     # Try D2H copy to a temporary buffer; if that fails,
-                    # assume it's already host memory and use directly.
+                    # assume it's already host memory and register it directly.
                     buf = (ctypes.c_char * length)()
                     host_ptr = ctypes.addressof(buf)
                     ret = hip_lib.hipMemcpy(
@@ -725,7 +725,9 @@ class MooncakeKVManager(CommonKVManager):
                     )
                     if ret != 0:
                         # hipMemcpy failed — likely already host memory.
-                        # Use the original address directly for RDMA transfer.
+                        # Register the original CPU address with Mooncake
+                        # so RDMA can access it, then use it directly.
+                        self.engine.register(src_int, length)
                         host_src_addrs.append(src_int)
                     else:
                         # Register this temporary buffer with Mooncake
