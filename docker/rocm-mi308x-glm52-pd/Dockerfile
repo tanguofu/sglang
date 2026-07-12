@@ -36,15 +36,10 @@ RUN set -eux; \
 # ============================================================
 # Hack 1b: Apply Mooncake C++ patches for bnxt_re host staging
 # ============================================================
-COPY docker/rocm-mi308x-glm52-pd/patches/mooncake/disable_hip_transport.patch /tmp/
-COPY docker/rocm-mi308x-glm52-pd/patches/mooncake/rdma_context_header.patch /tmp/
-COPY docker/rocm-mi308x-glm52-pd/patches/mooncake/rdma_context_host_staging.patch /tmp/
+COPY docker/rocm-mi308x-glm52-pd/patches/mooncake/apply_host_staging.sh /tmp/apply_host_staging.sh
 RUN set -eux; \
-    cd /sgl-workspace/Mooncake; \
-    patch -p1 < /tmp/disable_hip_transport.patch; \
-    patch -p1 < /tmp/rdma_context_header.patch; \
-    patch -p1 < /tmp/rdma_context_host_staging.patch; \
-    cd build && make -j "$(nproc)" && make install; ldconfig; \
+    chmod +x /tmp/apply_host_staging.sh && /tmp/apply_host_staging.sh; \
+    cd /sgl-workspace/Mooncake/build && make -j "$(nproc)" && make install; ldconfig; \
     echo "[Mooncake] host staging patches applied and rebuilt"
 
 # ============================================================
