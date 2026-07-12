@@ -681,16 +681,18 @@ class MooncakeKVManager(CommonKVManager):
             hip_lib.hipSetDevice(ctypes.c_int(gpu_id))
 
             # Map each GPU src_addr to its corresponding host staging buffer.
-            # _gpu_ptrs[i] is the base GPU pointer, _host_staging_ptrs[i] is
-            # the base host pointer. The offset within the buffer is the same.
+            # Use kv_args.kv_data_ptrs (current GPU pointers) as the reference,
+            # not _gpu_ptrs (which may be stale).
+            gpu_ptrs = self.kv_args.kv_data_ptrs
+            host_ptrs = self._host_staging_ptrs
+            host_lens = self._host_staging_lens
+
             host_src_addrs = []
             for src_addr, length in zip(src_addrs, lengths):
                 src_int = int(src_addr)
                 # Find which host staging buffer this GPU address falls into
                 found = False
-                for gpu_base, host_base, buf_len in zip(
-                    self._gpu_ptrs, self._host_staging_ptrs, self._host_staging_lens
-                ):
+                for gpu_base, host_base, buf_len in zip(gpu_ptrs, host_ptrs, host_lens):
                     if gpu_base <= src_int < gpu_base + buf_len:
                         offset = src_int - gpu_base
                         host_addr = host_base + offset
@@ -711,11 +713,25 @@ class MooncakeKVManager(CommonKVManager):
                         found = True
                         break
                 if not found:
-                    logger.error(
-                        f"_transfer_data: GPU addr 0x{src_int:x} not in any "
-                        f"host staging buffer"
+                    # Fallback: allocate a temporary host buffer, copy, and
+                    # register it on-the-fly for this transfer.
+                    buf = (ctypes.c_char * length)()
+                    host_ptr = ctypes.addressof(buf)
+                    ret = hip_lib.hipMemcpy(
+                        ctypes.c_void_p(host_ptr),
+                        ctypes.c_void_p(src_int),
+                        ctypes.c_size_t(length),
+                        ctypes.c_int(2),  # hipMemcpyDeviceToHost
                     )
-                    return -1
+                    if ret != 0:
+                        logger.error(
+                            f"_transfer_data: hipMemcpy D2H (fallback) failed: ret={ret}, "
+                            f"gpu=0x{src_int:x}, len={length}"
+                        )
+                        return -1
+                    # Register this temporary buffer with Mooncake
+                    self.engine.register(host_ptr, length)
+                    host_src_addrs.append(host_ptr)
 
             return self.engine.batch_transfer_sync(
                 mooncake_session_id, host_src_addrs, list(dst_addrs), list(lengths)
