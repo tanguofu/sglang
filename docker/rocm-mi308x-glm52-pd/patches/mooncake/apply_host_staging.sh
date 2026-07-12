@@ -65,24 +65,31 @@ f = 'mooncake-transfer-engine/src/transfer_engine_impl.cpp'
 s = open(f).read()
 old = '''        {
             Transport* hip_transport =
-                multi_transports_->installTransport(\"hip\", nullptr);'''
+                multi_transports_->installTransport(\"hip\", nullptr);
+            if (!hip_transport) {
+                LOG(WARNING) << \"Failed to install HIP transport \"
+                                \"(intra-node GPU P2P unavailable)\";
+            } else {
+                LOG(INFO) << \"HIP transport installed for intra-node GPU P2P\";
+            }
+        }'''
 new = '''        {
-          if (!std::getenv(\"MC_DISABLE_HIP_TRANSPORT\") ||
-              std::string(std::getenv(\"MC_DISABLE_HIP_TRANSPORT\")) != \"1\") {
-            Transport* hip_transport =
-                multi_transports_->installTransport(\"hip\", nullptr);'''
+            if (!std::getenv(\"MC_DISABLE_HIP_TRANSPORT\") ||
+                std::string(std::getenv(\"MC_DISABLE_HIP_TRANSPORT\")) != \"1\") {
+                Transport* hip_transport =
+                    multi_transports_->installTransport(\"hip\", nullptr);
+                if (!hip_transport) {
+                    LOG(WARNING) << \"Failed to install HIP transport \"
+                                    \"(intra-node GPU P2P unavailable)\";
+                } else {
+                    LOG(INFO) << \"HIP transport installed for intra-node GPU P2P\";
+                }
+            } else {
+                LOG(INFO) << \"HIP transport disabled by MC_DISABLE_HIP_TRANSPORT=1\";
+            }
+        }'''
 if old in s:
     s = s.replace(old, new, 1)
-    # Also add the closing brace and else block
-    old2 = '''            LOG(INFO) << \"HIP transport installed for intra-node GPU P2P\";
-        }'''
-    new2 = '''            LOG(INFO) << \"HIP transport installed for intra-node GPU P2P\";
-          } else {
-            LOG(INFO) << \"HIP transport disabled by MC_DISABLE_HIP_TRANSPORT=1\";
-          }
-        }'''
-    if old2 in s:
-        s = s.replace(old2, new2, 1)
     open(f, 'w').write(s)
     print('transfer_engine_impl.cpp patched: MC_DISABLE_HIP_TRANSPORT')
 else:
