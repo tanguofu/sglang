@@ -24,14 +24,14 @@ exec python3 -m sglang.launch_server \
     --context-length 1048576 \
     --tool-call-parser glm47 --reasoning-parser glm45 \
     --mem-fraction-static 0.88 \
-    --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 \
+    --cuda-graph-bs-decode 1 2 4 8 16 \
     --cuda-graph-max-bs-decode 16 \
     --enable-aiter-allreduce-fusion \
     --enable-fused-qk-norm-rope \
     --schedule-conservativeness 0.5 \
     --kv-cache-dtype fp8_e4m3 \
     --speculative-algorithm NEXTN \
-    --speculative-num-steps 2 --speculative-num-draft-tokens 3 \
+    --speculative-num-steps 3 --speculative-num-draft-tokens 4 \
     --speculative-eagle-topk 1 \
     --max-running-requests 128 \
     --disaggregation-mode decode \

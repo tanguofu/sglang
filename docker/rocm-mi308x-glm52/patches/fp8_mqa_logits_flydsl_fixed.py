@@ -174,8 +174,8 @@ def fp8_mqa_logits(
             other = {"USE_PADDED_SHARED_LAYOUT": ASYNC_COPY_SUPPORTS_DISTRIBUTED}
         else:
             loop_variant = 1
-            waves_per_eu = 1
-            num_chains = 8 if USE_FOLDED_REDUCTION else 0
+            waves_per_eu = 2
+            num_chains = 4 if USE_FOLDED_REDUCTION else 0
             num_warps = 4
             block_kv = 128
             other = {"LOOP_VARIANT": loop_variant}
