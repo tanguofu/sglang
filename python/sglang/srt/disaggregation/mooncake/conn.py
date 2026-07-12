@@ -248,6 +248,7 @@ class MooncakeKVManager(CommonKVManager):
             self._host_staging_buffers = []
             self._host_staging_ptrs = []
             self._host_staging_lens = []
+            self._gpu_ptrs = []
             for ptr, length in zip(
                 self.kv_args.kv_data_ptrs, self.kv_args.kv_data_lens
             ):
@@ -256,14 +257,21 @@ class MooncakeKVManager(CommonKVManager):
                 self._host_staging_buffers.append(host_buf)
                 self._host_staging_ptrs.append(host_ptr)
                 self._host_staging_lens.append(length)
+                self._gpu_ptrs.append(ptr)
             if self._host_staging_ptrs:
                 self.engine.batch_register(
                     self._host_staging_ptrs, self._host_staging_lens
                 )
+                # Replace kv_data_ptrs with host buffer addresses so that
+                # the bootstrap server shares host addresses (not GPU) with
+                # the prefill side. The prefill side will send to host buffers,
+                # and after transfer, _copy_host_to_gpu copies host→GPU.
+                self.kv_args.kv_data_ptrs = list(self._host_staging_ptrs)
                 logger.info(
                     f"Host staging: registered {len(self._host_staging_ptrs)} "
                     f"host buffers for KV data (total "
-                    f"{sum(self._host_staging_lens)} bytes)"
+                    f"{sum(self._host_staging_lens)} bytes), "
+                    f"replaced kv_data_ptrs with host addresses"
                 )
         else:
             # Batch register KV data buffers
