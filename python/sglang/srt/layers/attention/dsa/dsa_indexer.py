@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 global _use_multi_stream
 _is_cuda = is_cuda()
 _is_hip = is_hip()
-_use_dsa_indexer_fusion = (_is_cuda or _is_hip) and not envs.SGLANG_DISABLE_DSA_INDEXER_FUSION.get()
+_use_dsa_indexer_fusion = _is_cuda and not envs.SGLANG_DISABLE_DSA_INDEXER_FUSION.get()
 _is_npu = is_npu()
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
 _is_fp8_fnuz = is_fp8_fnuz()
@@ -106,7 +106,7 @@ if TYPE_CHECKING:
     from sglang.srt.mem_cache.memory_pool import DSATokenToKVPool
 
 
-DUAL_STREAM_TOKEN_THRESHOLD = 1024
+DUAL_STREAM_TOKEN_THRESHOLD = 1024 if _is_cuda else 0
 GRAPH_WEIGHTS_PROJ_LORA_ERROR = (
     "DSA indexer weights_proj LoRA is incompatible with "
     "piecewise/breakable CUDA graph; remove the explicit "
@@ -202,7 +202,7 @@ if _is_cuda or _is_hip:
         q_scale: torch.Tensor,
     ) -> torch.Tensor:
         x_bf16 = x.to(torch.bfloat16) if x.dtype != torch.bfloat16 else x
-        out = torch.mm(x_bf16, weight.t(), out_dtype=torch.float32)
+        out = torch.mm(x_bf16, weight.t()).float()
         weights = out * n_heads_inv_sqrt
         weights = weights.unsqueeze(-1) * q_scale * softmax_scale
         return weights
@@ -474,7 +474,7 @@ class Indexer(MultiPlatformOp):
         if _use_aiter and _is_gfx95_supported and isinstance(x, tuple) and len(x) == 3:
             x = x[2]
         if _is_cuda:
-            return torch.mm(x, self.weights_proj.weight.t(), out_dtype=torch.float32)
+            return torch.mm(x, self.weights_proj.weight.t()).float()
 
         weights, _ = self.weights_proj(x)
         if _is_hip:
