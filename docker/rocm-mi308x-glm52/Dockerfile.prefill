@@ -20,10 +20,24 @@ COPY docker/rocm-mi308x-glm52/patches/flydsl/fp8_mqa_logits.py /sgl-workspace/ai
 COPY docker/rocm-mi308x-glm52/patches/flydsl/__init__.py /sgl-workspace/aiter/aiter/ops/flydsl/__init__.py
 COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/triton/attention/fp8_mqa_logits.py
 
-# Step 1c: Patch Mooncake C++ source to add MC_DISABLE_HIP_TRANSPORT env var
+# Step 1c: Patch Mooncake C++ source and rebuild the Python extension .so
+# Patches:
+#   1. MC_DISABLE_HIP_TRANSPORT — skip HIP transport (hipIpcOpenMemHandle fails on ROCm)
+#   2. MC_FORCE_DMABUF — bypass kernel P2PDMA check for dmabuf MR registration
+# We must delete stale .o/.a/.so artifacts to force a full recompile chain.
+# Using `make engine` directly (not `cmake --build`) to avoid cmake reconfigure segfault.
 COPY docker/rocm-mi308x-glm52/patches/mooncake/patch_mooncake.py /tmp/patch_mooncake.py
 RUN python3 /tmp/patch_mooncake.py && \
-    cd /sgl-workspace/Mooncake/mooncake-wheel && pip install --force-reinstall --no-deps --no-build-isolation --no-binary :all: . && \
+    find /sgl-workspace/Mooncake/build -name "transfer_engine_impl.cpp.o" -delete && \
+    find /sgl-workspace/Mooncake/build -name "transfer_engine_impl.cpp.o.d" -delete && \
+    find /sgl-workspace/Mooncake/build -name "rdma_context.cpp.o" -delete && \
+    find /sgl-workspace/Mooncake/build -name "rdma_context.cpp.o.d" -delete && \
+    rm -f /sgl-workspace/Mooncake/build/mooncake-transfer-engine/src/libtransfer_engine.a && \
+    rm -f /sgl-workspace/Mooncake/build/mooncake-integration/engine.cpython-310-x86_64-linux-gnu.so && \
+    cd /sgl-workspace/Mooncake/build && make engine -j4 && \
+    cp /sgl-workspace/Mooncake/build/mooncake-integration/engine.cpython-310-x86_64-linux-gnu.so \
+       /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so && \
+    python3 -c "import mooncake.engine as e; data = open(e.__file__, 'rb').read(); assert b'MC_DISABLE_HIP_TRANSPORT' in data, 'PATCH NOT IN .so!'; print('Verified: MC_DISABLE_HIP_TRANSPORT in', e.__file__)" && \
     rm /tmp/patch_mooncake.py
 
 # Step 2: Environment Variables — Prefill optimized
@@ -50,12 +64,17 @@ ENV SGLANG_USE_AITER=1
 ENV SGLANG_USE_ROCM700A=1
 # Disable topk_v2 JIT kernel (GPU hang on gfx942)
 ENV SGLANG_OPT_USE_TOPK_V2=0
-# Mooncake TCP mode (bnxt_re RDMA not fully compatible)
-# Mooncake RDMA mode (bnxt_re RoCE v2)
+# Mooncake RDMA mode (bnxt_re RoCE v2) with host staging
+# Kernel lacks CONFIG_PCI_P2PDMA, so GPU-direct RDMA is unavailable.
+# SGLANG_PD_HOST_STAGING=1 makes SGLang register host buffers with Mooncake
+# instead of GPU memory, then hipMemcpy D2H before send and H2D after receive.
+# The network transfer still uses RDMA (MOONCAKE_PROTOCOL=rdma by default).
 ENV MC_GID_INDEX=3
 ENV MC_DISABLE_HIP_TRANSPORT=1
 ENV MC_TCP_ENABLE_CONNECTION_POOL=true
-# PD disaggregation: disable uvloop (breaks socket accept with bootstrap server thread)
+ENV SGLANG_PD_HOST_STAGING=1
+# MC_FORCE_DMABUF=1 is a fallback if host staging is not used (not needed with host staging)
+# ENV MC_FORCE_DMABUF=1
 
 # Runtime-overridable params
 ENV MODEL_PATH=/data/model/glm52-fp8
