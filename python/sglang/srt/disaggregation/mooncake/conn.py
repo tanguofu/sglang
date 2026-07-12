@@ -809,6 +809,39 @@ class MooncakeKVManager(CommonKVManager):
             dst_addr_list = dst_slice_addrs.reshape(-1).tolist()
             total_slices = len(src_addr_list)
             length_list = [heads_bytes_per_token_to_send] * total_slices
+
+            # On HIP/ROCm, the Mooncake TCP transport may not correctly
+            # detect GPU memory (hipPointerGetAttributes field name mismatch).
+            # Use host staging: copy GPU data to host buffer before transfer.
+            if os.environ.get("SGLANG_PD_HOST_STAGING") == "1":
+                import ctypes
+                hip_lib = ctypes.CDLL("libamdhip64.so")
+                total_size = total_slices * heads_bytes_per_token_to_send
+                host_buffer = (ctypes.c_char * total_size)()
+                host_base = ctypes.addressof(host_buffer)
+                host_addr_list = []
+                for i, src_addr in enumerate(src_addr_list):
+                    offset = i * heads_bytes_per_token_to_send
+                    dst_host = ctypes.c_void_p(host_base + offset)
+                    src_gpu = ctypes.c_void_p(int(src_addr))
+                    ret = hip_lib.hipMemcpy(
+                        dst_host, src_gpu,
+                        ctypes.c_size_t(heads_bytes_per_token_to_send),
+                        ctypes.c_int(2),  # hipMemcpyDeviceToHost
+                    )
+                    if ret != 0:
+                        logger.error(
+                            f"Host staging hipMemcpy failed: ret={ret}, "
+                            f"src=0x{int(src_addr):x}, offset={offset}"
+                        )
+                        return -1
+                    host_addr_list.append(host_base + offset)
+                # Keep host_buffer alive during transfer
+                _host_buffer_ref = host_buffer
+                return self.engine.batch_transfer_sync(
+                    mooncake_session_id, host_addr_list, dst_addr_list, length_list
+                )
+
             return self.engine.batch_transfer_sync(
                 mooncake_session_id, src_addr_list, dst_addr_list, length_list
             )
