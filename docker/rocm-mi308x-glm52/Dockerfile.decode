@@ -21,11 +21,10 @@ COPY docker/rocm-mi308x-glm52/patches/flydsl/__init__.py /sgl-workspace/aiter/ai
 COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/triton/attention/fp8_mqa_logits.py
 
 # Step 1c: Patch Mooncake C++ source to add MC_DISABLE_HIP_TRANSPORT env var
-COPY docker/rocm-mi308x-glm52/patches/mooncake/disable_hip_transport.patch /tmp/disable_hip_transport.patch
-RUN cd /sgl-workspace/Mooncake && \
-    patch -p1 < /tmp/disable_hip_transport.patch && \
-    pip install --force-reinstall --no-deps -e /sgl-workspace/Mooncake && \
-    rm /tmp/disable_hip_transport.patch
+COPY docker/rocm-mi308x-glm52/patches/mooncake/patch_mooncake.py /tmp/patch_mooncake.py
+RUN python3 /tmp/patch_mooncake.py && \
+    pip install --force-reinstall --no-deps /sgl-workspace/Mooncake/mooncake-wheel && \
+    rm /tmp/patch_mooncake.py
 
 # Step 2: Environment Variables — Decode optimized
 ENV HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
