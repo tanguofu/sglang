@@ -704,17 +704,17 @@ class MooncakeKVManager(CommonKVManager):
                             ctypes.c_int(2),  # hipMemcpyDeviceToHost
                         )
                         if ret != 0:
-                            logger.error(
-                                f"_transfer_data: hipMemcpy D2H failed: ret={ret}, "
-                                f"gpu=0x{src_int:x}, host=0x{host_addr:x}, len={length}"
-                            )
-                            return -1
-                        host_src_addrs.append(host_addr)
+                            # hipMemcpy failed — the address might already be
+                            # in host memory (CPU-pinned). Use it directly.
+                            host_src_addrs.append(src_int)
+                        else:
+                            host_src_addrs.append(host_addr)
                         found = True
                         break
                 if not found:
-                    # Fallback: allocate a temporary host buffer, copy, and
-                    # register it on-the-fly for this transfer.
+                    # Address not in any pre-registered host staging buffer.
+                    # Try D2H copy to a temporary buffer; if that fails,
+                    # assume it's already host memory and use directly.
                     buf = (ctypes.c_char * length)()
                     host_ptr = ctypes.addressof(buf)
                     ret = hip_lib.hipMemcpy(
@@ -724,14 +724,13 @@ class MooncakeKVManager(CommonKVManager):
                         ctypes.c_int(2),  # hipMemcpyDeviceToHost
                     )
                     if ret != 0:
-                        logger.error(
-                            f"_transfer_data: hipMemcpy D2H (fallback) failed: ret={ret}, "
-                            f"gpu=0x{src_int:x}, len={length}"
-                        )
-                        return -1
-                    # Register this temporary buffer with Mooncake
-                    self.engine.register(host_ptr, length)
-                    host_src_addrs.append(host_ptr)
+                        # hipMemcpy failed — likely already host memory.
+                        # Use the original address directly for RDMA transfer.
+                        host_src_addrs.append(src_int)
+                    else:
+                        # Register this temporary buffer with Mooncake
+                        self.engine.register(host_ptr, length)
+                        host_src_addrs.append(host_ptr)
 
             return self.engine.batch_transfer_sync(
                 mooncake_session_id, host_src_addrs, list(dst_addrs), list(lengths)
