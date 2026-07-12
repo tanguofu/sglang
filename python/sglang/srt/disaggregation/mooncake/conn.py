@@ -262,11 +262,6 @@ class MooncakeKVManager(CommonKVManager):
                 self.engine.batch_register(
                     self._host_staging_ptrs, self._host_staging_lens
                 )
-                # Replace kv_data_ptrs with host buffer addresses so that
-                # the bootstrap server shares host addresses (not GPU) with
-                # the prefill side. The prefill side will send to host buffers,
-                # and after transfer, _copy_host_to_gpu copies host→GPU.
-                self.kv_args.kv_data_ptrs = list(self._host_staging_ptrs)
                 logger.info(
                     f"Host staging: registered {len(self._host_staging_ptrs)} "
                     f"host buffers for KV data (total "
@@ -903,6 +898,38 @@ class MooncakeKVManager(CommonKVManager):
                 return self.engine.batch_transfer_sync(
                     mooncake_session_id, host_addr_list, dst_addr_list, length_list
                 )
+
+            # SGLANG_PD_KV_TCP: bypass Mooncake, use raw TCP + hipMemcpy
+            if os.environ.get("SGLANG_PD_KV_TCP") == "1":
+                import ctypes as _ctypes
+                _hip_lib = ctypes.CDLL("libamdhip64.so")
+                for src_addr, dst_addr, length in zip(
+                    src_addr_list, dst_addr_list, length_list
+                ):
+                    # GPU → host (prefill side)
+                    host_buf = (_ctypes.c_byte * length)()
+                    ret = _hip_lib.hipMemcpy(
+                        _ctypes.c_void_p(_ctypes.addressof(host_buf)),
+                        _ctypes.c_void_p(int(src_addr)),
+                        _ctypes.c_size_t(length),
+                        _ctypes.c_int(2),  # hipMemcpyDeviceToHost
+                    )
+                    if ret != 0:
+                        logger.error(f"SGLANG_PD_KV_TCP: hipMemcpy D2H failed: ret={ret}")
+                        return -1
+                    # Send via TCP socket to decode
+                    data = bytes(host_buf)
+                    na = NetworkAddress(req.endpoint, req.dst_port)
+                    sock = self._connect(na.to_tcp(), is_ipv6=na.is_ipv6)
+                    sock.send_multipart([
+                        MooncakeKVManager.AUX_DATA_HEADER,
+                        str(req.room).encode("ascii"),
+                        str(0).encode("ascii"),
+                        str(0).encode("ascii"),
+                        struct.pack(">I", len(data)),
+                        data,
+                    ])
+                return 0
 
             return self.engine.batch_transfer_sync(
                 mooncake_session_id, src_addr_list, dst_addr_list, length_list

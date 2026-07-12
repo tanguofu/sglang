@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: check-model-zw19
+  namespace: kube-system
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeName: node-21.234.170.19
+  restartPolicy: Never
+  containers:
+    - name: busybox
+      image: busybox:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          echo "=== Checking model files on ZW node .19 ==="
+          echo "--- safetensors count ---"
+          ls /data/model/glm52-fp8/*.safetensors 2>&1 | wc -l
+          echo "--- total size ---"
+          du -sh /data/model/glm52-fp8/ 2>&1
+          echo "--- config.json ---"
+          ls -la /data/model/glm52-fp8/config.json 2>&1
+          echo "--- first 5 safetensors ---"
+          ls -la /data/model/glm52-fp8/*.safetensors 2>&1 | head -5
+          echo "--- done ---"
+          sleep 300
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      hostPath:
+        path: /data
+        type: Directory

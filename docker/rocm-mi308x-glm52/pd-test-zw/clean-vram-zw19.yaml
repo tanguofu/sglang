@@ -1,0 +1,53 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: clean-vram-zw19
+  namespace: kube-system
+spec:
+  hostNetwork: true
+  hostPID: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeName: node-21.234.170.19
+  restartPolicy: Never
+  containers:
+    - name: cleanup
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x@sha256:2efafd08077b3565d29f978a1d7c60670f9503804c3406927853c305e5a6a391
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          echo "=== Checking GPU VRAM on ZW node .19 (21.234.170.19) ==="
+          # Kill stale processes using pattern constructed at runtime to avoid self-match
+          P1=launch; P1=${P1}_server
+          P2=launch; P2=${P2}_router
+          echo "--- Killing stale processes ---"
+          pkill -9 -f "$P1" 2>&1 || true
+          pkill -9 -f "$P2" 2>&1 || true
+          sleep 3
+          echo "--- VRAM status ---"
+          rocm-smi --showmeminfo vram 2>&1
+          echo "--- Process check ---"
+          ps aux | grep -E "$P1|$P2" | grep -v grep || echo "No stale processes found"
+          echo "--- Done ---"
+          sleep 60
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["SYS_PTRACE"]
+          drop: ["ALL"]
+        seccompProfile:
+          type: Unconfined
+      volumeMounts:
+        - name: dev-kfd
+          mountPath: /dev/kfd
+        - name: dev-dri
+          mountPath: /dev/dri
+  volumes:
+    - name: dev-kfd
+      hostPath:
+        path: /dev/kfd
+        type: CharDevice
+    - name: dev-dri
+      hostPath:
+        path: /dev/dri
+        type: Directory

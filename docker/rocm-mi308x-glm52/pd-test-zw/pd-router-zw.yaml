@@ -1,0 +1,47 @@
+# SGLang PD Router on ZW prod-1 (21.234.170.103)
+# Routes requests: prefill → KV transfer → decode → response
+# No GPU needed — just CPU and network
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pd-router-zw103
+  namespace: kube-system
+  labels:
+    app: pd-router
+    pd-role: router
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeName: node-21.234.170.103
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 60
+  imagePullSecrets:
+    - name: tencent-registry
+  containers:
+    - name: sglang-router
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x@sha256:2efafd08077b3565d29f978a1d7c60670f9503804c3406927853c305e5a6a391
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -euo pipefail
+          echo "============================================"
+          echo " SGLang Router (PD Disaggregation)"
+          echo "============================================"
+          echo " Prefill: http://21.234.170.103:13000"
+          echo " Decode:  http://21.234.170.19:13001"
+          echo " Port:    13002"
+          exec python3 -m sglang_router.launch_router \
+            --pd-disaggregation \
+            --prefill http://21.234.170.103:13000 \
+            --decode http://21.234.170.19:13001 \
+            --host 0.0.0.0 --port 13002
+      env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+      resources:
+        requests:
+          cpu: "4"
+          memory: 4Gi
+        limits:
+          memory: 8Gi
