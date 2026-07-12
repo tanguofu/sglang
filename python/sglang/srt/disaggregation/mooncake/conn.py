@@ -663,6 +663,42 @@ class MooncakeKVManager(CommonKVManager):
             return 0
 
         src_addrs, dst_addrs, lengths = zip(*transfer_blocks)
+
+        # When host staging is enabled, src_addrs are GPU pointers.
+        # Copy each block D2H to a temporary host buffer, then transfer from host.
+        if os.environ.get("SGLANG_PD_HOST_STAGING") == "1":
+            import ctypes
+            import torch
+
+            torch.cuda.synchronize()
+            hip_lib = ctypes.CDLL("libamdhip64.so")
+            gpu_id = getattr(self.engine, "gpu_id", 0)
+            hip_lib.hipSetDevice(ctypes.c_int(gpu_id))
+
+            host_src_addrs = []
+            host_buffers = []  # keep alive during transfer
+            for src_addr, length in zip(src_addrs, lengths):
+                buf = (ctypes.c_char * length)()
+                host_ptr = ctypes.addressof(buf)
+                ret = hip_lib.hipMemcpy(
+                    ctypes.c_void_p(host_ptr),
+                    ctypes.c_void_p(int(src_addr)),
+                    ctypes.c_size_t(length),
+                    ctypes.c_int(2),  # hipMemcpyDeviceToHost
+                )
+                if ret != 0:
+                    logger.error(
+                        f"_transfer_data: hipMemcpy D2H failed: ret={ret}, "
+                        f"src=0x{int(src_addr):x}, len={length}"
+                    )
+                    return -1
+                host_src_addrs.append(host_ptr)
+                host_buffers.append(buf)
+
+            return self.engine.batch_transfer_sync(
+                mooncake_session_id, host_src_addrs, list(dst_addrs), list(lengths)
+            )
+
         return self.engine.batch_transfer_sync(
             mooncake_session_id, list(src_addrs), list(dst_addrs), list(lengths)
         )
@@ -789,18 +825,11 @@ class MooncakeKVManager(CommonKVManager):
         dst_kv_indices: npt.NDArray[np.int32],
         executor: concurrent.futures.ThreadPoolExecutor,
     ):
-        # When host staging is enabled, copy GPU KV data to host buffers
-        # before transfer and use host buffer pointers (which are registered
-        # with Mooncake RDMA) instead of GPU pointers (which are not).
-        if hasattr(self, "_host_staging_ptrs") and self._host_staging_ptrs:
-            self._copy_gpu_to_host()
-            src_ptrs = self._host_staging_ptrs
-        else:
-            src_ptrs = self.kv_args.kv_data_ptrs
-
+        # When host staging is enabled, _transfer_data() handles D2H copy
+        # per transfer block, so we can use GPU pointers directly here.
         return self._send_kvcache_generic(
             mooncake_session_id=mooncake_session_id,
-            src_data_ptrs=src_ptrs,
+            src_data_ptrs=self.kv_args.kv_data_ptrs,
             dst_data_ptrs=dst_kv_ptrs,
             item_lens=self.kv_args.kv_item_lens,
             prefill_data_indices=prefill_kv_indices,
