@@ -10,7 +10,7 @@
 #include <sgl_kernel/deepseek_v4/fp8_utils.cuh>
 
 #include <cstdint>
-#include <cuda_fp8.h>
+#include <hip/hip_fp8.h>
 
 namespace {
 

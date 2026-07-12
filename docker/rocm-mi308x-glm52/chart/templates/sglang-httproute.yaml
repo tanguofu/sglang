@@ -1,0 +1,51 @@
+{{- if .Values.gateway.enabled }}
+# HTTPRoute — envoy gateway forwarding to SGLang Router (or direct Service if router disabled).
+# Attaches to eg-tke Gateway in ti-cloud namespace (allowedRoutes: All).
+#
+# Two environments, each with its own HTTPRoute hostname:
+#   TEST:  glm52-308x-test.jmpti.woa.com  → GZ router (4x TP8 instances)
+#   PROD:  glm52-308x-prod.jmpti.woa.com  → ZW router (2x TP8 instances)
+#
+# External access: http://<hostname> → envoy LB (21.162.215.14:80) → router → TP8 instances
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}-sglang
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sglang.labels" . | nindent 4 }}
+spec:
+  hostnames:
+    - {{ .Values.gateway.hostname | quote }}
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.gateway.gatewayName }}
+      namespace: {{ .Values.gateway.gatewayNamespace }}
+      sectionName: http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          {{- if .Values.llmDRouter.enabled }}
+          # Route to llm-d Router (EPP + Envoy, prefix-cache-aware)
+          name: {{ .Release.Name }}-llm-d-router
+          namespace: {{ .Values.namespace }}
+          port: {{ .Values.llmDRouter.port }}
+          {{- else if .Values.router.enabled }}
+          # Route to SGLang Router (sgl-model-gateway, cache_aware)
+          name: {{ .Release.Name }}-router
+          namespace: {{ .Values.namespace }}
+          port: {{ .Values.router.port }}
+          {{- else }}
+          # Direct to SGLang Service (no router)
+          name: {{ .Release.Name }}-sglang
+          namespace: {{ .Values.namespace }}
+          port: {{ .Values.port }}
+          {{- end }}
+          weight: 1
+{{- end }}

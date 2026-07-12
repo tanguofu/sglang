@@ -283,3 +283,9 @@ test/registered/xpu/test_nvidia_nemotron_3_nano.py
 artifacts/
 .claude/scheduled_tasks.lock
 .humanize/
+
+# Git history (not needed in Docker build context)
+.git/
+
+# Session recovery files
+SESSION_RECOVERY_*.md

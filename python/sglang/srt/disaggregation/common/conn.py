@@ -33,13 +33,10 @@ from sglang.srt.disaggregation.utils import (
 from sglang.srt.distributed import get_pp_group, get_world_group
 from sglang.srt.environ import envs
 from sglang.srt.layers.dp_attention import (
-    get_attention_cp_rank,
-    get_attention_cp_size,
     get_attention_dp_rank,
     get_attention_dp_size,
-    get_attention_tp_rank,
-    get_attention_tp_size,
 )
+from sglang.srt.runtime_context import get_parallel
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils.network import (
     NetworkAddress,
@@ -76,6 +73,7 @@ class PrefillServerInfo:
     page_size: Optional[int]
     kv_cache_dtype: Optional[str]
     follow_bootstrap_room: bool
+    enable_dsa_cache_layer_split: bool = False
 
     # PD true-retraction rebootstrap: the prefill's HTTP API port. The decode
     # already knows the prefill host (the bootstrap_addr host), so it can POST
@@ -101,6 +99,7 @@ class PrefillServerInfo:
             str(self.kv_cache_dtype) if self.kv_cache_dtype is not None else None
         )
         self.follow_bootstrap_room = bool(self.follow_bootstrap_room)
+        self.enable_dsa_cache_layer_split = bool(self.enable_dsa_cache_layer_split)
         self.prefill_http_port = (
             int(self.prefill_http_port) if self.prefill_http_port is not None else None
         )
@@ -128,16 +127,17 @@ class CommonKVManager(BaseKVManager):
         self.kv_item_lens_sum = sum(args.kv_item_lens)
         self.state_item_lens_sum = sum(x for comp in args.state_item_lens for x in comp)
         self.is_mla_backend = is_mla_backend
+        self.is_hybrid_mla_backend = getattr(args, "is_hybrid_mla_backend", False)
         self.disaggregation_mode = disaggregation_mode
         self.server_args = server_args
         # for p/d multi node infer
         self.bootstrap_host = server_args.host
         self.bootstrap_port = server_args.disaggregation_bootstrap_port
         self.dist_init_addr = server_args.dist_init_addr
-        self.attn_tp_size = get_attention_tp_size()
-        self.attn_tp_rank = get_attention_tp_rank()
-        self.attn_cp_size = get_attention_cp_size()
-        self.attn_cp_rank = get_attention_cp_rank()
+        self.attn_tp_size = get_parallel().attn_tp_size
+        self.attn_tp_rank = get_parallel().attn_tp_rank
+        self.attn_cp_size = get_parallel().attn_cp_size
+        self.attn_cp_rank = get_parallel().attn_cp_rank
         self.attn_dp_size = get_attention_dp_size()
         self.attn_dp_rank = get_attention_dp_rank()
         self.system_dp_size = (
@@ -149,8 +149,18 @@ class CommonKVManager(BaseKVManager):
         self.pp_size = server_args.pp_size
         self.pp_rank = self.kv_args.pp_rank
         self.local_ip = get_local_ip_auto()
+        cp_sharded_prefill = self.attn_cp_size > 1 and (
+            self.is_hybrid_mla_backend or server_args.enable_dsa_cache_layer_split
+        )
+
+        hybrid_decode_pulls_all_ranks = (
+            self.is_hybrid_mla_backend
+            and disaggregation_mode == DisaggregationMode.DECODE
+        )
         self.enable_all_cp_ranks_for_transfer = (
             envs.SGLANG_DISAGGREGATION_ALL_CP_RANKS_TRANSFER.get()
+            or cp_sharded_prefill
+            or hybrid_decode_pulls_all_ranks
         )
 
         # bind zmq socket
@@ -453,7 +463,7 @@ class CommonKVManager(BaseKVManager):
             required_prefill_response_num = 1
             target_tp_ranks = [target_tp_rank]
         elif self.attn_tp_size > info.attn_tp_size:
-            if not self.is_mla_backend:
+            if not self.is_mla_backend and not self.is_hybrid_mla_backend:
                 logger.warning_once(
                     "Performance is NOT guaranteed when using different TP sizes for non-MLA models. "
                 )
@@ -464,7 +474,7 @@ class CommonKVManager(BaseKVManager):
             required_prefill_response_num = 1
             target_tp_ranks = [target_tp_rank]
         else:
-            if not self.is_mla_backend:
+            if not self.is_mla_backend and not self.is_hybrid_mla_backend:
                 logger.warning_once(
                     "Performance is NOT guaranteed when using different TP sizes for non-MLA models. "
                 )
@@ -498,7 +508,11 @@ class CommonKVManager(BaseKVManager):
             target_cp_ranks = [self.attn_cp_rank]
         else:
             target_cp_ranks = list(range(info.attn_cp_size))
-            if not self.enable_all_cp_ranks_for_transfer:
+            pull_from_all_cp_ranks = (
+                self.enable_all_cp_ranks_for_transfer
+                or info.enable_dsa_cache_layer_split
+            )
+            if not pull_from_all_cp_ranks:
                 # Only retrieve from prefill CP rank 0 when not using all ranks
                 target_cp_ranks = target_cp_ranks[:1]
                 required_prefill_response_num *= 1
@@ -585,6 +599,9 @@ class CommonKVManager(BaseKVManager):
             "page_size": self.kv_args.page_size,
             "kv_cache_dtype": self.server_args.kv_cache_dtype,
             "load_balance_method": self.server_args.load_balance_method,
+            "enable_dsa_cache_layer_split": getattr(
+                self.server_args, "enable_dsa_cache_layer_split", False
+            ),
             # Self-register the HTTP API port so the decode can derive the PD
             # retract rebootstrap /generate URL from bootstrap info instead of a
             # router-injected pd_rebootstrap_prefill_url.
@@ -1044,7 +1061,10 @@ class CommonKVSender(BaseKVSender):
         self.curr_idx += len(kv_indices)
         is_last_chunk = self.curr_idx == self.num_kv_indices
 
-        if self.kv_mgr.enable_all_cp_ranks_for_transfer:
+        if (
+            self.kv_mgr.enable_all_cp_ranks_for_transfer
+            and not self.kv_mgr.server_args.enable_dsa_cache_layer_split
+        ):
             kv_indices, index_slice = filter_kv_indices_for_cp_rank(
                 self.kv_mgr,
                 kv_indices,
@@ -1399,6 +1419,7 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
         self.page_size = None
         self.kv_cache_dtype: Optional[str] = None
         self.follow_bootstrap_room: Optional[bool] = None
+        self.enable_dsa_cache_layer_split: Optional[bool] = None
         self.prefill_http_port: Optional[int] = None
         self.prefill_port_table: Dict[
             int, Dict[int, Dict[int, Dict[int, PrefillRankInfo]]]
@@ -1495,6 +1516,11 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
             )
             self.follow_bootstrap_room = load_balance_method == "follow_bootstrap_room"
 
+        if self.enable_dsa_cache_layer_split is None:
+            self.enable_dsa_cache_layer_split = bool(
+                data.get("enable_dsa_cache_layer_split", False)
+            )
+
         if system_dp_size == 1:
             dp_group = attn_dp_rank
         else:
@@ -1558,6 +1584,7 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
                     if self.follow_bootstrap_room is not None
                     else True
                 ),
+                enable_dsa_cache_layer_split=bool(self.enable_dsa_cache_layer_split),
                 prefill_http_port=self.prefill_http_port,
             )
             return web.json_response(dataclasses.asdict(info), status=200)
@@ -1627,7 +1654,9 @@ class CommonKVBootstrapServer(BaseKVBootstrapServer):
 
     def _run_server(self):
         try:
-            # Event Loop
+            # Event Loop — use uvloop (same as uvicorn) for consistency.
+            # Two uvloop instances in different threads work correctly (unlike
+            # mixing uvloop + asyncio SelectorEventLoop which breaks socket accept).
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
 

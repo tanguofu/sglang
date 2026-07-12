@@ -41,6 +41,10 @@ constexpr uint32_t kReg2MaxSeqLen = Register2::kMaxSeqLen;  // 8192
 constexpr uint32_t kReg4MaxSeqLen = Register4::kMaxSeqLen;  // 16384
 
 #define TOPK_KERNEL __global__ __launch_bounds__(kBlockSize, kOccupancy)
+#ifdef USE_ROCM
+// HIP does not support cluster dims; the cluster kernel path is CUDA-only.
+#define __cluster_dims__(x, y, z)
+#endif
 #define CLUSTER_TOPK_KERNEL TOPK_KERNEL __cluster_dims__(1, kClusterSize, 1)
 
 constexpr uint32_t kClusterFloor = 65536;
@@ -423,7 +427,14 @@ struct TopKKernel {
         .cluster_floor = (batch_size <= kSmallBatchLowFloor) ? kClusterFloorSmall : kClusterFloor,
     };
 
-    const bool use_cluster = (max_seq_len > params.cluster_floor) && (batch_size <= kClusterMaxBatch);
+    // HIP does not support cooperative groups cluster API; always use non-cluster path.
+    const bool use_cluster =
+#ifndef USE_ROCM
+        (max_seq_len > params.cluster_floor) && (batch_size <= kClusterMaxBatch)
+#else
+        false
+#endif
+        ;
     constexpr bool kUsePDL = true;
     if (use_cluster) {
       if (batch_size <= kNumPersistentClusters) {

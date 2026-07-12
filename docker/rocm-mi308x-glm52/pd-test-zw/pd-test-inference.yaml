@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pd-test-inference
+  namespace: kube-system
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeName: node-21.234.170.103
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x@sha256:2efafd08077b3565d29f978a1d7c60670f9503804c3406927853c305e5a6a391
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -euo pipefail
+          echo "=== PD Inference Test ==="
+          echo ""
+          echo "--- 1. Router health ---"
+          curl -s http://21.234.170.103:13002/health 2>&1 || echo "FAILED: router health"
+          echo ""
+          echo "--- 2. Prefill health ---"
+          curl -s http://21.234.170.103:13000/health 2>&1 || echo "FAILED: prefill health"
+          echo ""
+          echo "--- 3. Decode health ---"
+          curl -s http://21.234.170.19:13001/health 2>&1 || echo "FAILED: decode health"
+          echo ""
+          echo "--- 4. Chat completion through router ---"
+          curl -s http://21.234.170.103:13002/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer sk-46faecc9d0bc4dcd9db6a15c73ae91c8" \
+            -d '{"model":"glm-5.2","messages":[{"role":"user","content":"Hello! What is 2+2? Answer briefly."}],"max_tokens":64,"temperature":0.7}' 2>&1
+          echo ""
+          echo "--- 5. Decode metrics (MTP check) ---"
+          curl -s http://21.234.170.19:13001/metrics 2>&1 | grep -E "spec_accept_length|spec_draft_length|num_ignored|gen_throughput" | head -10 || echo "No spec metrics yet"
+          echo ""
+          echo "--- 6. Router models ---"
+          curl -s http://21.234.170.103:13002/v1/models \
+            -H "Authorization: Bearer sk-46faecc9d0bc4dcd9db6a15c73ae91c8" 2>&1
+          echo ""
+          echo "=== Test complete ==="
+          sleep 300

@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pd-test-mtp
+  namespace: kube-system
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeName: node-21.234.170.103
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x@sha256:2efafd08077b3565d29f978a1d7c60670f9503804c3406927853c305e5a6a391
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -euo pipefail
+          echo "=== PD MTP Test (3 requests, max_tokens=256) ==="
+
+          for i in 1 2 3; do
+            echo ""
+            echo "--- Request $i ---"
+            start=$(date +%s%N)
+            curl -s http://21.234.170.103:13002/v1/chat/completions \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer sk-46faecc9d0bc4dcd9db6a15c73ae91c8" \
+              -d '{"model":"glm-5.2","messages":[{"role":"user","content":"Write a short Python function to check if a number is prime. Include docstring."}],"max_tokens":256,"temperature":0.7}' \
+              > /tmp/resp_$i.json 2>&1
+            end=$(date +%s%N)
+            elapsed=$(( (end - start) / 1000000 ))
+            echo "Latency: ${elapsed}ms"
+            echo "finish_reason: $(python3 -c "import json; d=json.load(open('/tmp/resp_$i.json')); print(d.get('choices',[{}])[0].get('finish_reason','?'))" 2>&1)"
+            echo "prompt_tokens: $(python3 -c "import json; d=json.load(open('/tmp/resp_$i.json')); print(d.get('usage',{}).get('prompt_tokens','?'))" 2>&1)"
+            echo "completion_tokens: $(python3 -c "import json; d=json.load(open('/tmp/resp_$i.json')); print(d.get('usage',{}).get('completion_tokens','?'))" 2>&1)"
+            echo "reasoning_tokens: $(python3 -c "import json; d=json.load(open('/tmp/resp_$i.json')); print(d.get('usage',{}).get('reasoning_tokens','?'))" 2>&1)"
+            echo "content (first 200): $(python3 -c "import json; d=json.load(open('/tmp/resp_$i.json')); print(d.get('choices',[{}])[0].get('message',{}).get('content','')[:200])" 2>&1)"
+          done
+
+          echo ""
+          echo "--- Decode metrics (MTP) ---"
+          curl -s http://21.234.170.19:13001/metrics 2>&1 | grep -E "spec_accept|spec_draft|gen_throughput|num_request" | head -20
+
+          echo ""
+          echo "=== Test complete ==="
+          sleep 300

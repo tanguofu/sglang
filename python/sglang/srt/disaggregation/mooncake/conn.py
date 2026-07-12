@@ -239,11 +239,41 @@ class MooncakeKVManager(CommonKVManager):
         self.engine = get_mooncake_transfer_engine()
 
     def register_buffer_to_engine(self):
-        # Batch register KV data buffers
-        if self.kv_args.kv_data_ptrs and self.kv_args.kv_data_lens:
-            self.engine.batch_register(
+        # On HIP/ROCm, the Mooncake TCP transport cannot correctly copy
+        # from host staging buffer to GPU memory in the ASIO event loop
+        # thread (cudaMemcpy fails silently). Register host staging buffers
+        # instead of GPU buffers, then copy host→GPU after each transfer.
+        if os.environ.get("SGLANG_PD_HOST_STAGING") == "1":
+            import ctypes
+            self._host_staging_buffers = []
+            self._host_staging_ptrs = []
+            self._host_staging_lens = []
+            self._gpu_ptrs = []
+            for ptr, length in zip(
                 self.kv_args.kv_data_ptrs, self.kv_args.kv_data_lens
-            )
+            ):
+                host_buf = (ctypes.c_char * length)()
+                host_ptr = ctypes.addressof(host_buf)
+                self._host_staging_buffers.append(host_buf)
+                self._host_staging_ptrs.append(host_ptr)
+                self._host_staging_lens.append(length)
+                self._gpu_ptrs.append(ptr)
+            if self._host_staging_ptrs:
+                self.engine.batch_register(
+                    self._host_staging_ptrs, self._host_staging_lens
+                )
+                logger.info(
+                    f"Host staging: registered {len(self._host_staging_ptrs)} "
+                    f"host buffers for KV data (total "
+                    f"{sum(self._host_staging_lens)} bytes), "
+                    f"replaced kv_data_ptrs with host addresses"
+                )
+        else:
+            # Batch register KV data buffers
+            if self.kv_args.kv_data_ptrs and self.kv_args.kv_data_lens:
+                self.engine.batch_register(
+                    self.kv_args.kv_data_ptrs, self.kv_args.kv_data_lens
+                )
 
         # Batch register auxiliary data buffers
         if self.kv_args.aux_data_ptrs and self.kv_args.aux_data_lens:
@@ -256,6 +286,33 @@ class MooncakeKVManager(CommonKVManager):
         ):
             if ptrs and lens:
                 self.engine.batch_register(ptrs, lens)
+
+    def _copy_host_to_gpu(self):
+        """Copy KV data from host staging buffers to GPU after PD transfer."""
+        import ctypes
+
+        hip_lib = ctypes.CDLL("libamdhip64.so")
+        for host_ptr, gpu_ptr, length in zip(
+            self._host_staging_ptrs,
+            self.kv_args.kv_data_ptrs,
+            self._host_staging_lens,
+        ):
+            ret = hip_lib.hipMemcpy(
+                ctypes.c_void_p(int(gpu_ptr)),
+                ctypes.c_void_p(int(host_ptr)),
+                ctypes.c_size_t(length),
+                ctypes.c_int(1),  # hipMemcpyHostToDevice
+            )
+            if ret != 0:
+                logger.error(
+                    f"_copy_host_to_gpu: hipMemcpy failed: ret={ret}, "
+                    f"gpu=0x{int(gpu_ptr):x}, host=0x{int(host_ptr):x}, "
+                    f"len={length}"
+                )
+        logger.info(
+            f"_copy_host_to_gpu: copied {len(self._host_staging_ptrs)} "
+            f"buffers (total {sum(self._host_staging_lens)} bytes)"
+        )
 
     def deregister_buffer_to_engine(self):
         if self.kv_args.kv_data_ptrs:
@@ -605,7 +662,7 @@ class MooncakeKVManager(CommonKVManager):
         layers_params = None
 
         # Decode pp size should be equal to prefill pp size or 1
-        if self.is_mla_backend or force_flat:
+        if self.is_mla_backend or self.is_hybrid_mla_backend or force_flat:
             src_kv_ptrs, dst_kv_ptrs, layers_current_pp_stage = (
                 self.get_mla_kv_ptrs_with_pp(src_data_ptrs, dst_data_ptrs, state_type)
             )
@@ -809,6 +866,71 @@ class MooncakeKVManager(CommonKVManager):
             dst_addr_list = dst_slice_addrs.reshape(-1).tolist()
             total_slices = len(src_addr_list)
             length_list = [heads_bytes_per_token_to_send] * total_slices
+
+            # On HIP/ROCm, the Mooncake TCP transport may not correctly
+            # detect GPU memory (hipPointerGetAttributes field name mismatch).
+            # Use host staging: copy GPU data to host buffer before transfer.
+            if os.environ.get("SGLANG_PD_HOST_STAGING") == "1":
+                import ctypes
+                hip_lib = ctypes.CDLL("libamdhip64.so")
+                total_size = total_slices * heads_bytes_per_token_to_send
+                host_buffer = (ctypes.c_char * total_size)()
+                host_base = ctypes.addressof(host_buffer)
+                host_addr_list = []
+                for i, src_addr in enumerate(src_addr_list):
+                    offset = i * heads_bytes_per_token_to_send
+                    dst_host = ctypes.c_void_p(host_base + offset)
+                    src_gpu = ctypes.c_void_p(int(src_addr))
+                    ret = hip_lib.hipMemcpy(
+                        dst_host, src_gpu,
+                        ctypes.c_size_t(heads_bytes_per_token_to_send),
+                        ctypes.c_int(2),  # hipMemcpyDeviceToHost
+                    )
+                    if ret != 0:
+                        logger.error(
+                            f"Host staging hipMemcpy failed: ret={ret}, "
+                            f"src=0x{int(src_addr):x}, offset={offset}"
+                        )
+                        return -1
+                    host_addr_list.append(host_base + offset)
+                # Keep host_buffer alive during transfer
+                _host_buffer_ref = host_buffer
+                return self.engine.batch_transfer_sync(
+                    mooncake_session_id, host_addr_list, dst_addr_list, length_list
+                )
+
+            # SGLANG_PD_KV_TCP: bypass Mooncake, use raw TCP + hipMemcpy
+            if os.environ.get("SGLANG_PD_KV_TCP") == "1":
+                import ctypes as _ctypes
+                _hip_lib = ctypes.CDLL("libamdhip64.so")
+                for src_addr, dst_addr, length in zip(
+                    src_addr_list, dst_addr_list, length_list
+                ):
+                    # GPU → host (prefill side)
+                    host_buf = (_ctypes.c_byte * length)()
+                    ret = _hip_lib.hipMemcpy(
+                        _ctypes.c_void_p(_ctypes.addressof(host_buf)),
+                        _ctypes.c_void_p(int(src_addr)),
+                        _ctypes.c_size_t(length),
+                        _ctypes.c_int(2),  # hipMemcpyDeviceToHost
+                    )
+                    if ret != 0:
+                        logger.error(f"SGLANG_PD_KV_TCP: hipMemcpy D2H failed: ret={ret}")
+                        return -1
+                    # Send via TCP socket to decode
+                    data = bytes(host_buf)
+                    na = NetworkAddress(req.endpoint, req.dst_port)
+                    sock = self._connect(na.to_tcp(), is_ipv6=na.is_ipv6)
+                    sock.send_multipart([
+                        MooncakeKVManager.AUX_DATA_HEADER,
+                        str(req.room).encode("ascii"),
+                        str(0).encode("ascii"),
+                        str(0).encode("ascii"),
+                        struct.pack(">I", len(data)),
+                        data,
+                    ])
+                return 0
+
             return self.engine.batch_transfer_sync(
                 mooncake_session_id, src_addr_list, dst_addr_list, length_list
             )
@@ -923,6 +1045,31 @@ class MooncakeKVManager(CommonKVManager):
         logger.debug(
             f"Received AUX_DATA for bootstrap_room {room} with length:{len(data)}"
         )
+
+    def _get_dsa_cache_transfer_skip_flags(
+        self, info: Optional[KVArgsRegisterInfo]
+    ) -> Tuple[bool, bool]:
+        skip_kv = False
+        skip_state = False
+        if not self.is_hybrid_mla_backend:
+            return skip_kv, skip_state
+
+        if info is not None and self.attn_tp_size > info.dst_attn_tp_size:
+            sub_rank = (self.kv_args.engine_rank % self.attn_tp_size) % (
+                self.attn_tp_size // info.dst_attn_tp_size
+            )
+            if sub_rank != 0:
+                skip_kv = True
+                skip_state = True
+
+        if (
+            self.attn_cp_size > 1
+            and self.attn_cp_rank != 0
+            and not self.server_args.enable_dsa_cache_layer_split
+        ):
+            skip_state = True
+
+        return skip_kv, skip_state
 
     def maybe_send_extra(
         self,
@@ -1308,10 +1455,15 @@ class MooncakeKVManager(CommonKVManager):
                         target_rank_registration_info: KVArgsRegisterInfo = (
                             self.decode_kv_args_table[req.mooncake_session_id]
                         )
-                        if len(kv_chunk.prefill_kv_indices) == 0:
+                        skip_kv, skip_state = self._get_dsa_cache_transfer_skip_flags(
+                            target_rank_registration_info
+                        )
+                        if len(kv_chunk.prefill_kv_indices) == 0 or skip_kv:
                             ret = 0
-                        elif self.is_mla_backend or (
-                            self.attn_tp_size
+                        elif (
+                            self.is_mla_backend
+                            or self.is_hybrid_mla_backend
+                            or self.attn_tp_size
                             == target_rank_registration_info.dst_attn_tp_size
                         ):
                             ret = self.send_kvcache(
@@ -1376,7 +1528,7 @@ class MooncakeKVManager(CommonKVManager):
                             break
 
                         if kv_chunk.is_last_chunk:
-                            if kv_chunk.state_indices:
+                            if kv_chunk.state_indices and not skip_state:
                                 self.maybe_send_extra(
                                     req,
                                     kv_chunk.state_indices,
@@ -1931,6 +2083,8 @@ class MooncakeKVReceiver(CommonKVReceiver):
 
         status = self.kv_mgr.check_status(self.bootstrap_room)
         if status in (KVPoll.Success, KVPoll.Failed):
+            if status == KVPoll.Success and hasattr(self.kv_mgr, '_host_staging_buffers'):
+                self.kv_mgr._copy_host_to_gpu()
             self.conclude_state = status
         elif status == KVPoll.WaitingForInput:
             timeout_result = self._check_waiting_timeout()
