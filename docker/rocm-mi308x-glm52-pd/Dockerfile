@@ -96,6 +96,11 @@ print('[OK] All 16 GLM-5.2/PD patches verified')"
 COPY docker/rocm-mi308x-glm52-pd/patches/patch_responses_pd.py /tmp/patch_responses_pd.py
 RUN python3 /tmp/patch_responses_pd.py
 
+# Debug: log run_batch + send_kv_chunk in the PD prefill event loop (temporary,
+# to pinpoint the /v1/responses prefill hang).
+COPY docker/rocm-mi308x-glm52-pd/patches/patch_prefill_debug_log.py /tmp/patch_prefill_debug_log.py
+RUN python3 /tmp/patch_prefill_debug_log.py
+
 # ============================================================
 # Hack 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)
 # + Triton fp8_mqa_logits FN→FNUZ fix + BLOCK_KV=64 fallback

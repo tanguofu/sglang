@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: host-debug-152
+  namespace: kube-system
+spec:
+  hostPID: true
+  hostNetwork: true
+  nodeName: node-21.151.225.152
+  restartPolicy: Never
+  containers:
+    - name: debug
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd:v2-8card
+      imagePullPolicy: IfNotPresent
+      command: ["sleep", "36000"]
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: host-root
+          mountPath: /host
+  volumes:
+    - name: host-root
+      hostPath:
+        path: /
+        type: Directory
