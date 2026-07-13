@@ -58,8 +58,9 @@ spec:
             --host 0.0.0.0 --port 30000 \
             --context-length 1048576 \
             --tool-call-parser glm47 --reasoning-parser glm45 \
-            --mem-fraction-static 0.85 \
+            --mem-fraction-static 0.88 \
             --enable-aiter-allreduce-fusion \
+            --enable-mixed-chunk \
             --chunked-prefill-size 32768 \
             --enable-fused-qk-norm-rope \
             --schedule-conservativeness 0.5 \

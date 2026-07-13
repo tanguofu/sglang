@@ -59,17 +59,18 @@ spec:
             --host 0.0.0.0 --port 30000 \
             --context-length 1048576 \
             --tool-call-parser glm47 --reasoning-parser glm45 \
-            --mem-fraction-static 0.85 \
-            --cuda-graph-bs-decode 1 2 4 8 16 \
+            --mem-fraction-static 0.88 \
+            --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 \
             --cuda-graph-max-bs-decode 16 \
             --enable-aiter-allreduce-fusion \
+            --enable-mixed-chunk \
             --enable-fused-qk-norm-rope \
             --schedule-conservativeness 0.5 \
             --kv-cache-dtype fp8_e4m3 \
             --speculative-algorithm NEXTN \
-            --speculative-num-steps 3 --speculative-num-draft-tokens 4 \
+            --speculative-num-steps 2 --speculative-num-draft-tokens 4 \
             --speculative-eagle-topk 1 \
-            --max-running-requests 32 \
+            --max-running-requests 128 \
             --disaggregation-mode decode \
             --disaggregation-transfer-backend mooncake \
             --disaggregation-ib-device '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}' \
