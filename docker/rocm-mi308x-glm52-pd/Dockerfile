@@ -81,6 +81,16 @@ assert 'seq_lens_cpu is not None' in src11, 'PATCH MISSING: 06b frozen_kv'; \
 print('[OK] All 16 GLM-5.2/PD patches verified')"
 
 # ============================================================
+# Hack 2b: Install smg-grpc-servicer for gRPC PD mode (--smg-grpc-mode).
+# Enables GrpcPDRouter /v1/responses support. Pin to match the router pod
+# (smg-grpc-servicer==0.6.0 + smg-grpc-proto==0.4.13). Installed after the
+# sglang overlay so it resolves against the gRPC-compatible overlaid sglang
+# (Optional input_embeds, GetLoadsReqOutput present).
+# ============================================================
+RUN pip install --no-cache-dir "smg-grpc-servicer==0.6.0" && \
+    python3 -c "import smg_grpc_servicer.sglang.servicer as _s; print('[OK] smg-grpc-servicer imports')"
+
+# ============================================================
 # Hack 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)
 # + Triton fp8_mqa_logits FN→FNUZ fix + BLOCK_KV=64 fallback
 # ============================================================
