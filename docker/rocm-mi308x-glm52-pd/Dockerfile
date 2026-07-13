@@ -81,36 +81,20 @@ assert 'seq_lens_cpu is not None' in src11, 'PATCH MISSING: 06b frozen_kv'; \
 print('[OK] All 16 GLM-5.2/PD patches verified')"
 
 # ============================================================
-# Hack 2b: Install smg-grpc-servicer for gRPC PD mode (--smg-grpc-mode).
-# Enables GrpcPDRouter /v1/responses support. Pin to match the router pod
-# (smg-grpc-servicer==0.6.0 + smg-grpc-proto==0.4.13). Installed after the
-# sglang overlay so it resolves against the gRPC-compatible overlaid sglang
-# (Optional input_embeds, GetLoadsReqOutput present).
+# Hack 2b: /v1/responses PD support (HTTP PDRouter mode).
+# The sglang HTTP PDRouter forwards /v1/responses to workers, but the worker's
+# ResponsesRequest drops router-injected PD bootstrap fields and the builtin-tools
+# loop hangs the prefill engine. Patch:
+#   - protocol.py: add bootstrap_host/port/room + disagg_prefill_dp_rank to
+#     ResponsesRequest.
+#   - serving_responses.py: pass bootstrap to GenerateReqInput; coerce stream to
+#     bool; break the builtin-tools loop after the first generate when
+#     disaggregation_mode==prefill (prefill only does prefill+KV-transfer).
+# The matching router side (route_responses on PDRouter) lives in a patched
+# sgl_model_gateway wheel installed on the router pod, not in this worker image.
 # ============================================================
-RUN pip install --no-cache-dir "smg-grpc-servicer==0.6.0" && \
-    pip show smg-grpc-servicer | grep -E "Name|Version"
-
-# smg_grpc_servicer 0.6.0 builds TokenizedGenerateReqInput without
-# input_embeds / token_type_ids; the overlaid sglang declares them Optional
-# but without a default (msgspec Optional != default None). Also session_id
-# uses dataclasses.field (whose metadata=mappingproxy is unpicklable). Fix all.
-RUN python3 <<'PYEOF'
-p = '/sgl-workspace/sglang/python/sglang/srt/managers/io_struct.py'
-s = open(p).read()
-fixes = [
-    ('    input_embeds: Optional[List[List[float]]]\n',
-     '    input_embeds: Optional[List[List[float]]] = None\n'),
-    ('    token_type_ids: Optional[List[int]]\n',
-     '    token_type_ids: Optional[List[int]] = None\n'),
-    ('    session_id: Optional[str] = field(default=None, kw_only=True)\n',
-     '    session_id: Optional[str] = None\n'),
-]
-for old, new in fixes:
-    assert old in s, f'missing: {old.strip()}'
-    s = s.replace(old, new, 1)
-open(p, 'w').write(s)
-print('[OK] TokenizedGenerateReqInput input_embeds + token_type_ids + session_id fixed')
-PYEOF
+COPY docker/rocm-mi308x-glm52-pd/patches/patch_responses_pd.py /tmp/patch_responses_pd.py
+RUN python3 /tmp/patch_responses_pd.py
 
 # ============================================================
 # Hack 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)
