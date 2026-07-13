@@ -99,6 +99,7 @@ s=open(p).read();\
 fixes=[\
 ('    input_embeds: Optional[List[List[float]]]\n','    input_embeds: Optional[List[List[float]]] = None\n'),\
 ('    token_type_ids: Optional[List[int]]\n','    token_type_ids: Optional[List[int]] = None\n'),\
+('    session_id: Optional[str] = field(default=None, kw_only=True)\n','    session_id: Optional[str] = None\n'),\
 ];\
 for old,new in fixes:\
     assert old in s, f'missing: {old.strip()}';\
