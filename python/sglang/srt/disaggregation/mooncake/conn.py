@@ -789,100 +789,18 @@ class MooncakeKVManager(CommonKVManager):
         dst_kv_indices: npt.NDArray[np.int32],
         executor: concurrent.futures.ThreadPoolExecutor,
     ):
-        # When host staging is enabled, do per-block D2H copy to temporary
-        # host buffers (like send_kvcache_slice does), register them with
-        # Mooncake, then RDMA transfer from host to decode's host staging.
-        if (
-            os.environ.get("SGLANG_PD_HOST_STAGING") == "1"
-            and hasattr(self, "_host_staging_ptrs")
-            and self._host_staging_ptrs
-        ):
-            import ctypes
-            import torch
-
-            torch.cuda.synchronize()
-            hip_lib = ctypes.CDLL("libamdhip64.so")
-            gpu_id = getattr(self.engine, "gpu_id", 0)
-            hip_lib.hipSetDevice(ctypes.c_int(gpu_id))
-
-            # Build transfer blocks from KV indices (same logic as
-            # _send_kvcache_generic but with per-block D2H copy)
-            from sglang.srt.disaggregation.common.conn import group_concurrent_contiguous
-            prefill_kv_blocks, dst_kv_blocks = group_concurrent_contiguous(
-                prefill_kv_indices, dst_kv_indices
-            )
-
-            # Get K and V pointers for MHA layout
-            src_k_ptrs, src_v_ptrs, dst_k_ptrs, dst_v_ptrs, layers = (
-                self.get_mha_kv_ptrs_with_pp(self.kv_args.kv_data_ptrs, dst_kv_ptrs)
-            )
-            item_lens = self.kv_args.kv_item_lens
-
-            host_src_addrs = []
-            dst_addrs = []
-            lengths = []
-            host_bufs = []  # keep alive during transfer
-
-            for layer_id in range(layers):
-                src_ptr = src_k_ptrs[layer_id]
-                dst_ptr = dst_k_ptrs[layer_id]
-                item_len = item_lens[layer_id]
-                for prefill_idx, decode_idx in zip(prefill_kv_blocks, dst_kv_blocks):
-                    src_addr = int(src_ptr) + int(prefill_idx[0]) * item_len
-                    dst_addr = int(dst_ptr) + int(decode_idx[0]) * item_len
-                    length = item_len * len(prefill_idx)
-                    # D2H copy to temporary host buffer
-                    buf = (ctypes.c_char * length)()
-                    host_ptr = ctypes.addressof(buf)
-                    ret = hip_lib.hipMemcpy(
-                        ctypes.c_void_p(host_ptr),
-                        ctypes.c_void_p(src_addr),
-                        ctypes.c_size_t(length),
-                        ctypes.c_int(2),  # hipMemcpyDeviceToHost
-                    )
-                    if ret != 0:
-                        # Not a GPU address — use directly (CPU-pinned)
-                        host_ptr = src_addr
-                    else:
-                        self.engine.register(host_ptr, length)
-                        host_bufs.append(buf)
-                    host_src_addrs.append(host_ptr)
-                    dst_addrs.append(dst_addr)
-                    lengths.append(length)
-
-            # Also handle V pointers
-            for layer_id in range(layers):
-                src_ptr = src_v_ptrs[layer_id]
-                dst_ptr = dst_v_ptrs[layer_id]
-                item_len = item_lens[layers + layer_id]
-                for prefill_idx, decode_idx in zip(prefill_kv_blocks, dst_kv_blocks):
-                    src_addr = int(src_ptr) + int(prefill_idx[0]) * item_len
-                    dst_addr = int(dst_ptr) + int(decode_idx[0]) * item_len
-                    length = item_len * len(prefill_idx)
-                    buf = (ctypes.c_char * length)()
-                    host_ptr = ctypes.addressof(buf)
-                    ret = hip_lib.hipMemcpy(
-                        ctypes.c_void_p(host_ptr),
-                        ctypes.c_void_p(src_addr),
-                        ctypes.c_size_t(length),
-                        ctypes.c_int(2),
-                    )
-                    if ret != 0:
-                        host_ptr = src_addr
-                    else:
-                        self.engine.register(host_ptr, length)
-                        host_bufs.append(buf)
-                    host_src_addrs.append(host_ptr)
-                    dst_addrs.append(dst_addr)
-                    lengths.append(length)
-
-            return self.engine.batch_transfer_sync(
-                mooncake_session_id, host_src_addrs, dst_addrs, lengths
-            )
+        # When host staging is enabled, copy GPU KV data to host buffers
+        # before transfer and use host buffer pointers (which are registered
+        # with Mooncake RDMA) instead of GPU pointers (which are not).
+        if hasattr(self, "_host_staging_ptrs") and self._host_staging_ptrs:
+            self._copy_gpu_to_host()
+            src_ptrs = self._host_staging_ptrs
+        else:
+            src_ptrs = self.kv_args.kv_data_ptrs
 
         return self._send_kvcache_generic(
             mooncake_session_id=mooncake_session_id,
-            src_data_ptrs=self.kv_args.kv_data_ptrs,
+            src_data_ptrs=src_ptrs,
             dst_data_ptrs=dst_kv_ptrs,
             item_lens=self.kv_args.kv_item_lens,
             prefill_data_indices=prefill_kv_indices,
