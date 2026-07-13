@@ -290,13 +290,8 @@ class MooncakeKVManager(CommonKVManager):
     def _copy_host_to_gpu(self):
         """Copy KV data from host staging buffers to GPU after PD transfer."""
         import ctypes
-        import torch
 
-        # Use PyTorch's synchronize to ensure all streams are done
-        torch.cuda.synchronize()
         hip_lib = ctypes.CDLL("libamdhip64.so")
-        gpu_id = getattr(self.engine, "gpu_id", 0)
-        hip_lib.hipSetDevice(ctypes.c_int(gpu_id))
         for host_ptr, gpu_ptr, length in zip(
             self._host_staging_ptrs,
             self.kv_args.kv_data_ptrs,
@@ -322,13 +317,8 @@ class MooncakeKVManager(CommonKVManager):
     def _copy_gpu_to_host(self):
         """Copy KV data from GPU to host staging buffers before PD transfer."""
         import ctypes
-        import torch
 
-        # Use PyTorch's synchronize to ensure all streams are done
-        torch.cuda.synchronize()
         hip_lib = ctypes.CDLL("libamdhip64.so")
-        gpu_id = getattr(self.engine, "gpu_id", 0)
-        hip_lib.hipSetDevice(ctypes.c_int(gpu_id))
         for gpu_ptr, host_ptr, length in zip(
             self._gpu_ptrs,
             self._host_staging_ptrs,
