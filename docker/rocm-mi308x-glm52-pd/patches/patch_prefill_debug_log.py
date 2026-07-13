@@ -25,11 +25,11 @@ assert old1 in s, "run_batch anchor not found"
 s = s.replace(old1, new1, 1)
 
 # 2. Around send_kv_chunk in process_batch_result_disagg_prefill
-old2 = "            self.send_kv_chunk(req, last_chunk=True)\n"
+old2 = "                self.send_kv_chunk(req, last_chunk=True)\n"
 new2 = (
-    "            print(f'[DBG] send_kv_chunk start rid={req.rid}', flush=True)\n"
-    "            self.send_kv_chunk(req, last_chunk=True)\n"
-    "            print(f'[DBG] send_kv_chunk done rid={req.rid}', flush=True)\n"
+    "                print(f'[DBG] send_kv_chunk start rid={req.rid}', flush=True)\n"
+    "                self.send_kv_chunk(req, last_chunk=True)\n"
+    "                print(f'[DBG] send_kv_chunk done rid={req.rid}', flush=True)\n"
 )
 assert old2 in s, "send_kv_chunk anchor not found"
 s = s.replace(old2, new2, 1)
