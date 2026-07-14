@@ -34,7 +34,7 @@ spec:
         - name: GPU_MEMORY_UTILIZATION
           value: "0.80"
         - name: MAX_MODEL_LEN
-          value: "524288"
+          value: "262144"
         - name: HIP_VISIBLE_DEVICES
           value: "0,1,2,3,4,5,6,7"
         - name: PYTORCH_ROCM_ARCH
