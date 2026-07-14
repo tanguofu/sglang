@@ -44,8 +44,13 @@ if "async fn route_responses(" not in s:
 else:
     print("[OK] route_responses already present")
 
-# 2. Patch openai-protocol crate: add Custom, Namespace, #[serde(other)] Other
-#    to ResponseToolType so codex's non-standard tool types don't break deserialization.
+# 2. Patch openai-protocol crate: add ALL tool types that codex + the Python
+#    worker accept, so the Rust router doesn't reject or mangle them.
+#    Python worker (protocol.py) accepts: function, web_search, web_search_preview,
+#    code_interpreter, file_search, image_generation, computer_use_preview,
+#    local_shell, mcp, custom, namespace, tool_search.
+#    We must NOT use #[serde(other)] because it serializes unknown types as
+#    "other", which the Python worker rejects. List all types explicitly.
 import glob
 crate_files = glob.glob("/root/.cargo/registry/src/*/openai-protocol-1.0.0/src/responses.rs")
 assert crate_files, "openai-protocol crate not found in registry (run cargo fetch first)"
@@ -65,13 +70,17 @@ old = """pub enum ResponseToolType {
 }"""
 new = """pub enum ResponseToolType {
     Function,
+    WebSearch,
     WebSearchPreview,
     CodeInterpreter,
+    FileSearch,
+    ImageGeneration,
+    ComputerUsePreview,
+    LocalShell,
     Mcp,
     Custom,
     Namespace,
-    #[serde(other)]
-    Other,
+    ToolSearch,
 }"""
 if "Custom" not in s:
     assert old in s, "ResponseToolType enum not found"
@@ -89,18 +98,23 @@ if "patch.crates-io" not in s:
     open(ct, "w").write(s)
     print("[OK] [patch.crates-io] added to Cargo.toml")
 
-# 4. Add Custom/Namespace/Other arms to builder.rs match
+# 4. Add match arms for all new ResponseToolType variants in builder.rs
 bp = f"{GW}/src/routers/grpc/harmony/builder.rs"
 s = open(bp).read()
-if "ResponseToolType::Other" not in s:
+if "ResponseToolType::ToolSearch" not in s:
     s = s.replace(
         'ResponseToolType::Mcp => "mcp",',
         'ResponseToolType::Mcp => "mcp",\n'
+        '                            ResponseToolType::WebSearch => "web_search",\n'
+        '                            ResponseToolType::FileSearch => "file_search",\n'
+        '                            ResponseToolType::ImageGeneration => "image_generation",\n'
+        '                            ResponseToolType::ComputerUsePreview => "computer_use_preview",\n'
+        '                            ResponseToolType::LocalShell => "local_shell",\n'
         '                            ResponseToolType::Custom => "custom",\n'
         '                            ResponseToolType::Namespace => "namespace",\n'
-        '                            ResponseToolType::Other => "other",',
+        '                            ResponseToolType::ToolSearch => "tool_search",',
         1)
     open(bp, "w").write(s)
-    print("[OK] builder.rs match arms added (Custom, Namespace, Other)")
+    print("[OK] builder.rs match arms added (all 12 tool types)")
 
 print("\n=== All router patches applied ===")
