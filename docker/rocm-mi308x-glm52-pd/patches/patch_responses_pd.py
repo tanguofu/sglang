@@ -126,3 +126,24 @@ if "DisaggregationMode.PREFILL" not in s:
 if changed or "DisaggregationMode.PREFILL" in s:
     open(RESP, "w").write(s)
     print("[OK] serving_responses.py written")
+
+# 2e. Fix created_at float → int in streaming SSE events.
+#     The openai SDK's ResponseCreatedEvent promotes created_at to float,
+#     but codex's Rust deserializer expects i64. Patch _send_event to strip .0.
+send_event_anchor = '            event_type = getattr(event, "type", "unknown")\n'
+send_event_fix = (
+    '            event_type = getattr(event, "type", "unknown")\n'
+    '            import re as _re\n'
+    '            _json = event.model_dump_json(indent=None)\n'
+    '            _json = _re.sub(r\'"created_at":(\\d+)\\.0\\b\', r\'"created_at":\\1\', _json)\n'
+)
+s = open(RESP).read()
+if '"created_at":' not in s or '_re.sub' not in s:
+    if send_event_anchor in s:
+        s = s.replace(send_event_anchor, send_event_fix, 1)
+        open(RESP, "w").write(s)
+        print("[OK] serving_responses.py: created_at float→int in _send_event")
+    else:
+        print("[WARN] _send_event anchor not found for created_at fix")
+else:
+    print("[OK] created_at fix already present")
