@@ -22,14 +22,11 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NCCL_NET_GDR_LEVEL=0 \
     NCCL_SOCKET_IFNAME=bond0
 
-# -- Install RDMA + UCX dependencies --
+# -- Install RDMA dependencies (UCX already built in base vLLM ROCm image) --
 RUN apt-get update && apt-get install -y --no-install-recommends \
     rdma-core \
     ibverbs-utils \
     perftest \
-    libucx0 \
-    libucx-dev \
-    uc-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # -- Remove CUDA-only packages that conflict with ROCm --
