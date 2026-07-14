@@ -127,23 +127,35 @@ if changed or "DisaggregationMode.PREFILL" in s:
     open(RESP, "w").write(s)
     print("[OK] serving_responses.py written")
 
-# 2e. Fix created_at float → int in streaming SSE events.
+# 2e. Fix created_at float -> int in streaming SSE events.
 #     The openai SDK's ResponseCreatedEvent promotes created_at to float,
-#     but codex's Rust deserializer expects i64. Patch _send_event to strip .0.
-send_event_anchor = '            event_type = getattr(event, "type", "unknown")\n'
-send_event_fix = (
-    '            event_type = getattr(event, "type", "unknown")\n'
-    '            import re as _re\n'
-    '            _json = event.model_dump_json(indent=None)\n'
-    '            _json = _re.sub(r\'"created_at":(\\d+)\\.0\\b\', r\'"created_at":\\1\', _json)\n'
-)
+#     but codex's Rust deserializer expects i64.
+#     There are TWO _send_event functions (harmony + non-harmony paths).
+#     Use a module-level helper + replace ALL occurrences of model_dump_json
+#     in _send_event return statements.
 s = open(RESP).read()
-if '"created_at":' not in s or '_re.sub' not in s:
-    if send_event_anchor in s:
-        s = s.replace(send_event_anchor, send_event_fix, 1)
-        open(RESP, "w").write(s)
-        print("[OK] serving_responses.py: created_at float→int in _send_event")
+if "_fix_created_at_int" not in s:
+    # Add helper function near the top of the file (after imports)
+    helper = '''
+import re as _re_created_at
+def _fix_created_at_int(json_str):
+    """Strip .0 from created_at float values so codex (i64) can deserialize."""
+    return _re_created_at.sub(r'"created_at":(\\d+)\\.0\\b', r'"created_at":\\1', json_str)
+
+'''
+    # Insert after the first blank line following imports
+    insert_after = "from sglang_harmony import Message as OpenAIMessage\n"
+    if insert_after in s:
+        s = s.replace(insert_after, insert_after + helper, 1)
     else:
-        print("[WARN] _send_event anchor not found for created_at fix")
+        # Fallback: insert after the module docstring
+        s = helper + s
+    # Replace ALL occurrences of model_dump_json in _send_event return statements
+    old_return = 'f"data: {event.model_dump_json(indent=None)}\\n\\n"'
+    new_return = 'f"data: {_fix_created_at_int(event.model_dump_json(indent=None))}\\n\\n"'
+    count = s.count(old_return)
+    s = s.replace(old_return, new_return)
+    open(RESP, "w").write(s)
+    print(f"[OK] created_at fix: helper added + {count} _send_event returns patched")
 else:
     print("[OK] created_at fix already present")
