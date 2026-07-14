@@ -65,6 +65,8 @@ KV_TRANSFER_CONFIG=$(cat <<EOF
     "kv_role": "${KV_ROLE}",
     "kv_buffer_device": "cpu",
     "kv_buffer_size": 1000000000,
+    "kv_ip": "${PEER_IP}",
+    "kv_port": 14579,
     "kv_connector_extra_config": {
         "backends": ["UCX"]
     }
@@ -92,11 +94,10 @@ nixl_buffer_device: "cpu"
 nixl_enable_gc: True
 LMCACHEYAML
 
-# UCX RDMA transport — use rc_verbs (generic IBverbs) NOT rc_mlx5 (Mellanox-only)
-# bnxt_re is a standard IBverbs provider, rc_verbs works with it
-# cuda_copy=GPU↔CPU memcpy for host staging, cuda_ipc=GPU IPC for same-node
-export UCX_TLS="${UCX_TLS:-rc_verbs,cuda_copy,cuda_ipc,tcp,self}"
-export UCX_NET_DEVICES="${UCX_NET_DEVICES:-bnxt_re_bond0:1}"
+# UCX RDMA transport — let UCX auto-select device (don't restrict to bnxt_re only)
+# UCX will use management network for handshake, RDMA for data transfer
+export UCX_TLS="${UCX_TLS:-rc_verbs,tcp,cuda_copy,self}"
+unset UCX_NET_DEVICES  # Let UCX auto-select
 # RCCL env vars (for tensor parallel all-reduce, NOT for KV transfer)
 export NCCL_IB_HCA="${NCCL_IB_HCA:-bnxt_re}"
 export NCCL_NET_GDR_LEVEL="${NCCL_NET_GDR_LEVEL:-0}"
