@@ -32,7 +32,7 @@ spec:
         - name: TENSOR_PARALLEL_SIZE
           value: "8"
         - name: GPU_MEMORY_UTILIZATION
-          value: "0.88"
+          value: "0.80"
         - name: MAX_MODEL_LEN
           value: "524288"
         - name: HIP_VISIBLE_DEVICES
