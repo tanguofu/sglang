@@ -143,13 +143,19 @@ def _fix_created_at_int(json_str):
     return _re_created_at.sub(r'"created_at":(\\d+)\\.0\\b', r'"created_at":\\1', json_str)
 
 '''
-    # Insert after the first blank line following imports
-    insert_after = "from sglang_harmony import Message as OpenAIMessage\n"
+    # Insert AFTER `from __future__ import annotations` (must stay at file top)
+    insert_after = "from __future__ import annotations\n"
     if insert_after in s:
         s = s.replace(insert_after, insert_after + helper, 1)
     else:
-        # Fallback: insert after the module docstring
-        s = helper + s
+        # Fallback: insert after the first import line
+        import re as _re_patch
+        m = _re_patch.search(r'^(import |from )', s, re.MULTILINE)
+        if m:
+            pos = m.start()
+            s = s[:pos] + helper + s[pos:]
+        else:
+            s = helper + s
     # Replace ALL occurrences of model_dump_json in _send_event return statements
     old_return = 'f"data: {event.model_dump_json(indent=None)}\\n\\n"'
     new_return = 'f"data: {_fix_created_at_int(event.model_dump_json(indent=None))}\\n\\n"'
