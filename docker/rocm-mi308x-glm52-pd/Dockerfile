@@ -81,25 +81,12 @@ assert 'seq_lens_cpu is not None' in src11, 'PATCH MISSING: 06b frozen_kv'; \
 print('[OK] All 16 GLM-5.2/PD patches verified')"
 
 # ============================================================
-# Hack 2b: /v1/responses PD support (HTTP PDRouter mode).
-# The sglang HTTP PDRouter forwards /v1/responses to workers, but the worker's
-# ResponsesRequest drops router-injected PD bootstrap fields and the builtin-tools
-# loop hangs the prefill engine. Patch:
-#   - protocol.py: add bootstrap_host/port/room + disagg_prefill_dp_rank to
-#     ResponsesRequest.
-#   - serving_responses.py: pass bootstrap to GenerateReqInput; coerce stream to
-#     bool; break the builtin-tools loop after the first generate when
-#     disaggregation_mode==prefill (prefill only does prefill+KV-transfer).
-# The matching router side (route_responses on PDRouter) lives in a patched
-# sgl_model_gateway wheel installed on the router pod, not in this worker image.
+# Hack 2b: /v1/responses PD support is now in the source directly.
+# protocol.py: ResponsesRequest has bootstrap_host/port/room + disagg_prefill_dp_rank.
+# serving_responses.py: bootstrap passthrough + stream=bool + loop-skip in prefill
+#   mode + created_at int fix for codex streaming compatibility.
+# No patch scripts needed — source is modified in-repo on this branch.
 # ============================================================
-COPY docker/rocm-mi308x-glm52-pd/patches/patch_responses_pd.py /tmp/patch_responses_pd.py
-RUN python3 /tmp/patch_responses_pd.py
-
-# Debug: log run_batch + send_kv_chunk in the PD prefill event loop (temporary,
-# to pinpoint the /v1/responses prefill hang).
-COPY docker/rocm-mi308x-glm52-pd/patches/patch_prefill_debug_log.py /tmp/patch_prefill_debug_log.py
-RUN python3 /tmp/patch_prefill_debug_log.py
 
 # ============================================================
 # Hack 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)
