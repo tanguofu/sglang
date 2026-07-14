@@ -86,9 +86,31 @@ if "Custom" not in s:
     assert old in s, "ResponseToolType enum not found"
     s = s.replace(old, new, 1)
     open(rp, "w").write(s)
-    print("[OK] openai-protocol patched: Custom + Namespace + #[serde(other)] Other")
+    print("[OK] openai-protocol patched: 12 tool types")
 else:
-    print("[OK] openai-protocol already patched")
+    print("[OK] openai-protocol tool types already patched")
+
+# 2b. Patch ResponseInput: add Other(serde_json::Value) catch-all so codex's
+#     input format (which may not match Items or Text) deserializes OK and
+#     is preserved verbatim when forwarded to the worker.
+old_input = """pub enum ResponseInput {
+    Items(Vec<ResponseInputOutputItem>),
+    Text(String),
+}"""
+new_input = """pub enum ResponseInput {
+    Items(Vec<ResponseInputOutputItem>),
+    Text(String),
+    Other(serde_json::Value),
+}"""
+if "Other(serde_json::Value)" not in s:
+    # re-read (s may have been written above)
+    s2 = open(rp).read()
+    assert old_input in s2, "ResponseInput enum not found"
+    s2 = s2.replace(old_input, new_input, 1)
+    open(rp, "w").write(s2)
+    print("[OK] ResponseInput patched: Other(serde_json::Value) catch-all")
+else:
+    print("[OK] ResponseInput already patched")
 
 # 3. [patch.crates-io] in Cargo.toml
 ct = f"{GW}/Cargo.toml"
