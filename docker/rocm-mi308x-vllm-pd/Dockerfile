@@ -15,7 +15,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HSA_ENABLE_SDMA=0 \
     HIP_FORCE_DEV_KERNARG=1 \
     HSA_NO_SCRATCH_RECLAIM=1 \
-    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     NCCL_DEBUG=INFO \
     NCCL_IB_DISABLE=0 \
     NCCL_IB_HCA=bnxt_re \

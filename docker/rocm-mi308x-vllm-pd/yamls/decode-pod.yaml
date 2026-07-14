@@ -59,6 +59,8 @@ spec:
           value: "1"
           value: "expandable_segments:True"
         - name: NCCL_DEBUG
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: ""
           value: INFO
       securityContext:
         privileged: true
