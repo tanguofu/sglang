@@ -106,8 +106,10 @@ where D: serde::Deserializer<'de> {
     }
 }
 '''
-    s2 = s2.replace("#[derive(Debug, Clone, Deserialize, Serialize)]\npub struct ResponsesRequest {",
-                    lenient_fn + "\n#[derive(Debug, Clone, Deserialize, Serialize)]\npub struct ResponsesRequest {", 1)
+    s2 = s2.replace(
+        '#[derive(Debug, Clone, Deserialize, Serialize, Validate)]\n#[validate(schema(function = "validate_responses_cross_parameters"))]\npub struct ResponsesRequest {',
+        lenient_fn + '\n#[derive(Debug, Clone, Deserialize, Serialize, Validate)]\n#[validate(schema(function = "validate_responses_cross_parameters"))]\npub struct ResponsesRequest {',
+        1)
     # Add #[serde(deserialize_with)] on the input field
     s2 = s2.replace(
         "pub input: ResponseInput,",
