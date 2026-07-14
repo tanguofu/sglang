@@ -85,15 +85,17 @@ nixl_buffer_device: "cpu"
 nixl_enable_gc: True
 LMCACHEYAML
 
-# UCX RDMA transport (NOT TCP) — NIXL uses UCX env vars, not NCCL
-# ib=InfiniBand RDMA, rdmacm=RDMA Connection Manager
-# cuda_copy=GPU memcpy for local PCIe, cuda_ipc=GPU IPC for same-node
-export UCX_TLS="${UCX_TLS:-rdmacm,ib,cuda_copy,cuda_ipc}"
+# UCX RDMA transport — use rc_verbs (generic IBverbs) NOT rc_mlx5 (Mellanox-only)
+# bnxt_re is a standard IBverbs provider, rc_verbs works with it
+# cuda_copy=GPU↔CPU memcpy for host staging, cuda_ipc=GPU IPC for same-node
+export UCX_TLS="${UCX_TLS:-rc_verbs,cuda_copy,cuda_ipc,tcp,self}"
 export UCX_NET_DEVICES="${UCX_NET_DEVICES:-bnxt_re_bond0:1}"
 # RCCL env vars (for tensor parallel all-reduce, NOT for KV transfer)
 export NCCL_IB_HCA="${NCCL_IB_HCA:-bnxt_re}"
 export NCCL_NET_GDR_LEVEL="${NCCL_NET_GDR_LEVEL:-0}"
 export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-bond0}"
+# Force rc_verbs over rc_mlx5 for bnxt_re compatibility
+export UCX_IB_TLS="${UCX_IB_TLS:-rc_verbs}"
 export LMCACHE_USE_EXPERIMENTAL=True
 export VLLM_ENABLE_V1_MULTIPROCESSING=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
