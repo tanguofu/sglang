@@ -50,16 +50,16 @@ else
 fi
 
 # KV transfer config — LMCache with NIXL/UCX RDMA
+# Correct format from vLLM source: kv_connector/kv_role/kv_connector_extra_config
 # NIXL registers CPU pinned memory for RDMA (not GPU Direct, no peer_mem needed)
 # UCX_TLS=ib,rdmacm enables RDMA transport (not TCP)
-# nixl_buffer_device=cpu → host memory bounce buffer (GPU→host→RDMA→host→GPU)
+# kv_buffer_device=cpu → host memory bounce buffer (GPU→host→RDMA→host→GPU)
 KV_TRANSFER_CONFIG=$(cat <<EOF
 {
     "kv_connector": "LMCacheConnectorV1",
     "kv_role": "${KV_ROLE}",
     "kv_connector_extra_config": {
-        "discard_partial_chunks": false,
-        "lmcache_rpc_port": "${LMCACHE_RPC_PORT:-producer1}"
+        "use_native": true
     }
 }
 EOF
@@ -85,10 +85,15 @@ nixl_buffer_device: "cpu"
 nixl_enable_gc: True
 LMCACHEYAML
 
-# UCX RDMA transport (NOT TCP) — ib=InfiniBand RDMA, rdmacm=RDMA Connection Manager
+# UCX RDMA transport (NOT TCP) — NIXL uses UCX env vars, not NCCL
+# ib=InfiniBand RDMA, rdmacm=RDMA Connection Manager
 # cuda_copy=GPU memcpy for local PCIe, cuda_ipc=GPU IPC for same-node
-export UCX_TLS="${UCX_TLS:-cuda_ipc,cuda_copy,ib,rdmacm}"
+export UCX_TLS="${UCX_TLS:-rdmacm,ib,cuda_copy,cuda_ipc}"
 export UCX_NET_DEVICES="${UCX_NET_DEVICES:-bnxt_re_bond0:1}"
+# RCCL env vars (for tensor parallel all-reduce, NOT for KV transfer)
+export NCCL_IB_HCA="${NCCL_IB_HCA:-bnxt_re}"
+export NCCL_NET_GDR_LEVEL="${NCCL_NET_GDR_LEVEL:-0}"
+export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-bond0}"
 export LMCACHE_USE_EXPERIMENTAL=True
 export VLLM_ENABLE_V1_MULTIPROCESSING=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
