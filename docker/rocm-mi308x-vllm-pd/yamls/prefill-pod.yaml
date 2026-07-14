@@ -59,7 +59,6 @@ spec:
           value: "1"
           value: "expandable_segments:True"
         - name: NCCL_DEBUG
-        - name: PYTORCH_CUDA_ALLOC_CONF
           value: "max_split_size_mb:512"
           value: INFO
       securityContext:

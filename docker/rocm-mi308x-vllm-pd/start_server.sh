@@ -32,6 +32,10 @@ RDMA_PORT="${LMCACHE_RDMA_PORT:-52000}"
 echo "============================================"
 echo " vLLM PD Worker (${PD_ROLE})"
 echo "============================================"
+
+# Unset PYTORCH_CUDA_ALLOC_CONF — expandable_segments is incompatible with
+# LMCache KV connector (remaps memory addresses, breaks RDMA MR registration)
+unset PYTORCH_CUDA_ALLOC_CONF
 echo " Model: $MODEL_PATH"
 echo " Port: $PORT  TP: $TP_SIZE"
 echo " Host: $HOST_IP  Peer: $PEER_IP"
