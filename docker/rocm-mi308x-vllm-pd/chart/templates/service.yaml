@@ -1,0 +1,50 @@
+{{- if .Values.gateway.enabled }}
+# Serverless Service (no selector, headless) — from iwiki 4025430038 pattern
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-router
+  namespace: {{ .Values.namespace }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: http
+    port: {{ .Values.router.port }}
+    targetPort: {{ .Values.router.port }}
+    protocol: TCP
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: {{ .Release.Name }}-router
+  namespace: {{ .Values.namespace }}
+  labels:
+    kubernetes.io/service-name: {{ .Release.Name }}-router
+addressType: IPv4
+endpoints:
+- addresses:
+  - {{ .Values.pd.prefill.hostIp }}
+  conditions:
+    ready: true
+ports:
+- name: http
+  port: {{ .Values.router.port }}
+  protocol: TCP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Values.namespace }}
+spec:
+  parentRefs:
+  - name: {{ .Values.gateway.gatewayName }}
+    namespace: {{ .Values.gateway.gatewayNamespace }}
+  hostnames:
+  - {{ .Values.gateway.hostname }}
+  rules:
+  - backendRefs:
+    - name: {{ .Release.Name }}-router
+      port: {{ .Values.router.port }}
+{{- end }}

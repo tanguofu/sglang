@@ -1,0 +1,92 @@
+# GLM-5.2 vLLM PD 1P1D with LMCache on AMD MI308X
+# Deploy: helm install vllm-pd ./chart/ -f values-1pd.yaml -n kube-system
+
+# --- Image ---
+image: mirrors.tencent.com/ti-platform/vllm-glm52-308x-pd
+tag: latest
+imagePullPolicy: Always
+
+# --- Model ---
+modelPath: /data/model/glm52-fp8
+servedModelName: glm-5.2
+apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
+
+# --- PD Topology ---
+# 1P1D: 1 prefill worker + 1 decode worker
+pd:
+  enabled: true
+  # LMCache KV transfer config
+  # PyNccl = TCP-based (no GPUDirect RDMA needed), works without peer_mem
+  kvTransferConfig:
+    kv_connector: LMCacheConnector
+    kv_role: kv_both
+    # For PD: prefill=kv_producer, decode=kv_consumer
+    # Using kv_both for simplicity (each worker can both send/recv)
+  # Prefill worker
+  prefill:
+    nodeName: node-21.234.170.19
+    hostIp: 21.234.170.19
+    port: 13000
+    extraArgs:
+      - "--max-num-batched-tokens 32768"
+      - "--max-num-seqs 64"
+  # Decode worker
+  decode:
+    nodeName: node-21.234.170.32
+    hostIp: 21.234.170.32
+    port: 13000
+    extraArgs:
+      - "--max-num-seqs 128"
+
+# --- vLLM Common Args (both prefill + decode) ---
+vllm:
+  tensorParallelSize: 8
+  gpuMemoryUtilization: 0.90
+  kvCacheDtype: fp8
+  trustRemoteCode: true
+  toolCallParser: glm47
+  reasoningParser: glm45
+  maxModelLen: 1048576
+  # Speculative decoding (MTP) - if supported by vLLM for GLM-5.2
+  speculativeModel: null
+  speculativeNumSteps: 0
+
+# --- AMD GPU ---
+rocm:
+  gfxArch: gfx942
+  env:
+    HSA_ENABLE_SDMA: "0"
+    HIP_FORCE_DEV_KERNARG: "1"
+    HSA_NO_SCRATCH_RECLAIM: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    NCCL_DEBUG: "INFO"
+    # LMCache RDMA KV transfer (MUST use RDMA, not TCP)
+    # Uses host pinned memory + RDMA (bypasses GPU peer_mem requirement)
+    LMCACHE_USE_RDMA: "1"
+    LMCACHE_RDMA_DEVICE: bnxt_re_bond0
+    LMCACHE_RDMA_PORT: "52000"
+
+# --- Router (optional, for PD routing) ---
+router:
+  enabled: true
+  port: 13001
+  # vLLM PD router or use external (e.g., sgl-model-gateway)
+
+# --- K8s ---
+hostNetwork: true
+restartPolicy: Never
+namespace: kube-system
+
+# --- Gateway (Envoy, from iwiki 4025430038) ---
+gateway:
+  enabled: false
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-vllm-pd.jmpti.woa.com
+  lbAddress: 21.162.215.14
+
+# --- Health ---
+readinessProbe:
+  initialDelaySeconds: 600
+  periodSeconds: 30
+  failureThreshold: 10

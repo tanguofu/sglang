@@ -1,0 +1,102 @@
+{{- if .Values.pd.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-prefill
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Release.Name }}
+    role: prefill
+spec:
+  hostNetwork: {{ .Values.hostNetwork }}
+  nodeName: {{ .Values.pd.prefill.nodeName }}
+  restartPolicy: {{ .Values.restartPolicy }}
+  containers:
+    - name: vllm-prefill
+      image: "{{ .Values.image }}:{{ .Values.tag }}"
+      imagePullPolicy: {{ .Values.imagePullPolicy }}
+      env:
+        - name: PD_ROLE
+          value: "prefill"
+        - name: MODEL_PATH
+          value: {{ .Values.modelPath }}
+        - name: SERVED_MODEL_NAME
+          value: {{ .Values.servedModelName }}
+        - name: API_KEY
+          value: {{ .Values.apiKey }}
+        - name: PORT
+          value: "{{ .Values.pd.prefill.port }}"
+        - name: HOST_IP
+          value: {{ .Values.pd.prefill.hostIp }}
+        - name: PEER_IP
+          value: {{ .Values.pd.decode.hostIp }}
+        - name: TENSOR_PARALLEL_SIZE
+          value: "{{ .Values.vllm.tensorParallelSize }}"
+        - name: GPU_MEMORY_UTILIZATION
+          value: "{{ .Values.vllm.gpuMemoryUtilization }}"
+        - name: MAX_MODEL_LEN
+          value: "{{ .Values.vllm.maxModelLen }}"
+        - name: LMCACHE_RDMA_DEVICE
+          value: {{ .Values.rocm.env.LMCACHE_RDMA_DEVICE | default "bnxt_re_bond0" }}
+        - name: LMCACHE_RDMA_PORT
+          value: "{{ .Values.rocm.env.LMCACHE_RDMA_PORT | default "52000" }}"
+        - name: HIP_VISIBLE_DEVICES
+          value: "0,1,2,3,4,5,6,7"
+        - name: PYTORCH_ROCM_ARCH
+          value: "{{ .Values.rocm.gfxArch }}"
+        {{- range $k, $v := .Values.rocm.env }}
+        {{- if not (or (eq $k "LMCACHE_RDMA_DEVICE") (eq $k "LMCACHE_RDMA_PORT")) }}
+        - name: {{ $k }}
+          value: {{ $v | quote }}
+        {{- end }}
+        {{- end }}
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["SYS_PTRACE"]
+          drop: ["ALL"]
+        seccompProfile:
+          type: Unconfined
+      ports:
+        - name: http
+          containerPort: {{ .Values.pd.prefill.port }}
+          hostPort: {{ .Values.pd.prefill.port }}
+      volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: dev-kfd
+          mountPath: /dev/kfd
+        - name: dev-dri
+          mountPath: /dev/dri
+        - name: ib
+          mountPath: /dev/infiniband
+        - name: shm
+          mountPath: /dev/shm
+        - name: sys
+          mountPath: /sys
+  volumes:
+    - name: data
+      hostPath:
+        path: /data
+        type: Directory
+    - name: dev-kfd
+      hostPath:
+        path: /dev/kfd
+        type: CharDevice
+    - name: dev-dri
+      hostPath:
+        path: /dev/dri
+        type: Directory
+    - name: ib
+      hostPath:
+        path: /dev/infiniband
+        type: Directory
+    - name: shm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 256Gi
+    - name: sys
+      hostPath:
+        path: /sys
+        type: Directory
+{{- end }}

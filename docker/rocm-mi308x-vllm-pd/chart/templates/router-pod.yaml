@@ -1,0 +1,59 @@
+{{- if .Values.router.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ .Release.Name }}-router
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: {{ .Release.Name }}
+    role: router
+spec:
+  hostNetwork: {{ .Values.hostNetwork }}
+  nodeName: {{ .Values.pd.prefill.nodeName }}
+  restartPolicy: {{ .Values.restartPolicy }}
+  containers:
+    - name: router
+      image: "{{ .Values.image }}:{{ .Values.tag }}"
+      imagePullPolicy: {{ .Values.imagePullPolicy }}
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -euo pipefail
+          # Simple PD router: route long-prefill requests to prefill, decode to decode
+          # Uses vllm PD's built-in routing or sgl-model-gateway
+          python3 -c "
+          from vllm.router import PDRouter
+          router = PDRouter(
+              prefill_endpoint='http://{{ .Values.pd.prefill.hostIp }}:{{ .Values.pd.prefill.port }}',
+              decode_endpoint='http://{{ .Values.pd.decode.hostIp }}:{{ .Values.pd.decode.port }}',
+              port={{ .Values.router.port }}
+          )
+          router.run()
+          " || python3 -c "
+          # Fallback: simple HTTP proxy that forwards all to decode
+          # (decode will pull KV from prefill via LMCache)
+          import http.server, http.client, json
+          DECODE='{{ .Values.pd.decode.hostIp }}'
+          PORT={{ .Values.pd.decode.port }}
+          class Proxy(http.server.BaseHTTPRequestHandler):
+              def do_POST(self):
+                  c=http.client.HTTPConnection(DECODE,PORT,timeout=300)
+                  l=int(self.headers.get('content-length',0))
+                  c.request('POST',self.path,self.rfile.read(l),dict(self.headers))
+                  r=c.getresponse()
+                  self.send_response(r.status)
+                  for k,v in r.getheaders(): self.send_header(k,v)
+                  self.end_headers()
+                  self.wfile.write(r.read())
+              def do_GET(self):
+                  self.do_POST()
+          http.server.HTTPServer(('0.0.0.0',{{ .Values.router.port }}),Proxy).serve_forever()
+          "
+      env:
+        - name: HIP_VISIBLE_DEVICES
+          value: ""  # router doesn't need GPU
+      ports:
+        - name: http
+          containerPort: {{ .Values.router.port }}
+          hostPort: {{ .Values.router.port }}
+{{- end }}

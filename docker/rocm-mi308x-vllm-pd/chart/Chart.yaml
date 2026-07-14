@@ -1,0 +1,6 @@
+apiVersion: v2
+name: vllm-glm52-pd
+description: GLM-5.2-FP8 vLLM PD (Prefill-Decode disaggregation) with LMCache on AMD MI308X
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
