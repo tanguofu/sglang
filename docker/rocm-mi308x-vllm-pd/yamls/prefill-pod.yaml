@@ -59,6 +59,8 @@ spec:
           value: "1"
           value: "expandable_segments:True"
         - name: NCCL_DEBUG
+        - name: VLLM_ROCM_USE_AITER
+          value: "1"
           value: "max_split_size_mb:512"
           value: INFO
       securityContext:
