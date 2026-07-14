@@ -47,6 +47,7 @@ RUN python3 -c "import vllm; print('vLLM version:', vllm.__version__)" && \
 
 # -- Copy entrypoint + proxy server --
 COPY docker/rocm-mi308x-vllm-pd/start_server.sh /start_server.sh
+COPY docker/rocm-mi308x-vllm-pd/disagg_proxy.py /disagg_proxy.py
 COPY docker/rocm-mi308x-vllm-pd/disagg_proxy_server.py /disagg_proxy_server.py
 RUN chmod +x /start_server.sh
 
