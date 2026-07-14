@@ -27,13 +27,23 @@ echo " Port: $PORT  TP: $TP_SIZE  Host: $HOST_IP  Peer: $PEER_IP"
 unset PYTORCH_CUDA_ALLOC_CONF
 export VLLM_ROCM_USE_AITER=1
 
-# Patch AITER torch.compile bug — remove raise RuntimeError that breaks
-# symbolic tracing (runtime check still works, just no crash during compile)
+# Patch AITER torch.compile bug — replace multi-line raise RuntimeError with pass
+# (runtime check still works, just no crash during torch.compile symbolic tracing)
 SPARSE_INDEXER="/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/sparse_attn_indexer.py"
 if [ -f "$SPARSE_INDEXER" ] && grep -q "Sparse attention indexer ROCm path" "$SPARSE_INDEXER"; then
     echo "Patching AITER torch.compile check..."
-    sed -i 's/raise RuntimeError(/# PATCHED: raise RuntimeError(/' "$SPARSE_INDEXER"
-    echo "AITER patch applied → CUDA graph can be enabled"
+    python3 -c "
+p = '$SPARSE_INDEXER'
+with open(p) as f: c = f.read()
+old = 'raise RuntimeError(\n            \"Sparse attention indexer ROCm path is only supported on AITER. \"\n            \"Please enable aiter with VLLM_ROCM_USE_AITER=1\"\n        )'
+if old in c:
+    c = c.replace(old, 'pass  # PATCHED: AITER check removed for torch.compile')
+    with open(p, 'w') as f: f.write(c)
+    print('AITER patch applied (multi-line replace)')
+else:
+    print('WARNING: Could not find exact pattern to patch')
+"
+    echo "AITER patch done → CUDA graph can be enabled"
 fi
 
 # PD connector: prefill=push, decode=pull
