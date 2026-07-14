@@ -32,9 +32,9 @@ spec:
         - name: TENSOR_PARALLEL_SIZE
           value: "8"
         - name: GPU_MEMORY_UTILIZATION
-          value: "0.80"
+          value: "0.85"
         - name: MAX_MODEL_LEN
-          value: "524288"
+          value: "1048576"
         - name: HIP_VISIBLE_DEVICES
           value: "0,1,2,3,4,5,6,7"
         - name: PYTORCH_ROCM_ARCH

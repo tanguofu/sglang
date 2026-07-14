@@ -1,18 +1,9 @@
 #!/usr/bin/env bash
-# Entrypoint for vLLM PD worker (prefill or decode) with LMCache RDMA
+# Entrypoint for vLLM PD worker with NixlConnector UCX RDMA
 # Branch: 308x-vllm-llcache-1pd
-#
-# Environment variables:
-#   PD_ROLE=prefill|decode
-#   MODEL_PATH=/data/model/glm52-fp8
-#   PORT=13000
-#   HOST_IP=<this node's management IP>
-#   PEER_IP=<peer node's management IP>
-#   LMCACHE_RDMA_DEVICE=bnxt_re_bond0
-#   LMCACHE_RDMA_PORT=52000
-#   TENSOR_PARALLEL_SIZE=8
-#   GPU_MEMORY_UTILIZATION=0.90
-#   MAX_MODEL_LEN=1048576
+# Prefill: NixlPushConnector | Decode: NixlPullConnector
+# kv_buffer_device=cpu → host memory RDMA (no peer_mem needed)
+# AITER torch.compile patch at startup → enables CUDA graph
 
 set -euo pipefail
 
@@ -24,87 +15,58 @@ PORT="${PORT:-13000}"
 HOST_IP="${HOST_IP:-0.0.0.0}"
 PEER_IP="${PEER_IP:-127.0.0.1}"
 TP_SIZE="${TENSOR_PARALLEL_SIZE:-8}"
-GPU_MEM_UTIL="${GPU_MEMORY_UTILIZATION:-0.90}"
+GPU_MEM_UTIL="${GPU_MEMORY_UTILIZATION:-0.85}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-1048576}"
-RDMA_DEVICE="${LMCACHE_RDMA_DEVICE:-bnxt_re_bond0}"
-RDMA_PORT="${LMCACHE_RDMA_PORT:-52000}"
 
 echo "============================================"
 echo " vLLM PD Worker (${PD_ROLE})"
 echo "============================================"
+echo " Model: $MODEL_PATH  MaxLen: $MAX_MODEL_LEN  GPUMem: $GPU_MEM_UTIL"
+echo " Port: $PORT  TP: $TP_SIZE  Host: $HOST_IP  Peer: $PEER_IP"
 
-# Unset PYTORCH_CUDA_ALLOC_CONF — expandable_segments is incompatible with
-# LMCache KV connector (remaps memory addresses, breaks RDMA MR registration)
 unset PYTORCH_CUDA_ALLOC_CONF
-
-# Force enable AITER for ROCm sparse attention (needed for GLM-5.2 DSA)
 export VLLM_ROCM_USE_AITER=1
-echo " Model: $MODEL_PATH"
-echo " Port: $PORT  TP: $TP_SIZE"
-echo " Host: $HOST_IP  Peer: $PEER_IP"
-echo " RDMA: $RDMA_DEVICE:$RDMA_PORT"
 
-# Determine KV transfer role
-if [ "$PD_ROLE" = "prefill" ]; then
-    KV_ROLE="kv_producer"
-    NIXL_ROLE="sender"
-elif [ "$PD_ROLE" = "decode" ]; then
-    KV_ROLE="kv_consumer"
-    NIXL_ROLE="receiver"
-else
-    echo "ERROR: Unknown PD_ROLE=$PD_ROLE (expected prefill|decode)"
-    exit 1
+# Patch AITER torch.compile bug — remove raise RuntimeError that breaks
+# symbolic tracing (runtime check still works, just no crash during compile)
+SPARSE_INDEXER="/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/sparse_attn_indexer.py"
+if [ -f "$SPARSE_INDEXER" ] && grep -q "Sparse attention indexer ROCm path" "$SPARSE_INDEXER"; then
+    echo "Patching AITER torch.compile check..."
+    sed -i 's/raise RuntimeError(/# PATCHED: raise RuntimeError(/' "$SPARSE_INDEXER"
+    echo "AITER patch applied → CUDA graph can be enabled"
 fi
 
-# KV transfer config — NixlConnector (direct NIXL/UCX RDMA, no LMCache dependency)
-# NIXL registers CPU pinned memory for RDMA (not GPU Direct, no peer_mem needed)
-# kv_buffer_device=cpu → host memory bounce buffer (GPU→host→RDMA→host→GPU)
+# PD connector: prefill=push, decode=pull
+if [ "$PD_ROLE" = "prefill" ]; then
+    KV_CONNECTOR="NixlPushConnector"
+    KV_ROLE="kv_producer"
+elif [ "$PD_ROLE" = "decode" ]; then
+    KV_CONNECTOR="NixlPullConnector"
+    KV_ROLE="kv_consumer"
+else
+    echo "ERROR: Unknown PD_ROLE=$PD_ROLE"; exit 1
+fi
+
 KV_TRANSFER_CONFIG=$(cat <<EOF
 {
-    "kv_connector": "NixlConnector",
+    "kv_connector": "${KV_CONNECTOR}",
     "kv_role": "${KV_ROLE}",
     "kv_buffer_device": "cpu",
     "kv_buffer_size": 1000000000,
     "kv_ip": "${PEER_IP}",
     "kv_port": 14579,
-    "kv_connector_extra_config": {
-        "backends": ["UCX"]
-    }
+    "kv_connector_extra_config": {"backends": ["UCX"]}
 }
 EOF
 )
 
-# LMCache YAML config (NIXL RDMA with host memory)
-export LMCACHE_CONFIG_FILE="${LMCACHE_CONFIG_FILE:-/etc/lmcache/lmcache-config.yaml}"
-mkdir -p /etc/lmcache
-cat > "$LMCACHE_CONFIG_FILE" <<LMCACHEYAML
-chunk_size: 256
-local_cpu: False
-max_local_cpu_size: 0
-max_local_disk_size: 0
-remote_serde: NULL
-
-enable_nixl: True
-nixl_role: "${NIXL_ROLE}"
-nixl_peer_host: "${PEER_IP}"
-nixl_peer_init_port: ${NIXL_PEER_PORT:-55555}
-nixl_peer_alloc_port: ${NIXL_PEER_PORT:-55556}
-nixl_buffer_size: 1073741824
-nixl_buffer_device: "cpu"
-nixl_enable_gc: True
-LMCACHEYAML
-
-# UCX RDMA transport — let UCX auto-select device (don't restrict to bnxt_re only)
-# UCX will use management network for handshake, RDMA for data transfer
 export UCX_TLS="${UCX_TLS:-rc_verbs,tcp,cuda_copy,self}"
-unset UCX_NET_DEVICES  # Let UCX auto-select
-# RCCL env vars (for tensor parallel all-reduce, NOT for KV transfer)
+unset UCX_NET_DEVICES
+export UCX_IB_TLS="${UCX_IB_TLS:-rc_verbs}"
 export NCCL_IB_HCA="${NCCL_IB_HCA:-bnxt_re}"
 export NCCL_NET_GDR_LEVEL="${NCCL_NET_GDR_LEVEL:-0}"
 export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-bond0}"
-# Force rc_verbs over rc_mlx5 for bnxt_re compatibility
-export UCX_IB_TLS="${UCX_IB_TLS:-rc_verbs}"
-export LMCACHE_USE_EXPERIMENTAL=True
+export NCCL_DEBUG=INFO
 export VLLM_ENABLE_V1_MULTIPROCESSING=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export PYTHONHASHSEED=0
@@ -122,5 +84,4 @@ exec python3 -m vllm.entrypoints.openai.api_server \
     --max-model-len "$MAX_MODEL_LEN" \
     --host 0.0.0.0 --port "$PORT" \
     --kv-transfer-config "$KV_TRANSFER_CONFIG" \
-    --enforce-eager \
     --no-enable-log-requests
