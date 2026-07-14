@@ -90,27 +90,23 @@ if "Custom" not in s:
 else:
     print("[OK] openai-protocol tool types already patched")
 
-# 2b. Patch ResponseInput: add Other(serde_json::Value) catch-all so codex's
-#     input format (which may not match Items or Text) deserializes OK and
-#     is preserved verbatim when forwarded to the worker.
-old_input = """pub enum ResponseInput {
-    Items(Vec<ResponseInputOutputItem>),
-    Text(String),
-}"""
-new_input = """pub enum ResponseInput {
-    Items(Vec<ResponseInputOutputItem>),
-    Text(String),
-    Other(serde_json::Value),
-}"""
-if "Other(serde_json::Value)" not in s:
-    # re-read (s may have been written above)
-    s2 = open(rp).read()
-    assert old_input in s2, "ResponseInput enum not found"
-    s2 = s2.replace(old_input, new_input, 1)
+# 2b. ResponseInput: codex may send input formats the crate doesn't accept.
+#     Make ResponseInputOutputItem accept unknown item types via #[serde(other)].
+#     This lets the Items variant match codex's items without breaking matches.
+import re
+s2 = open(rp).read()
+# Find ResponseInputOutputItem enum and add #[serde(other)] Other if not present
+m = re.search(r'(pub enum ResponseInputOutputItem \{[^}]+)\}', s2)
+if m and "Other" not in m.group(0) and "#[serde(other)]" not in m.group(0):
+    old_item = m.group(0)
+    new_item = old_item[:-1] + "    #[serde(other)]\n    UnknownItem,\n}"
+    s2 = s2.replace(old_item, new_item, 1)
     open(rp, "w").write(s2)
-    print("[OK] ResponseInput patched: Other(serde_json::Value) catch-all")
+    print("[OK] ResponseInputOutputItem: added #[serde(other)] UnknownItem catch-all")
+elif "#[serde(other)]" in s2:
+    print("[OK] ResponseInputOutputItem already has catch-all")
 else:
-    print("[OK] ResponseInput already patched")
+    print("[WARN] ResponseInputOutputItem enum not found (may be a struct)")
 
 # 3. [patch.crates-io] in Cargo.toml
 ct = f"{GW}/Cargo.toml"
