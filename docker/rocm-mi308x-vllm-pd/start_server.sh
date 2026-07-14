@@ -114,4 +114,4 @@ exec python3 -m vllm.entrypoints.openai.api_server \
     --max-model-len "$MAX_MODEL_LEN" \
     --host 0.0.0.0 --port "$PORT" \
     --kv-transfer-config "$KV_TRANSFER_CONFIG" \
-    --disable-log-requests
+    --no-enable-log-requests
