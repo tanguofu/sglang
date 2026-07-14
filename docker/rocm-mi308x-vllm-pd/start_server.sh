@@ -130,7 +130,7 @@ elif [ "$PD_ROLE" = "decode" ]; then
     export VLLM_DECODE_TOPK_OPT=1
     export VLLM_USE_NON_PERSISTENT_MLA=1
 
-    EXTRA_ARGS="--max-num-seqs 6 --max-num-batched-tokens 192 --capture-scale 4 --capture-sizes 1 2 3 4 5 6 --gpu-memory-utilization 0.9"
+    EXTRA_ARGS="--max-num-seqs 6 --max-num-batched-tokens 192 --gpu-memory-utilization 0.9"
 
     KV_TRANSFER_CONFIG=$(cat <<EOF
 {
@@ -161,7 +161,6 @@ exec python3 -m vllm.entrypoints.openai.api_server \
     --max-model-len "$MAX_MODEL_LEN" \
     --block-size 64 \
     --distributed-executor-backend mp \
-    --enable-reasoning \
     --tool-call-parser glm47 \
     --reasoning-parser glm45 \
     --enable-auto-tool-choice \
@@ -169,7 +168,6 @@ exec python3 -m vllm.entrypoints.openai.api_server \
     --enable-prompt-tokens-details \
     --speculative-config '{"num_speculative_tokens":3, "method":"deepseek_mtp"}' \
     --compilation-config '{"custom_ops": ["+rms_norm"]}' \
-    --system-prompt-num 2 \
     --host 0.0.0.0 --port "$PORT" \
     --kv-transfer-config "$KV_TRANSFER_CONFIG" \
     $EXTRA_ARGS
