@@ -49,8 +49,8 @@ RUN python3 -c "import vllm; print('vLLM version:', vllm.__version__)" && \
     python3 -c "import torch; print('PyTorch ROCM:', torch.version.hip)"
 
 # -- Copy entrypoint + proxy server --
-COPY start_server.sh /start_server.sh
-COPY disagg_proxy_server.py /disagg_proxy_server.py
+COPY docker/rocm-mi308x-vllm-pd/start_server.sh /start_server.sh
+COPY docker/rocm-mi308x-vllm-pd/disagg_proxy_server.py /disagg_proxy_server.py
 RUN chmod +x /start_server.sh
 
 ENTRYPOINT ["/start_server.sh"]
