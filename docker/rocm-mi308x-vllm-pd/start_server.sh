@@ -36,6 +36,9 @@ echo "============================================"
 # Unset PYTORCH_CUDA_ALLOC_CONF — expandable_segments is incompatible with
 # LMCache KV connector (remaps memory addresses, breaks RDMA MR registration)
 unset PYTORCH_CUDA_ALLOC_CONF
+
+# Force enable AITER for ROCm sparse attention (needed for GLM-5.2 DSA)
+export VLLM_ROCM_USE_AITER=1
 echo " Model: $MODEL_PATH"
 echo " Port: $PORT  TP: $TP_SIZE"
 echo " Host: $HOST_IP  Peer: $PEER_IP"
