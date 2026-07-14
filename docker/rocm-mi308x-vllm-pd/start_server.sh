@@ -56,17 +56,17 @@ else
     exit 1
 fi
 
-# KV transfer config — LMCache with NIXL/UCX RDMA
-# Correct format from vLLM source: kv_connector/kv_role/kv_connector_extra_config
+# KV transfer config — NixlConnector (direct NIXL/UCX RDMA, no LMCache dependency)
 # NIXL registers CPU pinned memory for RDMA (not GPU Direct, no peer_mem needed)
-# UCX_TLS=ib,rdmacm enables RDMA transport (not TCP)
 # kv_buffer_device=cpu → host memory bounce buffer (GPU→host→RDMA→host→GPU)
 KV_TRANSFER_CONFIG=$(cat <<EOF
 {
-    "kv_connector": "LMCacheConnectorV1",
+    "kv_connector": "NixlConnector",
     "kv_role": "${KV_ROLE}",
+    "kv_buffer_device": "cpu",
+    "kv_buffer_size": 1000000000,
     "kv_connector_extra_config": {
-        "use_native": true
+        "backends": ["UCX"]
     }
 }
 EOF
