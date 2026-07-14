@@ -24,45 +24,29 @@ spec:
         - name: API_KEY
           value: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
         - name: PORT
-          value: "13000"
-        - name: HOST_IP
-          value: 21.234.170.32
+          value: "8000"
         - name: PEER_IP
           value: 21.234.170.19
         - name: TENSOR_PARALLEL_SIZE
           value: "8"
         - name: GPU_MEMORY_UTILIZATION
-          value: "0.80"
+          value: "0.9"
         - name: MAX_MODEL_LEN
-          value: "262144"
+          value: "202752"
         - name: HIP_VISIBLE_DEVICES
           value: "0,1,2,3,4,5,6,7"
         - name: PYTORCH_ROCM_ARCH
           value: gfx942
-        - name: UCX_TLS
-          value: "rc_verbs,cuda_copy,cuda_ipc,tcp,self"
-        - name: UCX_NET_DEVICES
-          value: "bnxt_re_bond0:1"
-        - name: UCX_IB_TLS
-          value: "rc_verbs"
         - name: NCCL_IB_HCA
           value: bnxt_re
         - name: NCCL_NET_GDR_LEVEL
           value: "0"
         - name: NCCL_SOCKET_IFNAME
           value: bond0
-        - name: HSA_ENABLE_SDMA
-          value: "0"
-        - name: HIP_FORCE_DEV_KERNARG
-          value: "1"
-        - name: HSA_NO_SCRATCH_RECLAIM
-          value: "1"
-          value: "expandable_segments:True"
         - name: NCCL_DEBUG
+          value: INFO
         - name: VLLM_ROCM_USE_AITER
           value: "1"
-          value: "max_split_size_mb:512"
-          value: INFO
       securityContext:
         privileged: true
         capabilities:
@@ -72,8 +56,8 @@ spec:
           type: Unconfined
       ports:
         - name: http
-          containerPort: 13000
-          hostPort: 13000
+          containerPort: 8000
+          hostPort: 8000
       volumeMounts:
         - name: data
           mountPath: /data
@@ -89,26 +73,14 @@ spec:
           mountPath: /sys
   volumes:
     - name: data
-      hostPath:
-        path: /data
-        type: Directory
+      hostPath: { path: /data, type: Directory }
     - name: dev-kfd
-      hostPath:
-        path: /dev/kfd
-        type: CharDevice
+      hostPath: { path: /dev/kfd, type: CharDevice }
     - name: dev-dri
-      hostPath:
-        path: /dev/dri
-        type: Directory
+      hostPath: { path: /dev/dri, type: Directory }
     - name: ib
-      hostPath:
-        path: /dev/infiniband
-        type: Directory
+      hostPath: { path: /dev/infiniband, type: Directory }
     - name: shm
-      emptyDir:
-        medium: Memory
-        sizeLimit: 256Gi
+      emptyDir: { medium: Memory, sizeLimit: 256Gi }
     - name: sys
-      hostPath:
-        path: /sys
-        type: Directory
+      hostPath: { path: /sys, type: Directory }

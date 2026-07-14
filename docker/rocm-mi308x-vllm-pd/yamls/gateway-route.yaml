@@ -1,0 +1,50 @@
+# Serverless Service + EndpointSlice + HTTPRoute for vLLM PD Proxy
+# Based on iwiki 4025430038 pattern
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-pd-proxy
+  namespace: kube-system
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: http
+    port: 9000
+    targetPort: 9000
+    protocol: TCP
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: vllm-pd-proxy
+  namespace: kube-system
+  labels:
+    kubernetes.io/service-name: vllm-pd-proxy
+addressType: IPv4
+endpoints:
+- addresses:
+  - 21.234.170.19
+  conditions:
+    ready: true
+ports:
+- name: http
+  port: 9000
+  protocol: TCP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: glm52-vllm-pd
+  namespace: kube-system
+spec:
+  parentRefs:
+  - name: eg-tke
+    namespace: ti-cloud
+  hostnames:
+  - glm52-vllm-pd.jmpti.woa.com
+  rules:
+  - backendRefs:
+    - name: vllm-pd-proxy
+      port: 9000
