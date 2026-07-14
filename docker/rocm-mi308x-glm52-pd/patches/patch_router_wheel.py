@@ -111,7 +111,7 @@ where D: serde::Deserializer<'de> {
     # Add #[serde(deserialize_with)] on the input field
     s2 = s2.replace(
         "pub input: ResponseInput,",
-        '#[serde(deserialize_with = "deserialize_input_lenient", default)]\n    pub input: ResponseInput,',
+        '#[serde(deserialize_with = "deserialize_input_lenient")]\n    pub input: ResponseInput,',
         1)
     open(rp, "w").write(s2)
     print("[OK] input: lenient deserializer (fallback to Text on parse failure)")
