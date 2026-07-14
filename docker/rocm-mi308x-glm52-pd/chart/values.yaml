@@ -2,7 +2,7 @@
 # Deploy: helm install glm52-pd ./chart -n kube-system -f chart/values.yaml
 
 # --- Images (built from Dockerfile + Dockerfile.router, pushed to mirrors) ---
-workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd:http-0714v2
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd:http-0714v5
 routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:responses-0714
 
 # --- API ---
