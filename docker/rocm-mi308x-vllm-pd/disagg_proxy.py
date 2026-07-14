@@ -41,6 +41,7 @@ class Proxy:
         self.router.post("/v1/chat/completions")(self.create_chat_completion)
         self.router.post("/v1/completions")(self.create_completion)
         self.router.post("/v1/responses")(self.create_response)
+        self.router.post("/v1/messages")(self.create_message)
         self.router.get("/status")(self.get_status)
 
     async def _forward(self, url, data):
@@ -89,6 +90,11 @@ class Proxy:
         """Codex /v1/responses — PD route with max_output_tokens=1 for prefill."""
         req = await raw_request.json()
         return await self._pd_route("/v1/responses", req, "max_output_tokens", 1)
+
+    async def create_message(self, raw_request: Request):
+        """Anthropic /v1/messages — PD route with max_tokens=1 for prefill."""
+        req = await raw_request.json()
+        return await self._pd_route("/v1/messages", req, "max_tokens", 1)
 
     async def get_status(self):
         return {"prefill": self.prefill, "decode": self.decode, "model": self.model}
