@@ -289,3 +289,4 @@ artifacts/
 
 # Session recovery files
 SESSION_RECOVERY_*.md
+.codebuddy/worktrees/
