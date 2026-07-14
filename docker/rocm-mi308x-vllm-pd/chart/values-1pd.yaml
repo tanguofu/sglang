@@ -1,0 +1,68 @@
+# values-1pd.yaml — vLLM PD 1P1D deployment on zhongwei nodes
+# Deploy: helm install vllm-pd ./chart/ -f values-1pd.yaml -n kube-system
+
+image: mirrors.tencent.com/ti-platform/vllm-glm52-308x-pd
+tag: latest
+imagePullPolicy: Always
+
+modelPath: /data/model/glm52-fp8
+servedModelName: glm-5.2
+apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
+
+pd:
+  enabled: true
+  prefill:
+    nodeName: node-21.234.170.19
+    hostIp: 21.234.170.19
+    port: 13000
+    extraArgs:
+      - "--max-num-batched-tokens 32768"
+      - "--max-num-seqs 64"
+  decode:
+    nodeName: node-21.234.170.32
+    hostIp: 21.234.170.32
+    port: 13000
+    extraArgs:
+      - "--max-num-seqs 128"
+
+vllm:
+  tensorParallelSize: 8
+  gpuMemoryUtilization: 0.90
+  kvCacheDtype: fp8
+  trustRemoteCode: true
+  toolCallParser: glm47
+  reasoningParser: glm45
+  maxModelLen: 1048576
+
+rocm:
+  gfxArch: gfx942
+  env:
+    HSA_ENABLE_SDMA: "0"
+    HIP_FORCE_DEV_KERNARG: "1"
+    HSA_NO_SCRATCH_RECLAIM: "1"
+    PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+    NCCL_DEBUG: "INFO"
+    NCCL_IB_HCA: "bnxt_re"
+    NCCL_NET_GDR_LEVEL: "0"
+    NCCL_SOCKET_IFNAME: "bond0"
+    UCX_TLS: "rdmacm,ib,cuda_copy,cuda_ipc"
+    UCX_NET_DEVICES: "bnxt_re_bond0:1"
+    LMCACHE_USE_RDMA: "1"
+    LMCACHE_RDMA_DEVICE: "bnxt_re_bond0"
+    LMCACHE_RDMA_PORT: "52000"
+
+router:
+  enabled: true
+  port: 13001
+
+hostNetwork: true
+restartPolicy: Never
+namespace: kube-system
+
+gateway:
+  enabled: false
+
+readinessProbe:
+  initialDelaySeconds: 600
+  periodSeconds: 30
+  failureThreshold: 10
