@@ -1,0 +1,30 @@
+# Router image for GLM-5.2 PD with /v1/responses support.
+# Bakes the patched sgl_model_gateway wheel (route_responses + codex tool types)
+# into the image so no runtime patching is needed.
+#
+# Build (from repo root):
+#   docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile.router \
+#     -t mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:responses-0714 .
+
+FROM lmsysorg/sglang-rocm:v0.5.15-rocm720-mi30x-20260710
+
+LABEL maintainer="guofutan"
+LABEL description="SGLang PD Router with /v1/responses + codex tool-type support"
+
+# Overlay sgl-model-gateway source from the repo (our branch)
+COPY sgl-model-gateway/ /sgl-workspace/sglang/sgl-model-gateway/
+
+# Download dependencies (openai-protocol crate) so the patch script can find it
+RUN cd /sgl-workspace/sglang/sgl-model-gateway && cargo fetch
+
+# Apply patches: route_responses (batch_size=None) + openai-protocol tool types
+COPY docker/rocm-mi308x-glm52-pd/patches/patch_router_wheel.py /tmp/patch_router_wheel.py
+RUN python3 /tmp/patch_router_wheel.py
+
+# Build + install the patched wheel
+RUN cd /sgl-workspace/sglang/sgl-model-gateway/bindings/python && \
+    CARGO_BUILD_JOBS=8 maturin build --release --out dist --features vendored-openssl && \
+    pip install --force-reinstall --no-deps dist/sglang_router-0.3.2-*.whl && \
+    python3 -c "import sglang_router; print('sglang_router OK')"
+
+CMD ["/bin/bash"]
