@@ -90,23 +90,32 @@ if "Custom" not in s:
 else:
     print("[OK] openai-protocol tool types already patched")
 
-# 2b. ResponseInput: codex may send input formats the crate doesn't accept.
-#     Make ResponseInputOutputItem accept unknown item types via #[serde(other)].
-#     This lets the Items variant match codex's items without breaking matches.
-import re
+# 2b. ResponseInput: codex sends input formats the crate may not accept.
+#     Use a lenient custom deserializer that tries ResponseInput first, and
+#     falls back to Text(json_string) if the typed parse fails. This keeps the
+#     field type as ResponseInput (no match breakage) while accepting any JSON.
 s2 = open(rp).read()
-# Find ResponseInputOutputItem enum and add #[serde(other)] Other if not present
-m = re.search(r'(pub enum ResponseInputOutputItem \{[^}]+)\}', s2)
-if m and "Other" not in m.group(0) and "#[serde(other)]" not in m.group(0):
-    old_item = m.group(0)
-    new_item = old_item[:-1] + "    #[serde(other)]\n    UnknownItem,\n}"
-    s2 = s2.replace(old_item, new_item, 1)
+if "deserialize_input_lenient" not in s2:
+    lenient_fn = '''
+fn deserialize_input_lenient<'de, D>(deserializer: D) -> std::result::Result<ResponseInput, D::Error>
+where D: serde::Deserializer<'de> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match ResponseInput::deserialize(value.clone()) {
+        Ok(input) => Ok(input),
+        Err(_) => Ok(ResponseInput::Text(value.to_string())),
+    }
+}
+'''
+    s2 = s2.replace("pub struct ResponsesRequest {", lenient_fn + "\npub struct ResponsesRequest {", 1)
+    # Add #[serde(deserialize_with)] on the input field
+    s2 = s2.replace(
+        "pub input: ResponseInput,",
+        '#[serde(deserialize_with = "deserialize_input_lenient", default)]\n    pub input: ResponseInput,',
+        1)
     open(rp, "w").write(s2)
-    print("[OK] ResponseInputOutputItem: added #[serde(other)] UnknownItem catch-all")
-elif "#[serde(other)]" in s2:
-    print("[OK] ResponseInputOutputItem already has catch-all")
+    print("[OK] input: lenient deserializer (fallback to Text on parse failure)")
 else:
-    print("[WARN] ResponseInputOutputItem enum not found (may be a struct)")
+    print("[OK] input lenient deserializer already present")
 
 # 3. [patch.crates-io] in Cargo.toml
 ct = f"{GW}/Cargo.toml"
