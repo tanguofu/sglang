@@ -1415,6 +1415,12 @@ class ResponsesRequest(BaseModel):
     min_p: Optional[float] = None
     repetition_penalty: Optional[float] = None
 
+    # PD disaggregation bootstrap fields (forwarded to prefill worker by router)
+    bootstrap_host: Optional[Union[List[str], str]] = None
+    bootstrap_port: Optional[Union[List[Optional[int]], int]] = None
+    bootstrap_room: Optional[Union[List[int], int]] = None
+    disagg_prefill_dp_rank: Optional[int] = None
+
     # Default sampling parameters
     _DEFAULT_SAMPLING_PARAMS = {
         "temperature": 0.7,
