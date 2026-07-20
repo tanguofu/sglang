@@ -1,0 +1,89 @@
+{{- if .Values.eaglePatch.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-eagle-patch
+  labels:
+    {{- include "sglang.labels" . | nindent 4 }}
+data:
+  apply_eagle_patch.py: |
+    #!/usr/bin/env python3
+    """PR #31478 + request_receiver.py cpu_group revert.
+    1. eagle_utils.py: broadcast greedy EAGLE verify results across TP ranks
+       to prevent per-rank argmax divergence causing decode coredump on ROCm
+       when --enable-aiter-allreduce-fusion makes all-reduce non-deterministic.
+    2. request_receiver.py: revert device_group back to cpu_group so that
+       request broadcast uses Gloo (CPU) instead of NCCL (GPU). This prevents
+       broadcast_pyobj from hanging when a GPU coredump leaves NCCL in a
+       broken state — the scheduler can still receive requests via CPU.
+    Both patches are idempotent.
+    """
+    import sys
+
+    # --- Patch 1: eagle_utils.py greedy branch TP broadcast ---
+    eagle_path = "/sgl-workspace/sglang/python/sglang/srt/speculative/eagle_utils.py"
+    with open(eagle_path) as f:
+        content = f.read()
+
+    if "PR #31478" in content:
+        print("eagle_utils.py: SKIP (already patched)")
+    else:
+        old = (
+            "        predict, accept_index, num_correct_drafts = verify_tree_greedy_func(\n"
+            "            predicts=predict,  # mutable\n"
+            "            accept_index=accept_index,  # mutable\n"
+            "            accept_token_num=num_correct_drafts,  # mutable\n"
+            "            candidates=candidates,\n"
+            "            retrieve_index=verify_input.retrieve_index,\n"
+            "            retrieve_next_token=verify_input.retrieve_next_token,\n"
+            "            retrieve_next_sibling=verify_input.retrieve_next_sibling,\n"
+            "            target_predict=target_predict,\n"
+            "            topk=verify_input.tree_topk,\n"
+            "        )\n"
+            "    else:"
+        )
+        new = (
+            "        predict, accept_index, num_correct_drafts = verify_tree_greedy_func(\n"
+            "            predicts=predict,  # mutable\n"
+            "            accept_index=accept_index,  # mutable\n"
+            "            accept_token_num=num_correct_drafts,  # mutable\n"
+            "            candidates=candidates,\n"
+            "            retrieve_index=verify_input.retrieve_index,\n"
+            "            retrieve_next_token=verify_input.retrieve_next_token,\n"
+            "            retrieve_next_sibling=verify_input.retrieve_next_sibling,\n"
+            "            target_predict=target_predict,\n"
+            "            topk=verify_input.tree_topk,\n"
+            "        )\n"
+            "        # FIX: PR #31478 - broadcast greedy results across TP ranks to prevent\n"
+            "        # per-rank argmax divergence causing EAGLE verify deadlock on ROCm when\n"
+            "        # --enable-aiter-allreduce-fusion makes all-reduce non-deterministic.\n"
+            "        tp_group = (\n"
+            "            get_attention_tp_group() if is_dp_attention_enabled() else get_tp_group()\n"
+            "        )\n"
+            "        if tp_group.world_size > 1:\n"
+            "            tp_group.broadcast(predict, src=0)\n"
+            "            tp_group.broadcast(accept_index, src=0)\n"
+            "            tp_group.broadcast(num_correct_drafts, src=0)\n"
+            "    else:"
+        )
+        if old not in content:
+            print("eagle_utils.py: ERROR anchor not found")
+        else:
+            with open(eagle_path, "w") as f:
+                f.write(content.replace(old, new, 1))
+            print("eagle_utils.py: OK applied PR #31478")
+
+    # --- Patch 2: request_receiver.py revert device_group -> cpu_group ---
+    rr_path = "/sgl-workspace/sglang/python/sglang/srt/managers/scheduler_components/request_receiver.py"
+    with open(rr_path) as f:
+        content = f.read()
+
+    if "self.tp_group.device_group" not in content and "self.attn_tp_group.device_group" not in content:
+        print("request_receiver.py: SKIP (already uses cpu_group)")
+    else:
+        new_content = content.replace("self.attn_tp_group.device_group", "self.attn_tp_cpu_group")
+        new_content = new_content.replace("self.tp_group.device_group", "self.tp_cpu_group")
+        with open(rr_path, "w") as f:
+            f.write(new_content)
+        print("request_receiver.py: OK reverted device_group -> cpu_group")
+{{- end }}

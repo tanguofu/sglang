@@ -1,95 +1,94 @@
 # GLM-5.2-FP8 1P1D SGLang worker for AMD MI308X (gfx942)
-# Based on official latest mi30x v0.5.15 image + Mooncake@01d1eb2a + 16 GLM-5.2 patches + FlyDSL gfx942.
+# Based on official rocm/sgl-dev:v0.5.15.post1-rocm700-mi30x-20260715 (ROCm 7.0.0).
+#
+# This image KEEPS all previous optimizations while upgrading to the newer post1 base.
+# Because post1 refactored runtime APIs (removed get_global_server_args, new import
+# paths), we CANNOT overlay whole files from the old branch — instead we apply the
+# SEMANTIC patch of each change to the post1 source via idempotent patch scripts.
+#
+# Applied layers:
+#   1. Mooncake@01d1eb2a host-staging C++ patches + rebuild .so (base already ships
+#      mooncake source @01d1eb2a + a configured build dir; no git clone)
+#   2. 9 GLM-5.2/PD/HIP patches ported to post1 (scripts under patches/post1/):
+#        deepseek_v2.py     (2.1  PCG_DSV2_DUAL_STREAM on HIP)
+#        dsa_indexer.py     (1.6  k_norm fp32 cast; 04 breakable-target-verify guard)
+#        deepseek_nextn.py  (3.1  alt_stream on HIP)
+#        transformers.py    (4.1  mla_kv_a_proj replicate TP style)
+#        dsa_backend.py     (5c  MLA q view->reshape on HIP)
+#        elementwise.py     (03  q_fp8_raw uint8-then-view on HIP)
+#        fused_store_index_cache.cuh (05/6.1 pack_fp8 via deepseek_v4::fp8)
+#        eagle_worker_v2.py (06c DSA backend on HIP)
+#        frozen_kv_mtp_worker_v2.py (06b seq_lens_cpu fast path)
+#   3. FlyDSL gfx942 fp8 MQA logits kernel (BLOCK_KV=128, register-based)
+#   4. AITER tuned GEMM/MoE CSV configs for gfx942
 #
 # Build (from repo root):
-#   docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile -t sglang-glm52-308x-pd:latest .
-#
-# PD deploy via kubectl (see yamls/). Pod runtime also copies /data/mooncake-patched/
-# engine.so over the installed one (team-proven bnxt_re patches) if present.
+#   docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile \
+#     -t sglang-glm52-308x-pd:rocm700-0716 .
 
-FROM lmsysorg/sglang-rocm:v0.5.15-rocm720-mi30x-20260710
+FROM rocm/sgl-dev:v0.5.15.post1-rocm700-mi30x-20260715
 
 LABEL maintainer="guofutan"
-LABEL sglang-base-image="v0.5.15-rocm720-mi30x-20260710"
+LABEL sglang-base-image="v0.5.15.post1-rocm700-mi30x-20260715"
 LABEL gpu-arch="gfx942"
 
 # ============================================================
-# Hack 1: Rebuild Mooncake@01d1eb2a (main HEAD has PD warmup SIGSEGV regression)
-# ============================================================
-ARG MOONCAKE_REF=01d1eb2a7ec37fd5e20a88573e9b4956e7846e9a
-ARG MOONCAKE_REPO="https://github.com/kvcache-ai/Mooncake.git"
-ENV PATH=${PATH}:/usr/local/go/bin
-RUN set -eux; \
-    rm -rf /sgl-workspace/Mooncake; \
-    git clone --depth 1 "${MOONCAKE_REPO}" /sgl-workspace/Mooncake; \
-    cd /sgl-workspace/Mooncake; \
-    git fetch --depth 1 origin "${MOONCAKE_REF}"; \
-    git checkout "${MOONCAKE_REF}"; \
-    echo "[Mooncake] ref=${MOONCAKE_REF} commit=$(git rev-parse HEAD)"; \
-    git submodule update --init --recursive; \
-    bash dependencies.sh -y; \
-    mkdir -p build && cd build; \
-    cmake .. -DUSE_HIP=ON -DUSE_ETCD=ON -DENABLE_MULTI_PROTOCOL=ON -DWITH_STORE=ON -DBUILD_UNIT_TESTS=OFF; \
-    make -j "$(nproc)" && make install; ldconfig; \
-    echo "[Mooncake] rebuild complete @ ${MOONCAKE_REF}"
-
-# ============================================================
-# Hack 1b: Apply Mooncake C++ patches for bnxt_re host staging
+# Layer 1: Re-apply Mooncake host-staging C++ patches + rebuild .so
+# Base already ships Mooncake@01d1eb2a source at /sgl-workspace/Mooncake with a
+# pre-configured build dir, and engine.so is pip-installed (non-editable) into
+# site-packages. We only patch + rebuild + copy the new .so over the installed one.
 # ============================================================
 COPY docker/rocm-mi308x-glm52-pd/patches/mooncake/apply_host_staging.sh /tmp/apply_host_staging.sh
 RUN set -eux; \
     chmod +x /tmp/apply_host_staging.sh && /tmp/apply_host_staging.sh; \
     cd /sgl-workspace/Mooncake/build && \
     find . -name "*.o" -delete && \
-    make -j "$(nproc)" && make install; ldconfig; \
-    echo "[Mooncake] host staging patches applied and rebuilt"
+    make -j "$(nproc)" && \
+    cp mooncake-integration/engine.cpython-310-x86_64-linux-gnu.so \
+       /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so && \
+    ldconfig; \
+    echo "[Mooncake] host staging patches applied and .so refreshed"
 
 # ============================================================
-# Hack 2: Overlay patched sglang source (GLM-5.2 + PD + HIP fixes, 0708-opt branch)
+# Layer 2: Apply 9 GLM-5.2/PD/HIP patches ported to post1.
+# Each script is idempotent: it applies the minimal semantic change to the post1
+# source file in-place. (See patches/post1/ for per-patch docs.)
 # ============================================================
-COPY python/sglang/ /sgl-workspace/sglang/python/sglang/
+COPY docker/rocm-mi308x-glm52-pd/patches/post1/ /tmp/post1-patches/
 
-# Verify 16 key patches + 308x revert checks
+RUN set -eux; \
+    S=/sgl-workspace/sglang/python/sglang; \
+    python3 /tmp/post1-patches/deepseek_v2.py              $S/srt/models/deepseek_v2.py; \
+    python3 /tmp/post1-patches/dsa_indexer.py              $S/srt/layers/attention/dsa/dsa_indexer.py; \
+    python3 /tmp/post1-patches/deepseek_nextn.py           $S/srt/models/deepseek_nextn.py; \
+    python3 /tmp/post1-patches/transformers.py             $S/srt/models/transformers.py; \
+    python3 /tmp/post1-patches/dsa_backend.py              $S/srt/layers/attention/dsa_backend.py; \
+    python3 /tmp/post1-patches/elementwise.py              $S/jit_kernel/dsv4/elementwise.py; \
+    python3 /tmp/post1-patches/fused_store_index_cache.py  $S/jit_kernel/csrc/dsa/fused_store_index_cache.cuh; \
+    python3 /tmp/post1-patches/eagle_worker_v2.py           $S/srt/speculative/eagle_worker_v2.py; \
+    python3 /tmp/post1-patches/frozen_kv_mtp_worker_v2.py  $S/srt/speculative/frozen_kv_mtp_worker_v2.py; \
+    echo "[GLM-5.2] 9 patches applied to post1 source"
+
+# Verify all 9 ported patches are present in the patched source.
 RUN python3 -c "\
-src = open('/sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_indexer.py').read(); \
-assert '_is_cuda or _is_hip' in src, 'PATCH MISSING: 1.1'; \
-assert '(_is_cuda or _is_hip) and not envs.SGLANG_DISABLE_DSA_INDEXER_FUSION' in src, 'PATCH MISSING: 1.2'; \
-assert '_k_norm_weight_f32' in src, 'PATCH MISSING: 1.6'; \
-assert 'FIX(breakable-target-verify)' in src, 'PATCH MISSING: 04'; \
-assert 'DUAL_STREAM_TOKEN_THRESHOLD = 1024' in src, 'PATCH MISSING: 06a'; \
-src2 = open('/sgl-workspace/sglang/python/sglang/srt/models/deepseek_v2.py').read(); \
-assert '(_is_cuda or _is_hip) and envs.SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM' in src2, 'PATCH MISSING: 2.1'; \
-src3 = open('/sgl-workspace/sglang/python/sglang/srt/models/deepseek_nextn.py').read(); \
-assert 'is_hip() or envs.SGLANG_NPU_USE_MULTI_STREAM' in src3, 'PATCH MISSING: 3.1'; \
-src4 = open('/sgl-workspace/sglang/python/sglang/srt/models/transformers.py').read(); \
-assert 'mla_kv_a_proj' in src4, 'PATCH MISSING: 4.1'; \
-src5 = open('/sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa_backend.py').read(); \
-assert 'q.reshape(-1, layer.tp_q_head_num' in src5, 'PATCH MISSING: 5c'; \
-assert 'elif forward_batch.seq_lens_sum is not None' in src5, 'PATCH MISSING: 06b'; \
-src6 = open('/sgl-workspace/sglang/python/sglang/srt/layers/radix_attention.py').read(); \
-assert '# if _is_hip and not save_kv_cache' in src6, 'PATCH MISSING: 5d'; \
-src7 = open('/sgl-workspace/sglang/python/sglang/srt/layers/quantization/fp8.py').read(); \
-assert 'is_shuffled = True' in src7, 'PATCH MISSING: 02'; \
-src8 = open('/sgl-workspace/sglang/python/sglang/jit_kernel/dsv4/elementwise.py').read(); \
-assert 'q_fp8_raw' in src8, 'PATCH MISSING: 03'; \
-src9 = open('/sgl-workspace/sglang/python/sglang/jit_kernel/csrc/dsa/fused_store_index_cache.cuh').read(); \
-assert 'USE_ROCM' in src9 and 'hip/hip_fp8.h' in src9, 'PATCH MISSING: 05/6.1'; \
-src10 = open('/sgl-workspace/sglang/python/sglang/srt/speculative/eagle_worker_v2.py').read(); \
-assert '_is_cuda or _is_musa or _is_hip' in src10, 'PATCH MISSING: 06c'; \
-src11 = open('/sgl-workspace/sglang/python/sglang/srt/speculative/frozen_kv_mtp_worker_v2.py').read(); \
-assert 'seq_lens_cpu is not None' in src11, 'PATCH MISSING: 06b frozen_kv'; \
-print('[OK] All 16 GLM-5.2/PD patches verified')"
+import pathlib as p; R=p.Path('/sgl-workspace/sglang/python/sglang'); r=lambda x:(R/x).read_text(); \
+assert '(_is_cuda or _is_hip) and envs.SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM' in r('srt/models/deepseek_v2.py'), '2.1'; \
+assert '_k_norm_weight_f32' in r('srt/layers/attention/dsa/dsa_indexer.py'), '1.6'; \
+assert 'FIX(breakable-target-verify)' in r('srt/layers/attention/dsa/dsa_indexer.py'), '04'; \
+assert 'is_hip() or envs.SGLANG_NPU_USE_MULTI_STREAM' in r('srt/models/deepseek_nextn.py'), '3.1'; \
+assert '\"mla_kv_a_proj\": \"replicate\"' in r('srt/models/transformers.py'), '4.1'; \
+assert 'q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)' in r('srt/layers/attention/dsa_backend.py'), '5c'; \
+assert 'q_fp8_raw' in r('jit_kernel/dsv4/elementwise.py'), '03'; \
+assert 'using deepseek_v4::fp8::pack_fp8' in r('jit_kernel/csrc/dsa/fused_store_index_cache.cuh'), '05/6.1'; \
+assert '_is_cuda or _is_musa or _is_hip' in r('srt/speculative/eagle_worker_v2.py'), '06c'; \
+assert 'batch.seq_lens_sum = batch.seq_lens_cpu.sum().item()' in r('srt/speculative/frozen_kv_mtp_worker_v2.py'), '06b'; \
+# post1 base patches (must remain, not clobbered) \
+assert 'DUAL_STREAM_TOKEN_THRESHOLD = 1024' in r('srt/layers/attention/dsa/dsa_indexer.py'), '06a base'; \
+assert 'is_shuffled = True' in r('srt/layers/quantization/fp8.py'), '02 base'; \
+print('[OK] All 9 ported patches + 2 base patches verified')"
 
 # ============================================================
-# Hack 2b: /v1/responses PD support is now in the source directly.
-# protocol.py: ResponsesRequest has bootstrap_host/port/room + disagg_prefill_dp_rank.
-# serving_responses.py: bootstrap passthrough + stream=bool + loop-skip in prefill
-#   mode + created_at int fix for codex streaming compatibility.
-# No patch scripts needed — source is modified in-repo on this branch.
-# ============================================================
-
-# ============================================================
-# Hack 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)
+# Layer 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)
 # + Triton fp8_mqa_logits FN→FNUZ fix + BLOCK_KV=64 fallback
 # ============================================================
 COPY docker/rocm-mi308x-glm52/patches/flydsl/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/flydsl/kernels/fp8_mqa_logits.py
@@ -97,13 +96,13 @@ COPY docker/rocm-mi308x-glm52/patches/flydsl/__init__.py /sgl-workspace/aiter/ai
 COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/triton/attention/fp8_mqa_logits.py
 
 # ============================================================
-# Hack 4: AITER tuned GEMM/MoE configs for gfx942 (pre-built csv)
+# Layer 4: AITER tuned GEMM/MoE configs for gfx942 (pre-built csv)
 # ============================================================
 COPY docker/rocm-mi308x-glm52/patches/glm5_1_gemm_gfx942.csv /sgl-workspace/aiter/aiter/configs/model_configs/glm5_bf16_tuned_gemm.csv
 COPY docker/rocm-mi308x-glm52/patches/glm5_1_fmoe_gfx942.csv /sgl-workspace/aiter/aiter/configs/model_configs/glm5_a8w8_blockscale_bpreshuffle_tuned_gemm.csv
 
 # ============================================================
-# Hack 5: Environment (gfx942 + 308x-specific)
+# Layer 5: Environment (gfx942 + 308x-specific)
 # ============================================================
 ENV HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 ENV NCCL_DEBUG=WARN

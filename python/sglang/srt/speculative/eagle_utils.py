@@ -509,6 +509,21 @@ def eagle_sample(
             target_predict=target_predict,
             topk=verify_input.tree_topk,
         )
+        # FIX: PR #31478 — broadcast greedy results across TP ranks to prevent
+        # per-rank argmax divergence. On ROCm with --enable-aiter-allreduce-fusion,
+        # the all-reduce is non-deterministic, so per-rank logits may differ
+        # slightly and argmax may pick different tokens on different ranks.
+        # Without this broadcast, ranks accept different numbers of drafts,
+        # causing seq_lens/batch shapes to diverge and the next TP collective
+        # (e.g., broadcast_pyobj or all_reduce) to deadlock. Reproduces as
+        # GPU coredump + amdgpu soft lockup on MI308X (gfx942).
+        tp_group = (
+            get_attention_tp_group() if is_dp_attention_enabled() else get_tp_group()
+        )
+        if tp_group.world_size > 1:
+            tp_group.broadcast(predict, src=0)
+            tp_group.broadcast(accept_index, src=0)
+            tp_group.broadcast(num_correct_drafts, src=0)
     else:
         from sgl_kernel import (
             top_k_renorm_prob,

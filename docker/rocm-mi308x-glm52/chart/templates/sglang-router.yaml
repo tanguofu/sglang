@@ -14,6 +14,7 @@ spec:
   replicas: 1
   selector:
     matchLabels:
+      {{- include "sglang.selectorLabels" . | nindent 6 }}
       app: sglang-router
   template:
     metadata:
@@ -27,12 +28,23 @@ spec:
       imagePullSecrets:
         - name: {{ .Values.imagePullSecret }}
       {{- end }}
+      {{- if .Values.router.nodeName }}
+      nodeName: {{ .Values.router.nodeName | quote }}
+      {{- else if .Values.router.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.router.nodeSelector | nindent 8 }}
+      {{- else }}
       nodeSelector:
         accelerator: amd-gpu
+      {{- end }}
+      {{- with .Values.router.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       terminationGracePeriodSeconds: 30
       containers:
         - name: router
-          image: {{ include "sglang.image" . }}
+          image: {{ include "sglang.router.image" . }}
           imagePullPolicy: {{ .Values.pullPolicy }}
           command: ["python3", "-m", "sglang_router.launch_router"]
           args:
@@ -91,6 +103,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
+    {{- include "sglang.serviceSelectorLabels" . | nindent 4 }}
     app: sglang-router
   ports:
     - name: http

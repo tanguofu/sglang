@@ -12,6 +12,7 @@ spec:
   replicas: {{ .Values.replicas }}
   selector:
     matchLabels:
+      {{- include "sglang.selectorLabels" . | nindent 6 }}
       app: sglang
   template:
     metadata:
@@ -25,6 +26,10 @@ spec:
       {{- else }}
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- if .Values.imagePullSecret }}
       imagePullSecrets:
@@ -48,6 +53,11 @@ spec:
                 echo "Installing numactl for NUMA memory binding..."
                 apt-get update -qq && apt-get install -y -qq numactl >/dev/null 2>&1
               fi
+              # FIX: PR #31478 + request_receiver.py cpu_group revert
+              # - eagle_utils.py: broadcast greedy EAGLE verify across TP ranks
+              # - request_receiver.py: revert device_group -> cpu_group (Gloo)
+              # Idempotent: only applies if markers not already present.
+              python3 /tmp/apply_eagle_patch.py || echo "WARN: patch failed, continuing"
               echo "=== GLM-5.2-FP8 SGLang (MI308X gfx942) ==="
               exec python3 -m sglang.launch_server \
                 --model-path "$MODEL_PATH" \
@@ -96,7 +106,7 @@ spec:
             - name: HIP_VISIBLE_DEVICES
               value: "0,1,2,3,4,5,6,7"
             - name: NCCL_DEBUG
-              value: "INFO"
+              value: "WARN"
             - name: HSA_ENABLE_SDMA
               value: "0"
             - name: HIP_FORCE_DEV_KERNARG
@@ -106,7 +116,7 @@ spec:
             - name: NCCL_CUMEM_ENABLE
               value: "0"
             - name: NCCL_MIN_NCHANNELS
-              value: "112"
+              value: "80"
             - name: NCCL_NVLS_ENABLE
               value: "0"
             - name: PYTORCH_CUDA_ALLOC_CONF
@@ -119,6 +129,8 @@ spec:
               value: "1"
             - name: SGLANG_DISABLE_CUDNN_CHECK
               value: "1"
+            - name: SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION
+              value: "false"
             - name: SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM
               value: "1"
             - name: SGLANG_INT4_WEIGHT
@@ -135,6 +147,16 @@ spec:
               value: "1"
             - name: SGLANG_USE_ROCM700A
               value: "1"
+            # Enable user-triggered GPU coredump so we can capture real GPU
+            # coredumps when the scheduler hangs in HIP memcpy. Without this,
+            # sglang logs only "CUDA coredump pipe not found" and we lose the
+            # GPU-side stack trace that ROCm team needs for root-cause.
+            - name: CUDA_ENABLE_USER_TRIGGERED_COREDUMP
+              value: "1"
+            {{- if .Values.aitersTunedGemm.enabled }}
+            - name: AITER_CONFIG_GEMM_BF16
+              value: /etc/aiter-configs/bf16_tuned_gemm.csv
+            {{- end }}
           securityContext:
             privileged: true
             capabilities:
@@ -157,6 +179,17 @@ spec:
               mountPath: {{ .Values.hostPaths.devDri }}
             - name: shm
               mountPath: /dev/shm
+            {{- if .Values.eaglePatch.enabled }}
+            - name: eagle-patch
+              mountPath: /tmp/apply_eagle_patch.py
+              subPath: apply_eagle_patch.py
+              readOnly: true
+            {{- end }}
+            {{- if .Values.aitersTunedGemm.enabled }}
+            - name: aiters-tuned-gemm
+              mountPath: /etc/aiter-configs
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           readinessProbe:
@@ -263,6 +296,18 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: {{ .Values.shmSize }}
+        {{- if .Values.eaglePatch.enabled }}
+        - name: eagle-patch
+          configMap:
+            name: {{ .Release.Name }}-eagle-patch
+            defaultMode: 0755
+        {{- end }}
+        {{- if .Values.aitersTunedGemm.enabled }}
+        - name: aiters-tuned-gemm
+          configMap:
+            name: {{ .Values.aitersTunedGemm.configMapName }}
+            defaultMode: 0644
+        {{- end }}
         {{- if .Values.llmDRouter.enabled }}
         - name: epp-config
           configMap:

@@ -42,6 +42,51 @@ helm install sglang-glm52-308x-t2 docker/rocm-mi308x-glm52/chart/ -n kube-system
   --set nodeName=node-21.151.225.172 --set gateway.enabled=false
 ```
 
+## Values Files
+
+Per-deployment overrides live alongside `values.yaml` (chart defaults). Use `-f` to layer them:
+
+| File | Release | Topology | Notes |
+|------|---------|----------|-------|
+| `values.yaml` | — | chart defaults | 1M context, hicache_ratio=2, write_through |
+| `values-test.yaml` | `sglang-glm52-test` | legacy test env | superseded by `values-glm52-test.yaml` |
+| `values-prod.yaml` | `sglang-glm52-prod` | ZW prod (2 nodes) | router + gateway for ZW |
+| `values-glm52-test.yaml` | `sglang-glm52-test` | GZ test, 144+132 | dual TP8 + router + gateway |
+| `values-glm52-test-w2.yaml` | `sglang-glm52-test-w2` | GZ test, 132 only | worker only |
+| `values-glm52-2tp8.yaml` | `sglang-glm52-2tp8` | GZ, 152+172 | dual TP8 + router + gateway, OOM+HiCache fix applied 2026-07-19 |
+| `values-glm52-2tp8-w2.yaml` | `sglang-glm52-2tp8-w2` | GZ, 172 only | worker only, OOM+HiCache fix applied 2026-07-19 |
+
+### `values-glm52-2tp8*.yaml` (current production for codex)
+
+Applied fixes (2026-07-18 OOM + 2026-07-19 HiCache):
+
+```bash
+# Deploy both workers
+helm install sglang-glm52-2tp8    docker/rocm-mi308x-glm52/chart/ -n kube-system -f values-glm52-2tp8.yaml
+helm install sglang-glm52-2tp8-w2 docker/rocm-mi308x-glm52/chart/ -n kube-system -f values-glm52-2tp8-w2.yaml
+
+# Upgrade (after editing values)
+helm upgrade sglang-glm52-2tp8    docker/rocm-mi308x-glm52/chart/ -n kube-system -f values-glm52-2tp8.yaml
+helm upgrade sglang-glm52-2tp8-w2 docker/rocm-mi308x-glm52/chart/ -n kube-system -f values-glm52-2tp8-w2.yaml
+```
+
+Key overrides from chart defaults:
+- `sglang.contextLength`: 1048576 → 524288 (512K, stability)
+- `sglang.memFractionStatic`: 0.88 → 0.75 (OOM fix, leaves activation room)
+- `sglang.chunkedPrefillSize`: 32768 → 16384 (OOM fix, smaller peak activation)
+- `sglang.prefillMaxRequests`: 32 → 4 (OOM fix, bound concurrent prefills)
+- `sglang.scheduleConservativeness`: 0.5 → 1.0 (OOM fix, conservative scheduling)
+- `sglang.hicacheRatio`: 2.0 → 4 (HiCache 4× GPU KV pool, ~89 GB/rank host RAM; was 8 but hit NUMA 1 OOM on node .152)
+- `sglang.hicacheWritePolicy`: write_through → write_back (fixes host load-back=0)
+- `sglang.watchdogTimeout`: 3600 → 1200 (faster fail on stuck detokenizer)
+- `router.cacheThreshold`: 0.5 → 0.2 (more aggressive prefix routing)
+- `router.balanceAbsThreshold`: 32 → 1 (tighter load balance band)
+- `router.balanceRelThreshold`: 1.5 → 1.2 (tighter relative balance)
+
+**Note:** After `helm upgrade`, the router Deployment may need a manual `kubectl patch` to
+remove `kubernetes.io/hostname` from `nodeSelector` (strategic merge doesn't delete keys).
+The router tolerations are captured in `values-glm52-2tp8.yaml` so they survive upgrades.
+
 ## Access
 
 | Method | URL |

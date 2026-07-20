@@ -31,6 +31,11 @@ nodeSelector:
   accelerator: amd-gpu
   sglang-model: ready
 
+# Tolerations applied to the worker StatefulSet. Override per-release to match
+# the dedicated group taint of the target node (e.g. dedicated=sglang-1pd-A-group).
+# Defaults to empty so the chart remains deployable on untainted nodes.
+tolerations: []
+
 # ---------------------------------------------------------------------------
 # Resources
 # ---------------------------------------------------------------------------
@@ -117,6 +122,17 @@ router:
   cacheThreshold: 0.3
   balanceAbsThreshold: 64
   balanceRelThreshold: 1.5
+  # Router image — when both image and tag are set, the router Deployment uses
+  # this image instead of the worker image (lets you deploy a sgl-model-gateway
+  # build with /v1/messages support). Leave unset to reuse the worker image.
+  image: ""
+  tag: ""
+  # Router pod node selection — empty by default, override per-release.
+  nodeName: ""
+  nodeSelector: {}
+  # Tolerations for the router pod — typically mirrors the worker tolerations
+  # so the router can land on the same dedicated group as the workers.
+  tolerations: []
 
 # ---------------------------------------------------------------------------
 # llm-d Router — EPP (Endpoint Picker) + Envoy sidecar
@@ -181,3 +197,25 @@ livenessProbe:
   periodSeconds: 60
   timeoutSeconds: 10
   failureThreshold: 5
+
+# ---------------------------------------------------------------------------
+# EAGLE PR #31478 patch — broadcast greedy EAGLE verify results across TP ranks
+# Prevents per-rank argmax divergence causing decode coredump on ROCm when
+# --enable-aiter-allreduce-fusion makes all-reduce non-deterministic.
+# Idempotent: only applies if "PR #31478" marker is not already in the file.
+# ---------------------------------------------------------------------------
+eaglePatch:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Aiter tuned GEMM config — pre-tuned bf16 GEMM shapes for GLM-5.2 on gfx942.
+# Without this ConfigMap, /sgl-workspace/aiter/aiter/configs/ only has 7
+# gfx942 K=6144 rows (all N=32). Many GLM-5.2 shapes fall back to torch GEMM
+# (30-50% slower). This CSV includes 33 gfx942 K=6144 rows covering N=32 and
+# N=256, M=1..16384. Mounted via AITER_CONFIG_GEMM_BF16 env var so it survives
+# pod restarts (writing to /sgl-workspace is lost on restart — image layer).
+# ConfigMap name is shared across releases; both W1 and W2 use the same CSV.
+# ---------------------------------------------------------------------------
+aitersTunedGemm:
+  enabled: true
+  configMapName: aiters-tuned-gemm

@@ -11,6 +11,7 @@ metadata:
 spec:
   type: ClusterIP
   selector:
+    {{- include "sglang.serviceSelectorLabels" . | nindent 4 }}
     app: sglang
   ports:
     - name: http
@@ -30,6 +31,7 @@ spec:
   type: ClusterIP
   clusterIP: None
   selector:
+    {{- include "sglang.serviceSelectorLabels" . | nindent 4 }}
     app: sglang
   ports:
     - name: http

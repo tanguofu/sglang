@@ -24,6 +24,7 @@ spec:
         --prefill http://{{ .Values.prefillIP }}:30000 \
         --decode http://{{ .Values.decodeIP }}:30000 \
         --host 0.0.0.0 --port 30001 \
+        --prometheus-port 19097 \
         --model-path {{ .Values.modelPath }} \
         --log-level info
     securityContext:
