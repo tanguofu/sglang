@@ -177,57 +177,69 @@ if _is_cuda:
         fused_k_indexer_norm_rope_store,
     )
 
-    def _scale_head_gate_graph_fake_impl(
-        weights_raw: torch.Tensor,
-        n_heads_inv_sqrt: float,
-        softmax_scale: float,
-        q_scale: torch.Tensor,
-    ) -> torch.Tensor:
-        return torch.empty(
-            (weights_raw.shape[0], weights_raw.shape[1], q_scale.shape[-1]),
-            dtype=torch.float32,
-            device=weights_raw.device,
-        )
 
-    # In-graph (PCG/BCG) head gate for the fused path: weights_proj is folded
-    # into wk_weights_proj, so weights_raw is precomputed and there is no GEMM.
-    @register_custom_op(fake_impl=_scale_head_gate_graph_fake_impl)
-    def scale_head_gate_graph(
-        weights_raw: torch.Tensor,
-        n_heads_inv_sqrt: float,
-        softmax_scale: float,
-        q_scale: torch.Tensor,
-    ) -> torch.Tensor:
-        weights = weights_raw * n_heads_inv_sqrt
-        return weights.unsqueeze(-1) * q_scale * softmax_scale
+# FIX: Hoist scale_head_gate_graph and logits_head_gate_graph out of the
+# `if _is_cuda:` block so they are defined on ROCm/HIP too. These functions
+# only use torch.mm and arithmetic — no CUDA-specific kernels — so they are
+# platform-agnostic. Previously they were only defined under `if _is_cuda:`,
+# which caused NameError on ROCm when the breakable prefill CUDA graph
+# warmup exercised the in_piecewise_or_breakable_cuda_graph path.
+def _scale_head_gate_graph_fake_impl(
+    weights_raw: torch.Tensor,
+    n_heads_inv_sqrt: float,
+    softmax_scale: float,
+    q_scale: torch.Tensor,
+) -> torch.Tensor:
+    return torch.empty(
+        (weights_raw.shape[0], weights_raw.shape[1], q_scale.shape[-1]),
+        dtype=torch.float32,
+        device=weights_raw.device,
+    )
 
-    def _logits_head_gate_graph_fake_impl(
-        x: torch.Tensor,
-        weight: torch.Tensor,
-        n_heads_inv_sqrt: float,
-        softmax_scale: float,
-        q_scale: torch.Tensor,
-    ) -> torch.Tensor:
-        return torch.empty(
-            (x.shape[0], weight.shape[0], q_scale.shape[-1]),
-            dtype=torch.float32,
-            device=x.device,
-        )
 
-    # In-graph (PCG/BCG) head gate for the NON-prefill path
-    @register_custom_op(fake_impl=_logits_head_gate_graph_fake_impl)
-    def logits_head_gate_graph(
-        x: torch.Tensor,
-        weight: torch.Tensor,
-        n_heads_inv_sqrt: float,
-        softmax_scale: float,
-        q_scale: torch.Tensor,
-    ) -> torch.Tensor:
-        out = torch.mm(x, weight.t(), out_dtype=torch.float32)
-        weights = out * n_heads_inv_sqrt
-        weights = weights.unsqueeze(-1) * q_scale * softmax_scale
-        return weights
+# In-graph (PCG/BCG) head gate for the fused path: weights_proj is folded
+# into wk_weights_proj, so weights_raw is precomputed and there is no GEMM.
+@register_custom_op(fake_impl=_scale_head_gate_graph_fake_impl)
+def scale_head_gate_graph(
+    weights_raw: torch.Tensor,
+    n_heads_inv_sqrt: float,
+    softmax_scale: float,
+    q_scale: torch.Tensor,
+) -> torch.Tensor:
+    weights = weights_raw * n_heads_inv_sqrt
+    return weights.unsqueeze(-1) * q_scale * softmax_scale
 
+
+def _logits_head_gate_graph_fake_impl(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    n_heads_inv_sqrt: float,
+    softmax_scale: float,
+    q_scale: torch.Tensor,
+) -> torch.Tensor:
+    return torch.empty(
+        (x.shape[0], weight.shape[0], q_scale.shape[-1]),
+        dtype=torch.float32,
+        device=x.device,
+    )
+
+
+# In-graph (PCG/BCG) head gate for the NON-prefill path
+@register_custom_op(fake_impl=_logits_head_gate_graph_fake_impl)
+def logits_head_gate_graph(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    n_heads_inv_sqrt: float,
+    softmax_scale: float,
+    q_scale: torch.Tensor,
+) -> torch.Tensor:
+    out = torch.mm(x, weight.t(), out_dtype=torch.float32)
+    weights = out * n_heads_inv_sqrt
+    weights = weights.unsqueeze(-1) * q_scale * softmax_scale
+    return weights
+
+
+if _is_cuda:
     @register_custom_op(mutates_args=["topk_indices"])
     @register_split_op()
     def broadcast_indexer_topk_from_rank0_(topk_indices: torch.Tensor) -> None:

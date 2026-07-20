@@ -1,0 +1,52 @@
+# TEST environment overrides — 广州 GZ (4x MI308X nodes, TKE cls-bmmk3vtl)
+# Usage: helm install sglang-glm52-test .../chart/ -f values-test.yaml
+#
+# This file is the explicit test environment config (same as default values.yaml).
+# Use it to be explicit about which environment you're deploying to.
+
+# ---------------------------------------------------------------------------
+# SGLang Router (sgl-model-gateway) — DISABLED, replaced by llm-d router
+# ---------------------------------------------------------------------------
+router:
+  enabled: false
+  port: 30001
+  policy: cache_aware
+  workerUrls:
+    - "http://21.151.225.144:30000"  # GZ test-0 (ins-bjoqlzak)
+    - "http://21.151.225.132:30000"  # GZ test-1 (ins-6qgdzzvu)
+    - "http://21.151.225.172:30000"  # GZ test-2 (ins-o8y5rwq2)
+    - "http://21.151.225.152:30000"  # GZ test-3 (ins-1g40idxe)
+  cacheThreshold: 0.3
+  balanceAbsThreshold: 64
+  balanceRelThreshold: 1.5
+
+# ---------------------------------------------------------------------------
+# llm-d Router — TEST environment (广州 GZ)
+# EPP + Envoy with file-discovery plugin, 4 GZ SGLang instances
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: true
+  port: 30001
+  endpoints:
+    - name: sglang-test-0
+      address: 21.151.225.144
+      port: 30000
+    - name: sglang-test-1
+      address: 21.151.225.132
+      port: 30000
+    - name: sglang-test-2
+      address: 21.151.225.172
+      port: 30000
+    - name: sglang-test-3
+      address: 21.151.225.152
+      port: 30000
+
+# ---------------------------------------------------------------------------
+# Envoy Gateway — TEST environment (广州 GZ)
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-308x-test.jmpti.woa.com
+  lbAddress: 21.162.215.14

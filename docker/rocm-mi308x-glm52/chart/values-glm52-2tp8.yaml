@@ -1,0 +1,103 @@
+# SGLang GLM-5.2 2tp8 deployment — 152 + 172 dual TP8 workers with cache_aware router
+# Usage:
+#   helm install sglang-glm52-2tp8    .../chart/ -f values-glm52-2tp8.yaml
+#   helm install sglang-glm52-2tp8-w2 .../chart/ -f values-glm52-2tp8-w2.yaml
+#
+# Topology:
+#   - sglang-glm52-2tp8    on node-21.151.225.152 (worker + router + gateway)
+#   - sglang-glm52-2tp8-w2 on node-21.151.225.172 (worker only)
+# Router workerUrls point to both nodes so cache_aware picks the best prefix hit.
+#
+# History:
+#   2026-07-18: OOM fix — memFraction 0.88→0.75, prefillMaxRequests 32→4,
+#               chunkedPrefillSize 32768→16384, scheduleConservativeness 0.5→1.0
+#   2026-07-19: HiCache fix — write_through→write_back (fixes host cache load-back=0),
+#               hicacheRatio 1→8 (host cache 547K→3.96M tokens/rank, ~1.4 TB total)
+#               helm drift sync — watchdogTimeout 3600→1200, nodeName .103→.152,
+#               router balanceAbs 32→1, balanceRel 1.5→1.2, cacheThreshold 0.5→0.2
+#   2026-07-19: hicacheRatio 8→4 — NUMA 1 OOM on node .152 when --numa-node pins
+#               ranks 4-7 to NUMA 1 (1.15 TB/node, 712 GB needed but only ~267 GB
+#               free after other allocations). ratio=4 needs ~89 GB/rank × 4 = 356 GB
+#               per NUMA node, fits comfortably. w2 (.172) succeeded with ratio=8
+#               because NUMA allocator spread evenly (872 GB + 850 GB shmem).
+#   2026-07-20: hicacheRatio 4→2 — new upstream DSA indexer allocates 56.89 GB/rank
+#               host memory (455 GB total) that wasn't in previous build.
+#               248 GB/rank (ratio=4) + 57 GB/rank (DSA) × 8 = ~2.4 TB > node RAM
+#               (~2 TB) → OOM killer (Rank 5 SIGKILL). ratio=2 → 124 GB/rank +
+#               57 GB/rank × 8 = ~1.4 TB, fits.
+
+# ---------------------------------------------------------------------------
+# Image — fix-eagle-coredump build (upstream main b3570a4531 + PR #31478)
+# Base: lmsysorg/sglang-rocm:v0.5.15.post1-rocm720-mi30x-20260718
+# Fixes: 78dc581518 + 7a973c03a0 + fc1e3797b7 + cce5fe7696 + 942bf04ef9 + PR #31478
+# v3: hoist scale_head_gate_graph/logits_head_gate_graph out of `if _is_cuda:`
+#     block (root-cause fix for NameError on ROCm during breakable prefill
+#     CUDA graph capture warmup).
+# ---------------------------------------------------------------------------
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+tag: fix-eagle-coredump-v3
+
+# ---------------------------------------------------------------------------
+# Worker placement — pin to 152 (primary, hosts router + gateway)
+# ---------------------------------------------------------------------------
+nodeName: node-21.151.225.152
+replicas: 1
+
+# ---------------------------------------------------------------------------
+# SGLang server parameters — OOM fix (2026-07-18) + HiCache fix (2026-07-19)
+# ---------------------------------------------------------------------------
+sglang:
+  contextLength: "524288"          # 512K (chart default is 1M, reduced for stability)
+  memFractionStatic: 0.75          # OOM fix: was 0.88, left ~2.5GB/rank activation room
+  chunkedPrefillSize: 16384        # OOM fix: was 32768, smaller chunks = less peak activation
+  prefillMaxRequests: 4            # OOM fix: was 32, limit concurrent prefills to bound activation mem
+  scheduleConservativeness: 1.0    # OOM fix: was 0.5, more conservative scheduling
+  hicacheRatio: 2                  # HiCache: was 4, reduced to 2 because new upstream DSA indexer allocates 56.89 GB/rank host memory (455 GB total) that wasn't in previous build. 248 GB/rank (ratio=4) + 57 GB/rank (DSA) × 8 = ~2.4 TB > node RAM (~2 TB) → OOM killer. ratio=2 → 124 GB/rank + 57 GB/rank × 8 = ~1.4 TB, fits.
+  hicacheWritePolicy: write_back   # HiCache fix: was write_through, fixes host load-back=0
+  watchdogTimeout: 1200            # fail faster on stuck detokenizer (chart default 3600)
+
+# ---------------------------------------------------------------------------
+# SGLang Router (sgl-model-gateway with /v1/messages support)
+# ---------------------------------------------------------------------------
+router:
+  enabled: true
+  port: 30001
+  policy: cache_aware
+  workerUrls:
+    - "http://21.151.225.152:30000"  # primary (this release)
+    - "http://21.151.225.172:30000"  # secondary (sglang-glm52-2tp8-w2)
+  # Router tuning (per project_glm52_router_cache_aware_tuning.md):
+  #   cacheThreshold 0.2 (was 0.5) — lower prefix-match threshold to route more aggressively
+  #   balanceAbsThreshold 1 (was 32) — tighter load balance band
+  #   balanceRelThreshold 1.2 (was 1.5) — tighter relative load balance
+  cacheThreshold: 0.2
+  balanceAbsThreshold: 1
+  balanceRelThreshold: 1.2
+  # pd-router image with /v1/messages route patched in (worker image does NOT have it).
+  image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router
+  tag: messages-0717c
+  # Tolerations — node-21.151.225.152 has taint dedicated=sglang-2tp8:NoSchedule.
+  # The `operator: Exists` toleration is a broad fallback so the router can land on
+  # any AMD GPU node if the primary is unavailable.
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: sglang-2tp8
+      effect: NoSchedule
+    - operator: Exists
+
+# ---------------------------------------------------------------------------
+# llm-d Router — DISABLED, we use the sgl-model-gateway router above
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Envoy Gateway — 2tp8 hostname on the shared eg-tke Gateway
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-2tp8.jmpti.woa.com
+  lbAddress: 21.162.215.14

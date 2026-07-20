@@ -1,0 +1,56 @@
+# SGLang GLM-5.2 test deployment — secondary worker on node-21.151.225.132
+# Usage:
+#   helm install sglang-glm52-test-w2 .../chart/ -f values-glm52-test-w2.yaml
+#
+# This release is worker-only: router and gateway are disabled. The primary
+# release (sglang-glm52-test on 144) hosts the router that proxies to both
+# workers via workerUrls, and the gateway that exposes the external hostname.
+
+# ---------------------------------------------------------------------------
+# Image — must match the primary release so both workers serve the same model
+# ---------------------------------------------------------------------------
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+tag: xgmi-opt-0716d
+
+# ---------------------------------------------------------------------------
+# Worker placement — pin to 132 (secondary, worker only)
+# ---------------------------------------------------------------------------
+nodeName: node-21.151.225.132
+replicas: 1
+
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: sglang-1pd-A-group
+    effect: NoSchedule
+
+# ---------------------------------------------------------------------------
+# SGLang server parameters — must mirror sglang-glm52-test primary release
+# so both workers serve the same model with the same memory layout. See
+# values-glm52-test.yaml for rationale on the chosen values.
+# ---------------------------------------------------------------------------
+sglang:
+  contextLength: "524288"
+  memFractionStatic: 0.82
+  chunkedPrefillSize: 131072      # was 2048 — restore 2tp8 baseline
+  maxPrefillTokens: 131072        # was 8192 — restore 2tp8 baseline
+  hicacheRatio: 1.0               # was 2.0 — restore 2tp8 baseline
+  watchdogTimeout: 1200
+
+# ---------------------------------------------------------------------------
+# Router — disabled on secondary (router lives on primary release)
+# ---------------------------------------------------------------------------
+router:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# llm-d Router — disabled (we use sgl-model-gateway on the primary release)
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Gateway — disabled on secondary (gateway lives on primary release)
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: false

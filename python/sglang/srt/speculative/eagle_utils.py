@@ -661,6 +661,23 @@ def eagle_sample(
             target_predict=target_predict,
             topk=verify_input.tree_topk,
         )
+
+        # FIX: PR #31478 — broadcast greedy results across TP ranks to prevent
+        # per-rank argmax divergence causing EAGLE verify deadlock on ROCm when
+        # --enable-aiter-allreduce-fusion makes all-reduce non-deterministic.
+        # The non-greedy branch below already broadcasts; the greedy branch
+        # (taken on HIP/ROCm and CPU/NPU/XPU) was missing this sync. When TP
+        # ranks pick different tokens via argmax, seq_lens diverge and the next
+        # TP collective deadlocks. Broadcast from rank 0 for consistency.
+        tp_group = (
+            get_parallel().attn_tp_group
+            if is_dp_attention_enabled()
+            else get_tp_group()
+        )
+        if tp_group.world_size > 1:
+            tp_group.broadcast(predict, src=0)
+            tp_group.broadcast(accept_index, src=0)
+            tp_group.broadcast(num_correct_drafts, src=0)
     else:
         from sgl_kernel import (
             top_k_renorm_prob,
