@@ -51,13 +51,15 @@ spec:
               # Install numactl if missing (required by SGLang NUMA binding V2)
               if ! command -v numactl &>/dev/null; then
                 echo "Installing numactl for NUMA memory binding..."
-                apt-get update -qq && apt-get install -y -qq numactl >/dev/null 2>&1
+                apt-get update -qq && apt-get install -y -qq numactl >/dev/null 2>&1 || echo "WARN: numactl install failed, continuing"
               fi
+              {{- if .Values.eaglePatch.enabled }}
               # FIX: PR #31478 + request_receiver.py cpu_group revert
               # - eagle_utils.py: broadcast greedy EAGLE verify across TP ranks
               # - request_receiver.py: revert device_group -> cpu_group (Gloo)
               # Idempotent: only applies if markers not already present.
               python3 /tmp/apply_eagle_patch.py || echo "WARN: patch failed, continuing"
+              {{- end }}
               echo "=== GLM-5.2-FP8 SGLang (MI308X gfx942) ==="
               exec python3 -m sglang.launch_server \
                 --model-path "$MODEL_PATH" \
@@ -124,7 +126,7 @@ spec:
             - name: PYTORCH_ROCM_ARCH
               value: "gfx942"
             - name: ROCM_QUICK_REDUCE_QUANTIZATION
-              value: "INT8"
+              value: {{ .Values.rocmQuickReduceQuantization | default "NONE" | quote }}
             - name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN
               value: "1"
             - name: SGLANG_DISABLE_CUDNN_CHECK

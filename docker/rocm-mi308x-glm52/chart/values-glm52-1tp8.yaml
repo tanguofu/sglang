@@ -1,0 +1,135 @@
+# SGLang GLM-5.2 single-node TP8 on MI308X (gfx942)
+# Aligns with wiki v17 recommended config (https://iwiki.woa.com/p/4025410437)
+# with context_length reduced to 512K to save KV cache, and
+# hicache_write_policy set to write_through_selective.
+#
+# Node: node-21.234.170.32 (prod-1, ZW bare-metal)
+# Domain: glm52-1tp8.jmpti.woa.com
+
+# ---------------------------------------------------------------------------
+# Image — fix-eagle-coredump-v3 (sglang 48ae829f6e, +380 commits)
+# Fixes NCCL deadlock from xgmi-opt-0716d hacks:
+#   Hack 1: eagle_utils.py PR #31478 runtime patch added NCCL broadcasts in
+#           greedy verify → collective mismatch → 600s timeout deadlock
+#   Hack 2: common.py force_cpu_device=False → GPU tensor + Gloo unstable on ROCm
+# This image has PR #31478 baked in at build time and force_cpu_device=True.
+# ---------------------------------------------------------------------------
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+tag: fix-eagle-coredump-v3
+
+# ---------------------------------------------------------------------------
+# Deployment
+# ---------------------------------------------------------------------------
+replicas: 1
+nodeName: node-21.234.170.32
+
+# ---------------------------------------------------------------------------
+# Resources — single node, 8x MI308X 192GB
+# ---------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 320
+    memory: 1900Gi
+    amd.com/gpu: 8
+  limits:
+    amd.com/gpu: 8
+
+# ---------------------------------------------------------------------------
+# Tolerations for prod dedicated nodes
+# ---------------------------------------------------------------------------
+tolerations:
+  - effect: NoSchedule
+    key: dedicated
+    operator: Equal
+    value: glm52-prod
+  - effect: NoSchedule
+    key: node.cvm.com/ptl-unsupported
+    operator: Equal
+    value: ""
+
+# ---------------------------------------------------------------------------
+# SGLang server parameters — wiki v17 recommended
+# ---------------------------------------------------------------------------
+sglang:
+  tpSize: 8
+  ppSize: 1
+  # Reduced from 1M to 512K to save KV cache memory
+  contextLength: "524288"
+  numaNode: "0 0 0 0 1 1 1 1"
+  # 0.80 (was 0.88 wiki v17 — fix-eagle-coredump-v3 + tc_piecewise OOMs at 0.85)
+  memFractionStatic: 0.80
+  kvCacheDtype: fp8_e4m3
+  # Wiki v17: 32768 (was 16384 in OOM-fix override)
+  chunkedPrefillSize: 32768
+  # Wiki v17: 32 (was 48 in override)
+  maxRunningRequests: 32
+  # Wiki v17: 32 (was 8 in OOM-fix override)
+  prefillMaxRequests: 32
+  maxPrefillTokens: 32768
+  # Wiki v17: 0.5 (was 1.0 in OOM-fix override)
+  scheduleConservativeness: 0.5
+  cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16"
+  cudaGraphMaxBsDecode: 16
+  # Wiki v17: "4 8 16 32" — token counts for prefill CUDA graph capture
+  cudaGraphBsPrefill: "4 8 16 32"
+  # tc_piecewise (was breakable) — fixes NCCL deadlock with fix-eagle-coredump-v3
+  cudaGraphBackendPrefill: tc_piecewise
+  speculativeAlgorithm: NEXTN
+  speculativeNumSteps: 3
+  speculativeNumDraftTokens: 4
+  speculativeEagleTopk: 1
+  enableHierarchicalCache: true
+  hicacheRatio: 2.0
+  hicacheIoBackend: direct
+  hicacheMemLayout: page_first_direct
+  # User choice: write_through_selective (wiki recommended write_through)
+  hicacheWritePolicy: write_through_selective
+  enableAiterAllreduceFusion: true
+  enableMixedChunk: true
+  enableFusedQkNormRope: true
+  enableMetrics: true
+  skipServerWarmup: true
+  # Wiki v17: 3600 (was 1200 in override — caused crashes on long requests)
+  watchdogTimeout: 3600
+  logLevel: info
+  toolCallParser: glm47
+  reasoningParser: glm45
+
+# ---------------------------------------------------------------------------
+# Router — disabled for single-node deployment
+# ---------------------------------------------------------------------------
+router:
+  enabled: false
+
+llmDRouter:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Gateway — HTTPS via eg-tke
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-1tp8.jmpti.woa.com
+  httpsSectionName: https-glm52-1tp8
+  lbAddress: 21.162.215.14
+
+# ---------------------------------------------------------------------------
+# Health checks — long initial delay for model loading + CUDA graph capture
+# ---------------------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 2400
+  periodSeconds: 60
+  timeoutSeconds: 10
+  failureThreshold: 5
+
+# ---------------------------------------------------------------------------
+# EAGLE patch — DISABLED (fix-eagle-coredump-v3 has PR #31478 baked in)
+# The runtime patch was Hack 1 causing NCCL deadlock on greedy verify.
+# ---------------------------------------------------------------------------
+eaglePatch:
+  enabled: false
