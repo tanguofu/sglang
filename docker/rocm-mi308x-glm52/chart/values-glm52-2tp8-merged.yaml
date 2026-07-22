@@ -1,0 +1,202 @@
+# SGLang GLM-5.2 2tp8 deployment — MERGED single-chart config
+# ---------------------------------------------------------------------------
+# Replaces the prior two-release setup (values-glm52-2tp8.yaml + values-glm52-2tp8-w2.yaml).
+# One StatefulSet with replicas=2 + nodeSelector + tolerations lets the scheduler
+# place pods on .152 and .172 (8 GPU per node → one pod per node guaranteed).
+# Router lands on .144 via its own toleration (dedicated=sglang-1pd-A-group).
+#
+# Usage:
+#   helm install sglang-glm52-2tp8 .../chart/ -f values-glm52-2tp8-merged.yaml
+#
+# Topology:
+#   - pod-0 → node-21.151.225.152 (worker, taint dedicated=sglang-2tp8)
+#   - pod-1 → node-21.151.225.172 (worker, taint dedicated=sglang-2tp8)
+#   - router → node-21.151.225.144 (taint dedicated=sglang-1pd-A-group)
+#
+# History:
+#   2026-07-18: OOM fix — memFraction 0.88→0.75, prefillMaxRequests 32→4,
+#               chunkedPrefillSize 32768→16384, scheduleConservativeness 0.5→1.0
+#   2026-07-19: HiCache fix — write_through→write_back (fixes host cache load-back=0),
+#               hicacheRatio 1→8 → 4 (NUMA 1 OOM on .152 at ratio=8)
+#               helm drift sync — watchdogTimeout 3600→1200, router tuning
+#   2026-07-21: Merge W1+W2 into single chart (one STS, replicas=2).
+#               Zero precision loss: ROCM_QUICK_REDUCE_QUANTIZATION INT8→NONE
+#               (only affects QuickAllReduce path; AiterCustomAllreduce is default
+#                for bf16+world_size=8 on gfx942, so INT8 never triggers anyway).
+#               Concurrency improvement (conservative, zero precision loss):
+#                 prefillMaxRequests 4→8
+#                 maxRunningRequests 32→48
+#                 cudaGraphMaxBsDecode 16→32
+#                 cudaGraphBsDecode adds 20, 24, 32
+#               Memory budget: ~39 GB free VRAM/rank, est. +10-18 GB usage.
+
+# ---------------------------------------------------------------------------
+# Image — xgmi-opt-0716d build (XGMI P2P + ROCm 7.2.4 + sglang 0.5.14)
+# ---------------------------------------------------------------------------
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+tag: xgmi-opt-0716d
+
+# ---------------------------------------------------------------------------
+# Worker placement — replicas=2, no nodeName, scheduler places via taints
+# ---------------------------------------------------------------------------
+namespace: kube-system
+replicas: 2
+hostNetwork: true
+port: 30000
+
+# Empty nodeName → use nodeSelector (accelerator+sglang-model labels are on
+# all three AMD nodes). Tolerations allow landing on sglang-2tp8 tainted nodes
+# (.152 and .172). The 8 GPU resource limit guarantees one pod per node.
+nodeName: ""
+nodeSelector:
+  accelerator: amd-gpu
+  sglang-model: ready
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: sglang-2tp8
+    effect: NoSchedule
+
+# ---------------------------------------------------------------------------
+# SGLang server parameters — OOM fix + HiCache fix + concurrency improvement
+# ---------------------------------------------------------------------------
+sglang:
+  tpSize: 8
+  ppSize: 1
+  contextLength: "524288"            # 512K (chart default is 1M, reduced for stability)
+  numaNode: "0 0 0 0 1 1 1 1"
+  memFractionStatic: 0.75            # OOM fix: was 0.88, left ~2.5GB/rank activation room
+  kvCacheDtype: fp8_e4m3
+  chunkedPrefillSize: 16384          # OOM fix: was 32768, smaller chunks = less peak activation
+  # Concurrency improvement (2026-07-21, conservative):
+  #   prefillMaxRequests 4→8 (still well below the original 32 that caused OOM;
+  #     with chunkedPrefillSize=16384, 8 concurrent prefills peak ~16 GB/rank activation)
+  #   maxRunningRequests 32→48 (decode is much lighter than prefill; CUDA graph
+  #     captures up to bs=32, beyond that falls back to eager — 48 leaves headroom)
+  prefillMaxRequests: 8
+  maxRunningRequests: 48
+  maxPrefillTokens: 32768
+  scheduleConservativeness: 1.0      # OOM fix: was 0.5, more conservative scheduling
+  # CUDA graph decode batch sizes — add 20, 24, 32 to cover higher decode concurrency.
+  # Capturing more graphs costs ~1-2 GB VRAM (one-time, at startup) but eliminates
+  # eager-mode overhead for bs in [17, 32]. Beyond 32, eager mode kicks in (still
+  # correct, just slower).
+  cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16 20 24 32"
+  cudaGraphMaxBsDecode: 32
+  cudaGraphBsPrefill: "4 8 16 32"
+  cudaGraphBackendPrefill: breakable
+  speculativeAlgorithm: NEXTN
+  speculativeNumSteps: 3
+  speculativeNumDraftTokens: 4
+  speculativeEagleTopk: 1
+  enableHierarchicalCache: true
+  hicacheRatio: 4                    # HiCache: was 1→8 → 4 (NUMA 1 OOM on .152 at ratio=8); .152 rebooted 2026-07-22, GPU memory cleared
+  hicacheIoBackend: direct
+  hicacheMemLayout: page_first_direct
+  hicacheWritePolicy: write_back     # HiCache fix: was write_through, fixes host load-back=0
+  enableAiterAllreduceFusion: true
+  enableMixedChunk: true
+  enableFusedQkNormRope: true
+  enableMetrics: true
+  skipServerWarmup: true
+  watchdogTimeout: 1200              # fail faster on stuck detokenizer (chart default 3600)
+  logLevel: info
+  toolCallParser: glm47
+  reasoningParser: glm45
+
+# ---------------------------------------------------------------------------
+# Zero precision loss — ROCM_QUICK_REDUCE_QUANTIZATION
+#   Only affects QuickAllReduce path (not AiterCustomAllreduce, which is the
+#   default for bf16+world_size=8 on gfx942). INT8 quantization on QuickAllReduce
+#   only triggers for tensors ≥2048 MB, which never happens in practice. Setting
+#   to NONE eliminates any potential precision risk with zero performance impact.
+# ---------------------------------------------------------------------------
+rocmQuickReduceQuantization: "NONE"
+
+# ---------------------------------------------------------------------------
+# SGLang Router (sgl-model-gateway with /v1/messages support)
+# ---------------------------------------------------------------------------
+router:
+  enabled: true
+  port: 30080
+  policy: cache_aware
+  # Workers use hostNetwork (pinned to .152/.172); router no longer uses hostNetwork,
+  # so it reaches workers via their node IPs. Router itself is now reachable via
+  # headless Service (ClusterIP: None) — each pod gets its own DNS A record.
+  workerUrls:
+    - "http://21.151.225.152:30000"  # pod-0 (node .152)
+    - "http://21.151.225.172:30000"  # pod-1 (node .172)
+  # Router tuning (per project_glm52_router_cache_aware_tuning.md):
+  #   cacheThreshold 0.2 (was 0.5) — lower prefix-match threshold to route more aggressively
+  #   balanceAbsThreshold 1 (was 32) — tighter load balance band
+  #   balanceRelThreshold 1.2 (was 1.5) — tighter relative load balance
+  cacheThreshold: 0.2
+  balanceAbsThreshold: 1
+  balanceRelThreshold: 1.2
+  # pd-router image with /v1/messages route + tool_choice fix + ThinkingConfig
+  # adaptive variant (patched openai-protocol crate via [patch.crates-io]).
+  image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router
+  tag: toolchoice-fix-0721
+  # Router pod placement — pin to .144 (dedicated=sglang-1pd-A-group taint).
+  # .144 is the 1pd-A-group node, not a 2tp8 worker node, so the router does
+  # not compete with workers for GPU resources.
+  nodeName: node-21.151.225.144
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: sglang-1pd-A-group
+      effect: NoSchedule
+
+# ---------------------------------------------------------------------------
+# llm-d Router — DISABLED, we use the sgl-model-gateway router above
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Envoy Gateway — 2tp8 hostname on the shared eg-tke Gateway
+# Both HTTP (port 80) and HTTPS (port 443, TLS Terminate) listeners are attached.
+# The Gateway must have a listener named "https-glm52-2tp8" on port 443 with
+# protocol HTTPS and TLS cert ref "jmpti-woa-com-tls".
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-2tp8.jmpti.woa.com
+  lbAddress: 21.162.215.14
+  httpsSectionName: https-glm52-2tp8
+
+# ---------------------------------------------------------------------------
+# Health checks
+# ---------------------------------------------------------------------------
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 10
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 2400
+  periodSeconds: 60
+  timeoutSeconds: 10
+  failureThreshold: 5
+
+# ---------------------------------------------------------------------------
+# EAGLE PR #31478 patch — broadcast greedy EAGLE verify across TP ranks
+# ---------------------------------------------------------------------------
+eaglePatch:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Aiter tuned GEMM config — pre-tuned bf16 GEMM shapes for GLM-5.2 on gfx942
+# ---------------------------------------------------------------------------
+aitersTunedGemm:
+  enabled: true
+  configMapName: aiters-tuned-gemm

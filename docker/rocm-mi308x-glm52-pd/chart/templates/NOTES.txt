@@ -1,0 +1,57 @@
+SGLang 1P1D PD-disaggregated GLM-5.2-FP8 service is being deployed.
+
+# Wait for pods to be Ready (initial load takes ~10-15 min for 141-shard weights)
+
+  kubectl --context cls-bmmk3vtl-context get pods -n kube-system -l 'app.kubernetes.io/name=sglang-1p1d' -w
+
+# Components
+
+  - prefill : {{ .Values.prefill.nodeName }} ({{ .Values.prefill.hostIP }}:{{ .Values.prefill.port }})
+  - decode  : {{ .Values.decode.nodeName }} ({{ .Values.decode.hostIP }}:{{ .Values.decode.port }})
+  - router  : {{ .Values.router.nodeName }} ({{ .Values.router.hostIP }}:{{ .Values.router.port }})
+
+# 1. Health checks
+
+  curl -s http://{{ .Values.prefill.hostIP }}:{{ .Values.prefill.port }}/health
+  curl -s http://{{ .Values.decode.hostIP }}:{{ .Values.decode.port }}/health
+  curl -s http://{{ .Values.prefill.hostIP }}:{{ .Values.router.port }}/health
+
+# 2. Verify 8-card RDMA is visible
+
+  kubectl --context cls-bmmk3vtl-context exec -n kube-system sglang-1p1d-prefill-0 -- ls /dev/infiniband/
+  # Expect: uverbs0-7, issm0-7, umad0-7, rdma_cm
+
+# 3. Check sglang logs for RDMA device binding (8 cards)
+
+  kubectl --context cls-bmmk3vtl-context logs -n kube-system sglang-1p1d-prefill-0 | grep -iE "bnxt_re|rdma|ib_device|disagg.*device"
+
+# 4. OpenAI Chat Completions
+
+  curl -s http://{{ .Values.prefill.hostIP }}:{{ .Values.router.port }}/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer {{ .Values.apiKey }}" \
+    -d '{"model":"{{ .Values.model.name }}","messages":[{"role":"user","content":"hello"}],"max_tokens":64}'
+
+# 5. OpenAI Responses API (Codex compatible)
+
+  curl -s http://{{ .Values.prefill.hostIP }}:{{ .Values.router.port }}/v1/responses \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer {{ .Values.apiKey }}" \
+    -d '{"model":"{{ .Values.model.name }}","input":"hello, introduce yourself in one sentence","max_output_tokens":64}'
+
+# 6. Anthropic Messages API (Claude compatible)
+
+  curl -s http://{{ .Values.prefill.hostIP }}:{{ .Values.router.port }}/v1/messages \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: {{ .Values.apiKey }}" \
+    -H "anthropic-version: 2023-06-01" \
+    -d '{"model":"{{ .Values.model.name }}","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}'
+
+# 7. PD transfer logs (Mooncake RDMA, no TCP fallback)
+
+  kubectl --context cls-bmmk3vtl-context logs -n kube-system sglang-1p1d-prefill-0 | grep -iE "mooncake|transfer|rdma|transport"
+  kubectl --context cls-bmmk3vtl-context logs -n kube-system sglang-1p1d-decode-0  | grep -iE "mooncake|transfer|rdma|transport"
+
+# Cleanup
+
+  helm uninstall -n kube-system sglang-1p1d

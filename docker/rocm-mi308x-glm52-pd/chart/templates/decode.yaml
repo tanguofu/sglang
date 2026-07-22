@@ -1,97 +1,162 @@
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: StatefulSet
 metadata:
-  name: pd-decode-132
+  name: sglang-ts4-1p1d-decode
   namespace: kube-system
   labels:
-    app: pd-decode-132
+    app.kubernetes.io/name: sglang-ts4-1p1d
+    app.kubernetes.io/component: decode
     pd-role: decode
 spec:
-  hostNetwork: true
-  hostPID: true
-  hostIPC: true
-  restartPolicy: Always
-  nodeName: {{ .Values.decodeNode }}
-  containers:
-  - name: sglang
-    image: {{ .Values.workerImage }}
-    imagePullPolicy: Always
-    command: ["/bin/bash", "-c"]
-    args:
-    - |
-      set -euo pipefail
-      cp /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so
-      cp /data/mooncake-patched/conn.py /sgl-workspace/sglang/python/sglang/srt/disaggregation/mooncake/conn.py
-      echo "=== GLM-5.2 DECODE (MI308X) ==="
-      exec python3 -m sglang.launch_server \
-        --model-path {{ .Values.modelPath }} \
-        --model-impl sglang --served-model-name {{ .Values.modelName }} \
-        --api-key {{ .Values.apiKey }} \
-        --tp-size 8 --pp-size 1 --trust-remote-code \
-        --host 0.0.0.0 --port 30000 \
-        --context-length 1048576 \
-        --tool-call-parser glm47 --reasoning-parser glm45 \
-        --mem-fraction-static 0.90 \
-        --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 --cuda-graph-max-bs-decode 16 \
-        --enable-aiter-allreduce-fusion --enable-fused-qk-norm-rope \
-        --schedule-conservativeness 0.5 --kv-cache-dtype fp8_e4m3 \
-        --speculative-algorithm NEXTN --speculative-num-steps 2 \
-        --speculative-num-draft-tokens 4 --speculative-eagle-topk 1 \
-        --max-running-requests 128 \
-        --disaggregation-mode decode --disaggregation-transfer-backend mooncake \
-        --disaggregation-ib-device '{{ .Values.ibDevice }}' \
-        --disaggregation-bootstrap-port {{ .Values.bootstrapPort }} \
-        --num-reserved-decode-tokens 1024 \
-        --disable-overlap-schedule --enable-metrics --skip-server-warmup \
-        --watchdog-timeout 3600 --log-level info
-    securityContext:
-      privileged: true
-      allowPrivilegeEscalation: true
-      readOnlyRootFilesystem: false
-      seccompProfile:
-        type: Unconfined
-    resources:
-      limits:
-        amd.com/gpu: "8"
-      requests:
-        amd.com/gpu: "8"
-        cpu: "360"
-        memory: "2100Gi"
-    env:
-    - name: SGLANG_HOST_IP
-      value: "{{ .Values.decodeIP }}"
-    {{- toYaml .Values.workerEnv | nindent 4 }}
-    volumeMounts:
-    - name: shm
-      mountPath: /dev/shm
-    - name: dev-infiniband
-      mountPath: /dev/infiniband
-    - name: dev-kfd
-      mountPath: /dev/kfd
-    - name: dev-dri
-      mountPath: /dev/dri
-    - name: data
-      mountPath: /data
-  volumes:
-  - name: shm
-    emptyDir:
-      medium: Memory
-      sizeLimit: 64Gi
-  - name: dev-infiniband
-    hostPath:
-      path: /dev/infiniband
-      type: Directory
-  - name: dev-kfd
-    hostPath:
-      path: /dev/kfd
-      type: CharDevice
-  - name: dev-dri
-    hostPath:
-      path: /dev/dri
-      type: Directory
-  - name: data
-    hostPath:
-      path: /data
-      type: Directory
-  tolerations:
-  - operator: Exists
+  serviceName: sglang-ts4-1p1d-decode
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sglang-ts4-1p1d
+      app.kubernetes.io/component: decode
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sglang-ts4-1p1d
+        app.kubernetes.io/component: decode
+        pd-role: decode
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeName: {{ .Values.decode.nodeName }}
+      tolerations:
+{{ toYaml .Values.tolerations | indent 6 }}
+      imagePullSecrets:
+{{ toYaml .Values.imagePullSecrets | indent 6 }}
+      initContainers:
+      {{- include "sglang.init.routes" (dict "ctx" . "routes" .Values.rdma.routesDecode) | nindent 6 }}
+      containers:
+      - name: sglang
+        image: "{{ .Values.image.sglang }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          # Verify RDMA devices are visible (image ships libbnxt_re 238.x for ts4 kernel ABI)
+          ibv_devinfo 2>&1 | grep -E "^hca_id|transport" | head -20 || true
+          # Copy verified GDR engine.so from host (md5 c3873f547d5f0b46f20979009808fa91).
+          # The fix-eagle-coredump-v3 image ships an older engine.so (md5 d192b213)
+          # that ignores MC_DISABLE_HIP_TRANSPORT=1 — must be replaced for GDR.
+          # Also install libbnxt_re 238.1.138.5 for ts4 bnxt_re fw 238.x.
+          # The stock 235.2.86.0 doesn't support fw 238.x. Must create symlink in
+          # libibverbs driver dir (stock driver is disabled as .so-inbox).
+          # Do NOT patch conn.py — the container's original conn.py works correctly.
+          if [ -f /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so ]; then
+            cp /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so \
+               /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so
+            echo "Copied verified GDR engine.so from /data/mooncake-patched/"
+          else
+            echo "ERROR: /data/mooncake-patched/engine.so not found!" >&2
+            exit 1
+          fi
+          if [ -f /data/mooncake-patched/libbnxt_re-rdmav34.so ]; then
+            cp /data/mooncake-patched/libbnxt_re-rdmav34.so /usr/local/lib/libbnxt_re-rdmav34.so
+            ln -sf /usr/local/lib/libbnxt_re-rdmav34.so \
+                   /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so
+            ldconfig
+            echo "Installed libbnxt_re 238.1.138.5 + symlink in libibverbs dir"
+          else
+            echo "WARN: /data/mooncake-patched/libbnxt_re-rdmav34.so not found"
+          fi
+          echo "=== GLM-5.2 DECODE (MI308X, GDR via HIP dmabuf) ==="
+          exec python3 -m sglang.launch_server \
+            --model-path {{ .Values.model.path }} \
+            --model-impl sglang --served-model-name {{ .Values.model.name }} \
+            {{- if .Values.apiKey }}
+            --api-key {{ .Values.apiKey }} \
+            {{- end }}
+            --tp-size {{ .Values.sglang.tpSize }} --pp-size {{ .Values.sglang.ppSize }} --trust-remote-code \
+            --host 0.0.0.0 --port {{ .Values.decode.port }} \
+            --context-length {{ .Values.model.contextLength }} \
+            --tool-call-parser {{ .Values.sglang.toolCallParser }} --reasoning-parser {{ .Values.sglang.reasoningParser }} \
+            --mem-fraction-static {{ .Values.sglang.memFractionStatic }} \
+            {{- if .Values.sglang.attentionBackend }}
+            --attention-backend {{ .Values.sglang.attentionBackend }} \
+            {{- end }}
+            {{- if .Values.sglang.dsaPrefillBackend }}
+            --dsa-prefill-backend {{ .Values.sglang.dsaPrefillBackend }} \
+            {{- end }}
+            {{- if .Values.sglang.dsaDecodeBackend }}
+            --dsa-decode-backend {{ .Values.sglang.dsaDecodeBackend }} \
+            {{- end }}
+            {{- if .Values.sglang.moeRunnerBackend }}
+            --moe-runner-backend {{ .Values.sglang.moeRunnerBackend }} \
+            {{- end }}
+            {{- if .Values.sglang.enableAiterAllreduceFusion }}
+            --enable-aiter-allreduce-fusion \
+            {{- end }}
+            {{- if .Values.sglang.enableFusedQkNormRope }}
+            --enable-fused-qk-norm-rope \
+            {{- end }}
+            {{- if .Values.sglang.enableMixedChunk }}
+            --enable-mixed-chunk \
+            {{- end }}
+            --schedule-conservativeness {{ .Values.sglang.scheduleConservativeness }} \
+            --kv-cache-dtype {{ .Values.sglang.kvCacheDtype }} \
+            --cuda-graph-bs-decode {{ .Values.sglang.decode.cudaGraphBsDecode }} \
+            --cuda-graph-max-bs-decode {{ .Values.sglang.decode.cudaGraphMaxBsDecode }} \
+            {{- if .Values.sglang.decode.speculativeAlgorithm }}
+            --speculative-algorithm {{ .Values.sglang.decode.speculativeAlgorithm }} \
+            --speculative-num-steps {{ .Values.sglang.decode.speculativeNumSteps }} \
+            --speculative-num-draft-tokens {{ .Values.sglang.decode.speculativeNumDraftTokens }} \
+            --speculative-eagle-topk {{ .Values.sglang.decode.speculativeEagleTopk }} \
+            {{- end }}
+            --max-running-requests {{ .Values.sglang.maxRunningRequests }} \
+            --disaggregation-mode decode \
+            --disaggregation-transfer-backend mooncake \
+            --disaggregation-ib-device '{{ .Values.rdma.ibDeviceMap }}' \
+            --disaggregation-bootstrap-port {{ .Values.rdma.bootstrapPort }} \
+            --num-reserved-decode-tokens {{ .Values.sglang.numReservedDecodeTokens }} \
+            {{- if .Values.sglang.disableOverlapSchedule }}
+            --disable-overlap-schedule \
+            {{- end }}
+            {{- if .Values.sglang.enableMetrics }}
+            --enable-metrics \
+            {{- end }}
+            {{- if .Values.sglang.skipServerWarmup }}
+            --skip-server-warmup \
+            {{- end }}
+            --watchdog-timeout {{ .Values.sglang.watchdogTimeout }} \
+            --log-level {{ .Values.sglang.logLevel }}
+        env:
+        {{- $root := . -}}
+        {{- include "sglang.env.common" (dict "ctx" $root "hostIP" .Values.decode.hostIP) | nindent 8 }}
+        ports:
+        - containerPort: {{ .Values.decode.port }}
+          name: http
+        - containerPort: {{ .Values.rdma.bootstrapPort }}
+          name: bootstrap
+        resources:
+{{ toYaml .Values.resources.gpuNode | indent 10 }}
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["SYS_PTRACE", "IPC_LOCK", "SYS_ADMIN"]
+          seccompProfile:
+            type: Unconfined
+        volumeMounts:
+        {{- include "sglang.volumeMounts.rdma" . | nindent 8 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.decode.port }}
+          initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
+          periodSeconds: {{ .Values.probes.periodSeconds }}
+          timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
+          failureThreshold: {{ .Values.probes.failureThreshold }}
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.decode.port }}
+          initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
+          periodSeconds: {{ .Values.probes.periodSeconds }}
+          timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
+          failureThreshold: {{ .Values.probes.failureThreshold }}
+      volumes:
+      {{- include "sglang.volumes.rdma" . | nindent 6 }}

@@ -23,6 +23,16 @@ spec:
       name: {{ .Values.gateway.gatewayName }}
       namespace: {{ .Values.gateway.gatewayNamespace }}
       sectionName: http
+    {{- if .Values.gateway.httpsSectionName }}
+    # Also attach to the HTTPS listener (TLS Terminate) so https:// requests work.
+    # The Gateway must have a listener with this sectionName on port 443 with
+    # protocol HTTPS and a TLS certificate ref.
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ .Values.gateway.gatewayName }}
+      namespace: {{ .Values.gateway.gatewayNamespace }}
+      sectionName: {{ .Values.gateway.httpsSectionName | quote }}
+    {{- end }}
   rules:
     - matches:
         - path:

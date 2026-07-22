@@ -102,6 +102,7 @@ metadata:
     app: sglang-router
 spec:
   type: ClusterIP
+  clusterIP: None
   selector:
     {{- include "sglang.serviceSelectorLabels" . | nindent 4 }}
     app: sglang-router

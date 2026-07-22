@@ -1,0 +1,159 @@
+# SGLang 1P1D deployment for ts4-pd-test nodes (159 prefill+router, 87 decode)
+# Based on A-group values.yaml, adapted for node-21.234.170.159 / node-21.234.171.87
+# Nodes have no taints, so tolerations use operator: Exists.
+
+# Internal PD communication must be unauthenticated (router -> prefill/decode).
+# External auth is enforced at the ingress/gateway layer, not inside the cluster.
+apiKey: ""
+
+decode:
+  hostIP: 21.234.171.87
+  nodeName: node-21.234.171.87
+  port: 30000
+
+prefill:
+  hostIP: 21.234.170.159
+  nodeName: node-21.234.170.159
+  port: 30000
+
+router:
+  hostIP: 0.0.0.0
+  nodeName: node-21.234.170.159
+  port: 30001
+  prometheusPort: 19096
+  cbTimeoutDurationSecs: "300"
+  healthCheckIntervalSecs: "30"
+  healthCheckTimeoutSecs: "60"
+  healthFailureThreshold: "10"
+  healthSuccessThreshold: "2"
+  # Dedicated router image with /v1/responses + /v1/messages support (sgl-model-gateway)
+  image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router
+  tag: api-fix-0720
+
+image:
+  # fix-eagle-coredump-v3: SGLang 0.5.15.post1 (Jul 18) with GLM-5.2 DSA fixes.
+  # The api-fix-0720-gdr image was based on older 0.5.15.dev20260710 (Jul 10)
+  # which produces garbage output with EAGLE+DSA. This image needs runtime
+  # patches: engine.so from /data/mooncake-patched/ (GDR) + libbnxt_re 238.1.138.5
+  # (ts4 bnxt_re fw ABI). Stock engine.so ignores MC_DISABLE_HIP_TRANSPORT=1.
+  sglang: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+  tag: fix-eagle-coredump-v3
+  pullPolicy: IfNotPresent
+  pullSecret: tencent-registry
+
+imagePullSecrets:
+- name: mirrors-tencent-com
+
+model:
+  name: glm-5.2
+  path: /data/model/glm52-fp8
+  # Official post1-0716 uses 1048576 (1M context). Previous ts4 config used 524288.
+  # Keep 524288 to match prior baseline; bump if long-context workloads require it.
+  contextLength: "524288"
+
+rdma:
+  bootstrapPort: 8998
+  gidIndex: "3"
+  ibDeviceMap: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
+  protocol: rdma
+  # Per-bond static routes so each bondN's RDMA traffic to the peer's bondN IP
+  # stays on bondN instead of egressing through bond7 (the catch-all route
+  # 29.198.0.0/15 via bond7). Each entry: "<dst_subnet> via <gw> dev <bond>".
+  # Prefill (159) -> Decode (87) subnets:
+  routesPrefill:
+  - "29.199.73.120/30 via 29.199.73.109 dev bond0"
+  - "29.199.73.144/30 via 29.199.73.149 dev bond1"
+  - "29.199.73.136/30 via 29.199.73.117 dev bond2"
+  - "29.199.73.128/30 via 29.199.73.113 dev bond3"
+  - "29.199.73.8/30 via 29.199.73.73 dev bond4"
+  - "29.199.73.88/30 via 29.199.73.37 dev bond5"
+  - "29.199.73.96/30 via 29.199.73.81 dev bond6"
+  - "29.199.73.44/30 via 29.199.73.153 dev bond7"
+  # Decode (87) -> Prefill (159) subnets:
+  routesDecode:
+  - "29.199.73.108/30 via 29.199.73.121 dev bond0"
+  - "29.199.73.148/30 via 29.199.73.145 dev bond1"
+  - "29.199.73.116/30 via 29.199.73.137 dev bond2"
+  - "29.199.73.112/30 via 29.199.73.129 dev bond3"
+  - "29.199.73.72/30 via 29.199.73.9 dev bond4"
+  - "29.199.73.36/30 via 29.199.73.89 dev bond5"
+  - "29.199.73.80/30 via 29.199.73.97 dev bond6"
+  - "29.199.73.152/30 via 29.199.73.45 dev bond7"
+
+resources:
+  gpuNode:
+    limits:
+      amd.com/gpu: "8"
+    requests:
+      amd.com/gpu: "8"
+      cpu: "360"
+      memory: 2100Gi
+  router:
+    limits:
+      memory: 8Gi
+    requests:
+      cpu: "4"
+      memory: 4Gi
+
+sglang:
+  # --- Backend selectors ---
+  # dsa attention backend: REQUIRED for GLM-5.2 (GlmMoeDsaForCausalLM).
+  # The dsa backend consumes topk_indices for sparse attention.
+  attentionBackend: dsa
+  # DSA inner sub-backend: tilelang (HIP auto-default).
+  # NOTE: aiter as DSA sub-backend crashes with GPU memory access faults.
+  dsaPrefillBackend: tilelang
+  dsaDecodeBackend: tilelang
+  # moe_runner_backend: auto (default, matches prof19 working config)
+  # --- Common (matched to prof19 working deployment) ---
+  # prof19 uses disableOverlapSchedule=false, memFractionStatic=0.85,
+  # scheduleConservativeness=1.0, enableMixedChunk=false.
+  disableOverlapSchedule: false
+  enableAiterAllreduceFusion: true
+  enableFusedQkNormRope: true
+  enableMixedChunk: false
+  enableMetrics: true
+  kvCacheDtype: fp8_e4m3
+  logLevel: info
+  maxRunningRequests: "128"
+  memFractionStatic: "0.85"
+  numReservedDecodeTokens: "1024"
+  ppSize: 1
+  reasoningParser: glm45
+  scheduleConservativeness: "1.0"
+  skipServerWarmup: true
+  toolCallParser: glm47
+  tpSize: 8
+  watchdogTimeout: "3600"
+  prefill:
+    chunkedPrefillSize: "32768"
+    # Official post1-0716 disables prefill cuda graph for stability on MI308X.
+    disablePrefillCudaGraph: true
+    maxPrefillTokens: "32768"
+    # Prefill side is memory-bound; cap concurrency lower than decode.
+    maxRunningRequests: "32"
+    prefillMaxRequests: "32"
+  decode:
+    cudaGraphBsDecode: 1 2 3 4 5 6 7 8 9 10 12 16
+    cudaGraphMaxBsDecode: "16"
+    # NEXTN speculative decoding (steps=3, draft_tokens=4) — matches prof19's
+    # working config on fix-eagle-coredump-v3 (post1 SGLang). SGLang converts
+    # NEXTN to EAGLE internally for GLM-5.2. With post1 code, EAGLE+DSA works.
+    speculativeAlgorithm: NEXTN
+    speculativeEagleTopk: "1"
+    speculativeNumDraftTokens: "4"
+    speculativeNumSteps: "3"
+
+probes:
+  failureThreshold: 40
+  initialDelaySeconds: 900
+  periodSeconds: 30
+  timeoutSeconds: 60
+
+service:
+  enabled: true
+  port: 30001
+  type: ClusterIP
+
+tolerations:
+- operator: Exists

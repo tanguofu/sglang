@@ -1,0 +1,24 @@
+{{- if .Values.service.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-ts4-1p1d-router
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: sglang-ts4-1p1d
+    app.kubernetes.io/component: router
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    app.kubernetes.io/name: sglang-ts4-1p1d
+    app.kubernetes.io/component: router
+  ports:
+  - name: http
+    port: {{ .Values.service.port }}
+    targetPort: {{ .Values.router.port }}
+    protocol: TCP
+  - name: metrics
+    port: {{ .Values.router.prometheusPort }}
+    targetPort: {{ .Values.router.prometheusPort }}
+    protocol: TCP
+{{- end }}

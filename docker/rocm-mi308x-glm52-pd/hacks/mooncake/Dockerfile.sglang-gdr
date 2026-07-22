@@ -1,0 +1,37 @@
+# Dockerfile to patch Mooncake GDR support on top of existing sglang image
+# Base: mirrors.tencent.com/ti-platform/sglang:api-fix-0720 (has Mooncake source but no GDR patches)
+FROM mirrors.tencent.com/ti-platform/sglang:api-fix-0720
+
+USER root
+
+# Copy patch script
+COPY patch_mooncake_gdr.sh /tmp/patch_mooncake_gdr.sh
+RUN chmod +x /tmp/patch_mooncake_gdr.sh
+
+# Apply patches
+RUN /tmp/patch_mooncake_gdr.sh
+
+# Rebuild Mooncake with GDR patches
+# Mooncake source is at /sgl-workspace/Mooncake/mooncake-transfer-engine
+# Build dir is at /sgl-workspace/Mooncake/build
+WORKDIR /sgl-workspace/Mooncake/build
+
+# Rebuild only the transfer engine (incremental build)
+RUN cd /sgl-workspace/Mooncake/build && \
+    make -j$(nproc) mooncake-transfer-engine 2>&1 | tail -20 && \
+    make -j$(nproc) mooncake-integration 2>&1 | tail -20 && \
+    make install 2>&1 | tail -20
+
+# Verify patches are compiled in
+RUN strings /sgl-workspace/Mooncake/build/mooncake-transfer-engine/libmooncake-transfer-engine.so | \
+    grep -iE "GDR.PATCH|HipDeviceGuard" | head -5 || echo "WARNING: GDR patch strings not found in binary"
+
+# Verify hipSetDevice in worker_pool
+RUN strings /sgl-workspace/Mooncake/build/mooncake-transfer-engine/libmooncake-transfer-engine.so | \
+    grep -i "hipSetDevice" | head -5 || echo "WARNING: hipSetDevice not found in binary"
+
+# Clean up patch backups
+RUN rm -f /sgl-workspace/Mooncake/mooncake-transfer-engine/src/transport/rdma_transport/*.bak.gdr \
+    /tmp/patch_mooncake_gdr.sh
+
+WORKDIR /sgl-workspace

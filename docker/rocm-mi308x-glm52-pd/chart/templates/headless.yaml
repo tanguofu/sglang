@@ -1,0 +1,42 @@
+{{- /*
+Headless services for StatefulSet DNS (required by StatefulSet spec.serviceName).
+*/ -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-ts4-1p1d-prefill
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: sglang-ts4-1p1d
+    app.kubernetes.io/component: prefill
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: sglang-ts4-1p1d
+    app.kubernetes.io/component: prefill
+  ports:
+  - name: http
+    port: {{ .Values.prefill.port }}
+    targetPort: {{ .Values.prefill.port }}
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-ts4-1p1d-decode
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: sglang-ts4-1p1d
+    app.kubernetes.io/component: decode
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: sglang-ts4-1p1d
+    app.kubernetes.io/component: decode
+  ports:
+  - name: http
+    port: {{ .Values.decode.port }}
+    targetPort: {{ .Values.decode.port }}
+    protocol: TCP

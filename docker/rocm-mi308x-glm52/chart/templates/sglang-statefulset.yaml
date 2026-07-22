@@ -9,6 +9,7 @@ metadata:
     {{- include "sglang.labels" . | nindent 4 }}
 spec:
   serviceName: {{ .Release.Name }}-sglang
+  podManagementPolicy: Parallel
   replicas: {{ .Values.replicas }}
   selector:
     matchLabels:
@@ -124,7 +125,7 @@ spec:
             - name: PYTORCH_ROCM_ARCH
               value: "gfx942"
             - name: ROCM_QUICK_REDUCE_QUANTIZATION
-              value: "INT8"
+              value: {{ .Values.rocmQuickReduceQuantization | default "NONE" | quote }}
             - name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN
               value: "1"
             - name: SGLANG_DISABLE_CUDNN_CHECK

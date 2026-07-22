@@ -1,55 +1,96 @@
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: pd-router-172
+  name: sglang-ts4-1p1d-router
   namespace: kube-system
   labels:
-    app: pd-router
+    app.kubernetes.io/name: sglang-ts4-1p1d
+    app.kubernetes.io/component: router
     pd-role: router
 spec:
-  hostNetwork: true
-  restartPolicy: Always
-  nodeName: {{ .Values.routerNode }}
-  containers:
-  - name: router
-    image: {{ .Values.routerImage }}
-    imagePullPolicy: Always
-    command: ["/bin/bash", "-c"]
-    args:
-    - |
-      set -euo pipefail
-      echo "=== SGLang PD Router (responses) ==="
-      exec python3 -m sglang_router.launch_router \
-        --pd-disaggregation \
-        --prefill http://{{ .Values.prefillIP }}:30000 \
-        --decode http://{{ .Values.decodeIP }}:30000 \
-        --host 0.0.0.0 --port 30001 \
-        --prometheus-port 19097 \
-        --model-path {{ .Values.modelPath }} \
-        --log-level info
-    securityContext:
-      privileged: true
-      capabilities:
-        add: ["SYS_PTRACE", "IPC_LOCK", "NET_ADMIN"]
-        drop: ["ALL"]
-      seccompProfile:
-        type: Unconfined
-    resources:
-      limits:
-        memory: 8Gi
-      requests:
-        cpu: "4"
-        memory: 4Gi
-    env:
-    - name: PYTHONUNBUFFERED
-      value: "1"
-    volumeMounts:
-    - name: data
-      mountPath: /data
-  volumes:
-  - name: data
-    hostPath:
-      path: /data
-      type: Directory
-  tolerations:
-  - operator: Exists
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sglang-ts4-1p1d
+      app.kubernetes.io/component: router
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sglang-ts4-1p1d
+        app.kubernetes.io/component: router
+        pd-role: router
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeName: {{ .Values.router.nodeName }}
+      tolerations:
+{{ toYaml .Values.tolerations | indent 6 }}
+      imagePullSecrets:
+{{ toYaml .Values.imagePullSecrets | indent 6 }}
+      containers:
+      - name: router
+        {{- if .Values.router.image }}
+        image: "{{ .Values.router.image }}:{{ .Values.router.tag }}"
+        {{- else }}
+        image: "{{ .Values.image.sglang }}:{{ .Values.image.tag }}"
+        {{- end }}
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          set -euo pipefail
+          echo "=== SGLang PD Router (official sglang image, 3 APIs: chat/responses/messages) ==="
+          exec python3 -m sglang_router.launch_router \
+            --pd-disaggregation \
+            --prefill http://{{ .Values.prefill.hostIP }}:{{ .Values.prefill.port }} {{ .Values.rdma.bootstrapPort }} \
+            --decode http://{{ .Values.decode.hostIP }}:{{ .Values.decode.port }} \
+            --host {{ .Values.router.hostIP }} --port {{ .Values.router.port }} \
+            --prometheus-port {{ .Values.router.prometheusPort }} \
+            --model-path {{ .Values.model.path }} \
+            --health-check-timeout-secs {{ .Values.router.healthCheckTimeoutSecs }} \
+            --health-check-interval-secs {{ .Values.router.healthCheckIntervalSecs }} \
+            --health-failure-threshold {{ .Values.router.healthFailureThreshold }} \
+            --health-success-threshold {{ .Values.router.healthSuccessThreshold }} \
+            --cb-timeout-duration-secs {{ .Values.router.cbTimeoutDurationSecs }} \
+            --log-level info
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        ports:
+        - containerPort: {{ .Values.router.port }}
+          name: http
+        - containerPort: {{ .Values.router.prometheusPort }}
+          name: metrics
+        resources:
+{{ toYaml .Values.resources.router | indent 10 }}
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - mountPath: /data
+          name: data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.router.port }}
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: {{ .Values.router.port }}
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 5
+      volumes:
+      - name: data
+        hostPath:
+          path: /data
+          type: Directory
