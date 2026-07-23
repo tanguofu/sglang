@@ -1,8 +1,20 @@
 #!/bin/bash
+# Apply Mooncake C++ patches for bnxt_re + MI308X GPU-direct RDMA.
+#
+# HISTORY: This script previously added host-staging patches (Patch 1 + Patch 2)
+# as a workaround for GPU-direct RDMA not working. We have since verified that
+# GPU-direct RDMA (ibv_reg_mr on GPU memory + RDMA write) DOES work on MI308X +
+# bnxt_re (end-to-end test confirmed data integrity). The fix is now in
+# enable_gdr.sh which propagates USE_HIP_DMABUF to the rdma_transport target.
+#
+# This script now only applies Patch 3 (MC_DISABLE_HIP_TRANSPORT env var support)
+# which disables intra-node HIP transport for cross-node PD scenarios.
 set -eux
 cd /sgl-workspace/Mooncake
 
 # Patch 1: Add staging fields to MemoryRegionMeta in rdma_context.h
+# KEPT for backward compatibility — the USE_HIP_DMABUF path doesn't use these
+# fields, but they're harmless and keep the struct definition consistent.
 python3 -c "
 f = 'mooncake-transfer-engine/include/transport/rdma_transport/rdma_context.h'
 s = open(f).read()
@@ -20,46 +32,15 @@ else:
     print('Header already patched or pattern not found')
 "
 
-# Patch 2: Add host staging to #else block in rdma_context.cpp
-python3 -c "
-f = 'mooncake-transfer-engine/src/transport/rdma_transport/rdma_context.cpp'
-s = open(f).read()
-old = '''#else
-    mrMeta.addr = addr;
-    mrMeta.mr = ibv_reg_mr(pd_, addr, length, access);
-#endif'''
-new = '''#else
-    {
-        hipPointerAttribute_t elseAttr{};
-        hipError_t elseRes = hipPointerGetAttributes(&elseAttr, addr);
-        if (elseRes == hipSuccess && elseAttr.type == hipMemoryTypeDevice) {
-            HipDeviceGuard dev_guard(elseAttr.device);
-            if (!dev_guard.set_ok()) { return ERR_CONTEXT; }
-            void* host_buf = nullptr;
-            if (hipMallocHost(&host_buf, length) != hipSuccess) { return ERR_CONTEXT; }
-            if (hipMemcpy(host_buf, addr, length, hipMemcpyDeviceToHost) != hipSuccess) {
-                (void)hipFreeHost(host_buf); return ERR_CONTEXT; }
-            mrMeta.addr = addr;
-            mrMeta.staging_host_buf = host_buf;
-            mrMeta.staging_gpu_addr = addr;
-            mrMeta.staging_length = length;
-            mrMeta.mr = ibv_reg_mr(pd_, host_buf, length, access);
-            LOG(INFO) << \"RDMA host staging: GPU=\" << addr << \" host=\" << host_buf << \" len=\" << length;
-        } else {
-            mrMeta.addr = addr;
-            mrMeta.mr = ibv_reg_mr(pd_, addr, length, access);
-        }
-    }
-#endif'''
-if old in s:
-    s = s.replace(old, new, 1)
-    open(f, 'w').write(s)
-    print('rdma_context.cpp patched: host staging in #else block')
-else:
-    print('rdma_context.cpp already patched or pattern not found')
-"
+# Patch 2: REMOVED — host staging in #else block no longer needed.
+# The enable_gdr.sh script ensures USE_HIP_DMABUF is defined on rdma_transport,
+# so rdma_context.cpp compiles the dmabuf/GDR path (not the #else host-staging path).
+# When isKernelDmabufSupported() returns false (no CONFIG_PCI_P2PDMA), the GDR
+# path falls back to ibv_reg_mr(pd, gpu_ptr, ...) which we verified works.
 
 # Patch 3: Add MC_DISABLE_HIP_TRANSPORT to transfer_engine_impl.cpp
+# This disables intra-node HIP transport (IPC) which is not needed for
+# cross-node PD and can cause issues on MI308X.
 python3 -c "
 f = 'mooncake-transfer-engine/src/transfer_engine_impl.cpp'
 s = open(f).read()

@@ -2,8 +2,8 @@
 # Deploy: helm install glm52-pd ./chart -n kube-system -f chart/values.yaml
 
 # --- Images (built from Dockerfile + Dockerfile.router, pushed to mirrors) ---
-workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd:http-0714v5
-routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:responses-0714
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:pd-resp-msg-v6
+routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:pd-resp-msg-v1
 
 # --- API ---
 apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
@@ -72,6 +72,8 @@ workerEnv:
   - name: SGLANG_SET_CPU_AFFINITY
     value: "1"
   - name: SGLANG_USE_AITER
+    value: "1"
+  - name: SGLANG_DSA_DISABLE_AITER_PA_MQA
     value: "1"
   - name: SGLANG_USE_ROCM700A
     value: "1"

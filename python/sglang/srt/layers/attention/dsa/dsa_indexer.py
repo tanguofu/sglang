@@ -57,6 +57,9 @@ _is_hip = is_hip()
 _use_dsa_indexer_fusion = (_is_cuda or _is_hip) and not envs.SGLANG_DISABLE_DSA_INDEXER_FUSION.get()
 _is_npu = is_npu()
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
+# gfx942 + Triton 3.4.0: aiter pa_mqa_logits JIT kernel fails MLIR compilation
+# (ConvertTritonAMDGPUToLLVM). Fall back to PyTorch implementation when disabled.
+_use_aiter_pa_mqa = _use_aiter and not get_bool_env_var("SGLANG_DSA_DISABLE_AITER_PA_MQA")
 _is_fp8_fnuz = is_fp8_fnuz()
 _is_gfx95_supported = is_gfx95_supported()
 # Whether the aiter preshuffle paged-MQA path (page_size=64 + Preshuffle=True +
@@ -81,6 +84,60 @@ if _use_aiter:
 if is_npu():
     import torch_npu
     from sglang.srt.hardware_backend.npu.utils import get_indexer_weight_stream
+
+
+def _pytorch_paged_mqa_logits(
+    q_fp8: torch.Tensor,
+    kv_cache_fp8: torch.Tensor,
+    weights: torch.Tensor,
+    seqlens_32: torch.Tensor,
+    block_tables: torch.Tensor,
+    max_seq_len: int,
+    block_kv: int,
+) -> torch.Tensor:
+    """PyTorch fallback for paged MQA logits on gfx942.
+
+    Replaces aiter's deepgemm_fp8_paged_mqa_logits when the Triton JIT kernel
+    cannot compile (ConvertTritonAMDGPUToLLVM fails on gfx942 with Triton 3.4.0).
+
+    Computes: logits[i, j] = sum_h(q[i,h] * w[i,h]) · k[j] * scale[j]
+    for each query row i against all paged KV entries j.
+    """
+    # q_fp8 is [q_offset, heads, hidden_dim] (3D) — unsqueeze to [q_offset, 1, heads, hidden_dim]
+    q_fp8 = q_fp8.unsqueeze(1)
+    batch_size, next_n, heads, hidden_dim = q_fp8.shape
+    num_rows = batch_size * next_n
+
+    # Extract k and scale from the combined kv_cache buffer.
+    # kv_cache_fp8: [num_blocks, block_kv, 1, head_dim_with_sf]
+    # head_dim_with_sf = hidden_dim + 4 (4 bytes = 1 float32 scale)
+    k_all = kv_cache_fp8[..., :hidden_dim].to(torch.float32)
+    scale_all = kv_cache_fp8[..., hidden_dim:].view(torch.float32)
+
+    # Gather KV blocks via block_tables: [num_rows, max_blocks, block_kv, 1, hidden_dim]
+    max_blocks = block_tables.shape[1]
+    k_gathered = k_all[block_tables]  # [num_rows, max_blocks, block_kv, 1, hidden_dim]
+    scale_gathered = scale_all[block_tables]  # [num_rows, max_blocks, block_kv, 1, 1]
+
+    # Flatten to [num_rows, max_blocks * block_kv, hidden_dim]
+    k_flat = k_gathered.reshape(num_rows, max_blocks * block_kv, hidden_dim)
+    scale_flat = scale_gathered.reshape(num_rows, max_blocks * block_kv, 1)
+
+    # Truncate to max_seq_len
+    k_flat = k_flat[:, :max_seq_len, :]
+    scale_flat = scale_flat[:, :max_seq_len, :]
+
+    # q: [num_rows, heads, hidden_dim], weights: [num_rows, heads, 1]
+    q_flat = q_fp8.reshape(num_rows, heads, hidden_dim).to(torch.float32)
+    w_flat = weights.reshape(num_rows, heads, 1)
+
+    # logits = sum_h((q_h * w_h) @ k^T * scale)
+    q_weighted = q_flat * w_flat  # [num_rows, heads, hidden_dim]
+    scores = torch.bmm(q_weighted, k_flat.transpose(1, 2))  # [num_rows, heads, max_seq_len]
+    scores = scores * scale_flat.transpose(1, 2)  # [num_rows, heads, max_seq_len]
+    logits = scores.sum(dim=1)  # [num_rows, max_seq_len]
+
+    return logits
 
 from sglang.srt.distributed import (
     get_attn_tp_group,
@@ -889,7 +946,7 @@ class Indexer(MultiPlatformOp):
         assert len(weights.shape) == 3
         weights = weights.squeeze(2)
 
-        if _is_hip:
+        if _is_hip and _use_aiter_pa_mqa:
             from aiter.ops.triton.pa_mqa_logits import deepgemm_fp8_paged_mqa_logits
 
             q_fp8 = q_fp8.unsqueeze(1)
@@ -909,6 +966,12 @@ class Indexer(MultiPlatformOp):
                 max_seq_len,
                 Preshuffle=_use_aiter_preshuffle,
                 KVBlockSize=block_kv,
+            )
+        elif _is_hip:
+            # PyTorch fallback for gfx942 (Triton 3.4.0 JIT compilation fails)
+            logits = _pytorch_paged_mqa_logits(
+                q_fp8, kv_cache_fp8, weights, seqlens_32,
+                block_tables, max_seq_len, block_kv,
             )
         elif use_dg_native:
             # block_tables[::next_n] de-expands dsa_backend's repeat_interleave
