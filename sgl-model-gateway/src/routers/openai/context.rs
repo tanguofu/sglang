@@ -206,7 +206,13 @@ pub struct OwnedStreamingContext {
 
 impl RequestContext {
     pub fn into_streaming_context(mut self) -> OwnedStreamingContext {
-        let payload_state = self.take_payload().expect("Payload not prepared");
+        let mut payload_state = self.take_payload().expect("Payload not prepared");
+
+        // Unwrap namespace tools and default stream before forwarding to worker.
+        // SGLang worker only accepts function/web_search_preview/code_interpreter/mcp
+        // tool types and requires stream to be a boolean, not null.
+        super::responses::unwrap_namespace_tools(&mut payload_state.json);
+        super::responses::ensure_stream_default(&mut payload_state.json);
 
         OwnedStreamingContext {
             url: payload_state.url,

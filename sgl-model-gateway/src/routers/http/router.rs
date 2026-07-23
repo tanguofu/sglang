@@ -270,7 +270,84 @@ impl Router {
         response
     }
 
-    async fn route_typed_request_once<T: GenerationRequest + serde::Serialize + Clone>(
+    /// Like `route_typed_request` but for request types that don't impl
+    /// `GenerationRequest` (e.g., `CreateMessageRequest` from the Anthropic
+    /// Messages API, where the orphan rule prevents implementing an external
+    /// trait on an external type). The caller provides `is_stream` and
+    /// `text` directly.
+    pub async fn route_serializable_request<T: serde::Serialize + Clone>(
+        &self,
+        headers: Option<&HeaderMap>,
+        typed_req: &T,
+        route: &'static str,
+        model_id: Option<&str>,
+        is_stream: bool,
+        text: &str,
+    ) -> Response {
+        let start = Instant::now();
+        let model = model_id.unwrap_or(UNKNOWN_MODEL_ID);
+        let endpoint = route_to_endpoint(route);
+
+        Metrics::record_router_request(
+            metrics_labels::ROUTER_HTTP,
+            metrics_labels::BACKEND_REGULAR,
+            metrics_labels::CONNECTION_HTTP,
+            model,
+            endpoint,
+            bool_to_static_str(is_stream),
+        );
+
+        let response = RetryExecutor::execute_response_with_retry(
+            &self.retry_config,
+            |_: u32| async {
+                let res = self
+                    .route_typed_request_once(headers, typed_req, route, model_id, is_stream, text)
+                    .await;
+
+                Metrics::record_router_upstream_response(
+                    metrics_labels::ROUTER_HTTP,
+                    res.status().as_u16(),
+                    extract_error_code_from_response(&res),
+                );
+
+                res
+            },
+            |res, _attempt| is_retryable_status(res.status()),
+            |delay, attempt| {
+                Metrics::record_worker_retry(metrics_labels::WORKER_REGULAR, endpoint);
+                Metrics::record_worker_retry_backoff(attempt, delay);
+            },
+            || {
+                Metrics::record_worker_retries_exhausted(metrics_labels::WORKER_REGULAR, endpoint);
+            },
+        )
+        .await;
+
+        if response.status().is_success() {
+            let duration = start.elapsed();
+            Metrics::record_router_duration(
+                metrics_labels::ROUTER_HTTP,
+                metrics_labels::BACKEND_REGULAR,
+                metrics_labels::CONNECTION_HTTP,
+                model,
+                endpoint,
+                duration,
+            );
+        } else if !is_retryable_status(response.status()) {
+            Metrics::record_router_error(
+                metrics_labels::ROUTER_HTTP,
+                metrics_labels::BACKEND_REGULAR,
+                metrics_labels::CONNECTION_HTTP,
+                model,
+                endpoint,
+                error_type_from_status(response.status()),
+            );
+        }
+
+        response
+    }
+
+    async fn route_typed_request_once<T: serde::Serialize + Clone>(
         &self,
         headers: Option<&HeaderMap>,
         typed_req: &T,
@@ -722,6 +799,96 @@ fn convert_reqwest_error(e: reqwest::Error) -> Response {
     error::create_error(status, code, message)
 }
 
+/// Extract routing text from Anthropic Messages API input messages.
+///
+/// Used by cache-aware routing for prefix matching. Walks the last user
+/// message and concatenates text from string content or text content blocks.
+/// Returns an empty string when no user text is available — cache-aware
+/// routing falls back to round-robin in that case.
+/// Extract routing text from an Anthropic Messages API request.
+///
+/// Combines the top-level `system` prompt with text from ALL messages so the
+/// radix tree sees the full conversation prefix. This matches the behavior of
+/// `extract_text_for_routing` for Chat Completions and Responses API, which
+/// also walk the full conversation. Extracting only the last user message (the
+/// previous implementation) starved the radix tree of the system-prompt and
+/// prior-turn prefixes that dominate cache hit rate for Claude Code sessions.
+fn build_messages_routing_text(body: &crate::protocols::messages::CreateMessageRequest) -> String {
+    use crate::protocols::messages::{InputContent, InputContentBlock, SystemContent, ToolResultContent};
+
+    let mut buffer = String::new();
+    let mut has_content = false;
+
+    // System prompt (top-level field, not part of messages[])
+    if let Some(system) = &body.system {
+        let system_text = match system {
+            SystemContent::String(s) => s.clone(),
+            SystemContent::Blocks(blocks) => blocks
+                .iter()
+                .map(|b| b.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        };
+        if !system_text.is_empty() {
+            buffer.push_str(&system_text);
+            has_content = true;
+        }
+    }
+
+    // All messages (user + assistant, including tool_use/tool_result/thinking)
+    for msg in &body.messages {
+        let parts: Vec<String> = match &msg.content {
+            InputContent::String(s) => vec![s.clone()],
+            InputContent::Blocks(blocks) => blocks
+                .iter()
+                .filter_map(|block| match block {
+                    InputContentBlock::Text(t) => Some(t.text.clone()),
+                    InputContentBlock::ToolUse(tu) => {
+                        // Include tool name + serialized input so repeated
+                        // tool calls with the same name share a prefix.
+                        Some(format!("{} {}", tu.name, tu.input))
+                    }
+                    InputContentBlock::ToolResult(tr) => {
+                        // Extract text from tool result content.
+                        match &tr.content {
+                            Some(ToolResultContent::String(s)) => Some(s.clone()),
+                            Some(ToolResultContent::Blocks(inner)) => {
+                                let texts: Vec<String> = inner
+                                    .iter()
+                                    .filter_map(|b| match b {
+                                        crate::protocols::messages::ToolResultContentBlock::Text(t) => {
+                                            Some(t.text.clone())
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect();
+                                if texts.is_empty() { None } else { Some(texts.join(" ")) }
+                            }
+                            None => None,
+                        }
+                    }
+                    InputContentBlock::Thinking(tb) => Some(tb.thinking.clone()),
+                    // Image, Document, RedactedThinking, ServerToolUse, SearchResult,
+                    // WebSearchToolResult have no stable text prefix to contribute.
+                    _ => None,
+                })
+                .collect(),
+        };
+
+        for part in parts {
+            if has_content && !part.is_empty() {
+                buffer.push(' ');
+            }
+            if !part.is_empty() {
+                buffer.push_str(&part);
+                has_content = true;
+            }
+        }
+    }
+
+    buffer
+}
+
 use async_trait::async_trait;
 
 #[async_trait]
@@ -782,8 +949,56 @@ impl RouterTrait for Router {
         body: &ResponsesRequest,
         model_id: Option<&str>,
     ) -> Response {
-        self.route_typed_request(headers, body, "/v1/responses", model_id)
-            .await
+        // Serialize to JSON and apply SGLang worker compatibility transforms:
+        // 1. Unwrap namespace tools → flat function tools (worker only accepts
+        //    function/web_search_preview/code_interpreter/mcp)
+        // 2. Default stream to false if null (worker requires boolean, not null)
+        let mut payload = match serde_json::to_value(body) {
+            Ok(v) => v,
+            Err(e) => {
+                return error::bad_request(
+                    "serialization_failed",
+                    format!("Convert ResponsesRequest to JSON failed: {}", e),
+                );
+            }
+        };
+        crate::routers::openai::responses::unwrap_namespace_tools(&mut payload);
+        crate::routers::openai::responses::ensure_stream_default(&mut payload);
+
+        let is_stream = body.is_stream();
+        let text = body.extract_text_for_routing();
+        self.route_serializable_request(
+            headers,
+            &payload,
+            "/v1/responses",
+            model_id,
+            is_stream,
+            &text,
+        )
+        .await
+    }
+
+    async fn route_messages(
+        &self,
+        headers: Option<&HeaderMap>,
+        body: &crate::protocols::messages::CreateMessageRequest,
+        model_id: Option<&str>,
+    ) -> Response {
+        let is_stream = body.is_stream();
+        // Build routing text from system prompt + all messages so cache_aware
+        // routing sees the full conversation prefix (matching /v1/responses and
+        // /v1/chat/completions behavior). CreateMessageRequest doesn't impl
+        // GenerationRequest (orphan rule), so we use route_serializable_request.
+        let text = build_messages_routing_text(body);
+        self.route_serializable_request(
+            headers,
+            body,
+            "/v1/messages",
+            model_id,
+            is_stream,
+            &text,
+        )
+        .await
     }
 
     async fn get_response(
