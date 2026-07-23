@@ -52,8 +52,8 @@ from sglang.srt.entrypoints.openai.protocol import (
     ToolChoice,
     ToolChoiceFuncName,
 )
+from sglang.srt.managers.template_detection import detect_inline_system_support
 from sglang.srt.observability.req_time_stats import monotonic_time
-from sglang.srt.parser.template_detection import detect_inline_system_support
 
 if TYPE_CHECKING:
     from sglang.srt.entrypoints.openai.serving_chat import OpenAIServingChat
@@ -558,6 +558,21 @@ class AnthropicServing:
             request_data["stream_options"] = StreamOptions(
                 include_usage=True,
                 continuous_usage_stats=True,
+            )
+
+        # PD disaggregation bootstrap — forwarded by sgl-model-gateway PDRouter.
+        # Without this passthrough, bootstrap fields on AnthropicMessagesRequest
+        # would never reach the scheduler (the conversion below produces a
+        # ChatCompletionRequest that drops them).
+        if anthropic_request.bootstrap_host is not None:
+            request_data["bootstrap_host"] = anthropic_request.bootstrap_host
+        if anthropic_request.bootstrap_port is not None:
+            request_data["bootstrap_port"] = anthropic_request.bootstrap_port
+        if anthropic_request.bootstrap_room is not None:
+            request_data["bootstrap_room"] = anthropic_request.bootstrap_room
+        if anthropic_request.disagg_prefill_dp_rank is not None:
+            request_data["disagg_prefill_dp_rank"] = (
+                anthropic_request.disagg_prefill_dp_rank
             )
 
         chat_request = ChatCompletionRequest(**request_data)

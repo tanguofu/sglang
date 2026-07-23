@@ -18,7 +18,7 @@ from sglang.srt.entrypoints.openai.protocol import (  # noqa: E402
     ChatCompletionRequest,
     ChatCompletionResponse,
 )
-from sglang.srt.parser.template_detection import (  # noqa: E402
+from sglang.srt.managers.template_detection import (  # noqa: E402
     detect_inline_system_support,
 )
 from sglang.test.ci.ci_register import register_cpu_ci  # noqa: E402
@@ -134,6 +134,16 @@ async def _collect_anthropic_events(serving, anthropic_request):
 
 
 class TestAnthropicServing(unittest.TestCase):
+    # System-first guard (Qwen-style): rejects non-first system → must merge.
+    QWEN_SYSTEM_FIRST_TEMPLATE = (
+        "{%- for message in messages %}"
+        "{%- if message.role == 'system' and not loop.first %}"
+        "{{- raise_exception('system must be first') }}"
+        "{%- endif %}"
+        "{{- message.role }}: {{ message.content }}\n"
+        "{%- endfor %}"
+    )
+
     # Renders system at any position (GLM/Kimi/Qwen3) → can pass through.
     INLINE_SYSTEM_TEMPLATE = (
         "{%- for message in messages %}"
@@ -665,6 +675,19 @@ class TestAnthropicServing(unittest.TestCase):
         self.assertEqual(anthropic_response.content[1].type, "text")
         self.assertEqual(anthropic_response.content[1].text, "the answer is 4")
 
+    def test_request_thinking_enabled_invokes_apply_reasoning_enabled(self):
+        """``thinking={"type":"enabled", "budget_tokens":N}`` flips reasoning on.
+
+        ``budget_tokens`` is required by the SDK shape on ``enabled``; the
+        local backend does not enforce it but accepts the value.
+        """
+        serving = self._serving()
+        request = self._anthropic_request(
+            thinking={"type": "enabled", "budget_tokens": 1024}, stream=False
+        )
+        serving._convert_to_chat_completion_request(request)
+        self.assertEqual(serving.openai_serving_chat.apply_reasoning_calls, [True])
+
     def test_request_thinking_disabled_invokes_apply_reasoning_enabled(self):
         """``thinking={"type": "disabled"}`` must flip the reasoning toggle off."""
         serving = self._serving()
@@ -805,17 +828,34 @@ class TestAnthropicServing(unittest.TestCase):
         self.assertEqual(chat_request.max_tokens, 16)
         self.assertTrue(any("task_budget" in r and "32768" in r for r in log.output))
 
+    def test_request_task_budget_with_remaining_is_accepted(self):
+        """SDK's ``BetaTokenTaskBudgetParam`` has a ``remaining`` field
+        used for client-side compaction. Must round-trip cleanly."""
+        serving = self._serving()
+        request = self._anthropic_request(
+            output_config={
+                "task_budget": {"type": "tokens", "total": 32768, "remaining": 12000}
+            },
+            stream=False,
+        )
+        # Must not raise; pre-existing logging still works.
+        serving._convert_to_chat_completion_request(request)
+        self.assertEqual(request.output_config.task_budget.remaining, 12000)
+
     def test_request_betas_is_accepted_and_logged(self):
-        """``betas`` is accepted and logged; the local backend has no beta system."""
+        """The Anthropic SDK attaches ``betas`` to many requests; must not 400."""
         import logging
 
         serving = self._serving()
-        request = self._anthropic_request(betas=["thinking-2025-08-04"], stream=False)
+        request = self._anthropic_request(
+            betas=["thinking-2025-08-04", "computer-use-2025-01-24"],
+            stream=False,
+        )
         with self.assertLogs(
             "sglang.srt.entrypoints.anthropic.serving", level=logging.INFO
         ) as log:
             serving._convert_to_chat_completion_request(request)
-        self.assertTrue(any("thinking-2025-08-04" in r for r in log.output))
+        self.assertTrue(any("betas" in r for r in log.output))
 
     def test_assistant_thinking_history_is_rewrapped_for_chat_template(self):
         """Past-turn thinking blocks get re-emitted via wrap_reasoning_history."""
@@ -1111,6 +1151,18 @@ class TestAnthropicServing(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             serving._convert_to_chat_completion_request(request)
         self.assertIn("tool_choice", str(ctx.exception))
+
+    def test_server_tool_only_with_tool_choice_auto_is_allowed(self):
+        """tool_choice=auto over server-only tools is a no-op (model decides)."""
+        serving = self._serving()
+        request = self._anthropic_request(
+            stream=False,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            tool_choice={"type": "auto"},
+        )
+        # Must not raise; the request just runs with no client-side tools.
+        chat_request = serving._convert_to_chat_completion_request(request)
+        self.assertIsNone(chat_request.tools)
 
     def test_tool_choice_named_custom_tool_is_resolved(self):
         """tool_choice={type:'tool', name:'X'} where X is a custom tool wires through."""
@@ -1425,6 +1477,57 @@ class TestAnthropicServing(unittest.TestCase):
             any("content_filter" in rec for rec in log.output),
             f"expected a warning mentioning the unmapped finish_reason: {log.output}",
         )
+
+    # ------------------------------------------------------------------
+    # PD disaggregation bootstrap field passthrough
+    # ------------------------------------------------------------------
+
+    def test_convert_preserves_bootstrap_fields(self):
+        """Bootstrap fields injected by sgl-model-gateway PDRouter must
+        survive the Anthropic→ChatCompletion conversion so the decode
+        worker can pull KV from the prefill worker."""
+        request = self._anthropic_request(
+            stream=False,
+            bootstrap_host="prefill-node",
+            bootstrap_port=8998,
+            bootstrap_room=12345,
+            disagg_prefill_dp_rank=2,
+        )
+        chat_request = self._serving()._convert_to_chat_completion_request(request)
+        self.assertEqual(chat_request.bootstrap_host, "prefill-node")
+        self.assertEqual(chat_request.bootstrap_port, 8998)
+        self.assertEqual(chat_request.bootstrap_room, 12345)
+        self.assertEqual(chat_request.disagg_prefill_dp_rank, 2)
+
+    def test_convert_without_bootstrap_fields(self):
+        """When no bootstrap fields are present (non-PD or prefill worker),
+        conversion should still succeed with None values."""
+        request = self._anthropic_request(stream=False)
+        chat_request = self._serving()._convert_to_chat_completion_request(request)
+        self.assertIsNone(chat_request.bootstrap_host)
+        self.assertIsNone(chat_request.bootstrap_port)
+        self.assertIsNone(chat_request.bootstrap_room)
+        self.assertIsNone(chat_request.disagg_prefill_dp_rank)
+
+    def test_bootstrap_fields_not_dropped_by_pydantic(self):
+        """Pydantic v2 default extra='ignore' would silently drop unknown
+        fields. The explicit bootstrap field declarations on
+        AnthropicMessagesRequest must prevent this so gateway-injected
+        bootstrap data survives deserialization."""
+        raw = {
+            "model": "test-model",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hello"}],
+            "bootstrap_host": "prefill-host",
+            "bootstrap_port": 9000,
+            "bootstrap_room": 999,
+            "disagg_prefill_dp_rank": 1,
+        }
+        request = AnthropicMessagesRequest.model_validate(raw)
+        self.assertEqual(request.bootstrap_host, "prefill-host")
+        self.assertEqual(request.bootstrap_port, 9000)
+        self.assertEqual(request.bootstrap_room, 999)
+        self.assertEqual(request.disagg_prefill_dp_rank, 1)
 
 
 class TestDetectInlineSystemSupport(unittest.TestCase):
