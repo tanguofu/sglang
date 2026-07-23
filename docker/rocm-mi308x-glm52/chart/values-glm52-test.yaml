@@ -1,0 +1,87 @@
+# SGLang GLM-5.2 test deployment — 132 + 144 dual TP8 workers with cache_aware router
+# Usage:
+#   helm install sglang-glm52-test .../chart/ -f values-glm52-test.yaml
+#   helm install sglang-glm52-test-w2 .../chart/ -f values-glm52-test-w2.yaml
+#
+# Topology:
+#   - sglang-glm52-test      on node-21.151.225.144 (worker + router + gateway)
+#   - sglang-glm52-test-w2   on node-21.151.225.132 (worker only)
+# Router workerUrls point to both nodes so cache_aware picks the best prefix hit.
+
+# ---------------------------------------------------------------------------
+# Image — same worker image as the validated 2tp8 deployment
+# ---------------------------------------------------------------------------
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+tag: xgmi-opt-0716d
+
+# ---------------------------------------------------------------------------
+# Worker placement — pin to 144 (primary, hosts router + gateway)
+# ---------------------------------------------------------------------------
+nodeName: node-21.151.225.144
+replicas: 1
+
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: sglang-1pd-A-group
+    effect: NoSchedule
+
+# ---------------------------------------------------------------------------
+# SGLang server parameters — mirror the validated sglang-glm52-2tp8 baseline.
+# Earlier we reduced chunked-prefill-size to 2048 thinking the GPU coredump
+# was triggered by large prefill batches, but that actually made it WORSE:
+# with chunk-size=2048 the entire first prefill batch fits in one chunk,
+# forcing a single large cross-rank HIP memcpy in _broadcast_reqs_across_ranks
+# which hangs in c10::hip::memcpy_and_sync. Reproduced on both 144 and 132
+# with ~5000-token prompts, so this is a software/config issue, not hardware.
+# Rolling back to the 2tp8 stable baseline (chunk=131072, max-prefill=131072,
+# hicache-ratio=1) which lets the scheduler split large prefills and avoid
+# the oversized single-shot broadcast.
+# ---------------------------------------------------------------------------
+sglang:
+  contextLength: "524288"        # 512K — matches 2tp8 baseline
+  memFractionStatic: 0.82         # matches 2tp8 baseline
+  chunkedPrefillSize: 131072      # was 2048 — restore 2tp8 baseline so large prefills chunk
+  maxPrefillTokens: 131072        # was 8192 — restore 2tp8 baseline
+  hicacheRatio: 1.0               # was 2.0 — restore 2tp8 baseline (L2 host RAM = 1× L1)
+  watchdogTimeout: 1200           # fail faster on stuck detokenizer
+
+# ---------------------------------------------------------------------------
+# SGLang Router (sgl-model-gateway with /v1/messages support)
+# ---------------------------------------------------------------------------
+router:
+  enabled: true
+  port: 30001
+  policy: cache_aware
+  workerUrls:
+    - "http://21.151.225.144:30000"  # primary (this release)
+    - "http://21.151.225.132:30000"  # secondary (sglang-glm52-test-w2)
+  cacheThreshold: 0.5
+  balanceAbsThreshold: 32
+  balanceRelThreshold: 1.5
+  # Use the pd-router image that has the /v1/messages route patched in.
+  # Worker image (above) does NOT have /v1/messages — only OpenAI routes.
+  image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router
+  tag: messages-0717c
+  # Router pod schedules on the same dedicated group as workers.
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: sglang-1pd-A-group
+      effect: NoSchedule
+
+# ---------------------------------------------------------------------------
+# llm-d Router — DISABLED, we use the sgl-model-gateway router above
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Envoy Gateway — external hostname reuses the test domain
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-308x-test.jmpti.woa.com
+  lbAddress: 21.162.215.14

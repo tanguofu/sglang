@@ -1,0 +1,236 @@
+# SGLang GLM-5.2 on AMD MI308X (gfx942) — Helm Chart Values
+#
+# Two environments:
+#   - test  (广州 GZ): 4x MI308X nodes, TKE cluster cls-bmmk3vtl
+#   - prod  (中卫 ZW): 2x MI308X nodes, bare-metal Docker (planned)
+#
+# Both use the same image, model, and sglang config.
+# Router and gateway are environment-specific.
+
+# ---------------------------------------------------------------------------
+# Image
+# ---------------------------------------------------------------------------
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+tag: latest
+pullPolicy: IfNotPresent
+# imagePullSecret — legacy single-secret field (still supported for backward compat).
+# When set, it is appended to imagePullSecrets below.
+imagePullSecret: tencent-registry
+# imagePullSecrets — list of Kubernetes dockerconfigjson Secrets used for pulling
+# the worker and router images from mirrors.tencent.com. Each entry is an object
+# with a `name` key, matching the Pod spec imagePullSecrets format.
+# Example: [{name: tencent-registry}, {name: tencent-mirror-secret}]
+# Defaults to empty; the chart appends imagePullSecret (above) automatically.
+imagePullSecrets: []
+
+# ---------------------------------------------------------------------------
+# Deployment
+# ---------------------------------------------------------------------------
+namespace: kube-system
+replicas: 1
+hostNetwork: true
+port: 30000
+
+# ---------------------------------------------------------------------------
+# Pod annotations — applied to both worker StatefulSet and router Deployment
+# pods. Use this to inject TKE/EKS network or DNS annotations, e.g.
+#   eks.tke.cloud.tencent.com/cluster-ip-switch: cluster
+# ---------------------------------------------------------------------------
+podAnnotations: {}
+
+# ---------------------------------------------------------------------------
+# Node selection
+# ---------------------------------------------------------------------------
+nodeName: ""
+nodeSelector:
+  accelerator: amd-gpu
+  sglang-model: ready
+
+# Tolerations applied to the worker StatefulSet. Override per-release to match
+# the dedicated group taint of the target node (e.g. dedicated=sglang-1pd-A-group).
+# Defaults to empty so the chart remains deployable on untainted nodes.
+tolerations: []
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 360
+    memory: 2100Gi
+    amd.com/gpu: 8
+  limits:
+    amd.com/gpu: 8
+
+# ---------------------------------------------------------------------------
+# Model (same for both test and prod)
+# ---------------------------------------------------------------------------
+model:
+  path: /data/model/glm52-fp8
+  servedName: glm-5.2
+  apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
+
+# ---------------------------------------------------------------------------
+# Server launch parameters (same for both test and prod)
+# ---------------------------------------------------------------------------
+sglang:
+  tpSize: 8
+  ppSize: 1
+  contextLength: "1048576"
+  # NUMA memory binding — one entry per TP rank (space-separated, sglang uses nargs="+").
+  # MI308X has 2 NUMA nodes per socket; TP0-3 → NUMA 0, TP4-7 → NUMA 1.
+  # SGLang's auto NUMA detection returns False on ROCm (numa_utils.py only checks CUDA),
+  # so we must pass --numa-node explicitly to bind each rank's memory to its local NUMA node.
+  numaNode: "0 0 0 0 1 1 1 1"
+  memFractionStatic: 0.88
+  kvCacheDtype: fp8_e4m3
+  chunkedPrefillSize: 32768
+  maxRunningRequests: 32
+  prefillMaxRequests: 32
+  maxPrefillTokens: 32768
+  scheduleConservativeness: 0.5
+  cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16"
+  cudaGraphMaxBsDecode: 16
+  cudaGraphBsPrefill: "4 8 16 32"
+  cudaGraphBackendPrefill: breakable
+  speculativeAlgorithm: NEXTN
+  speculativeNumSteps: 3
+  speculativeNumDraftTokens: 4
+  speculativeEagleTopk: 1
+  enableHierarchicalCache: true
+  hicacheRatio: 2.0
+  hicacheIoBackend: direct
+  hicacheMemLayout: page_first_direct
+  hicacheWritePolicy: write_through
+  enableAiterAllreduceFusion: true
+  enableMixedChunk: true
+  enableFusedQkNormRope: true
+  enableMetrics: true
+  skipServerWarmup: true
+  watchdogTimeout: 3600
+  logLevel: info
+  toolCallParser: glm47
+  reasoningParser: glm45
+
+# ---------------------------------------------------------------------------
+# Host paths
+# ---------------------------------------------------------------------------
+hostPaths:
+  data: /data
+  devKfd: /dev/kfd
+  devDri: /dev/dri
+
+shmSize: 32Gi
+
+# ---------------------------------------------------------------------------
+# SGLang Router (sgl-model-gateway) — DISABLED, replaced by llm-d router
+# ---------------------------------------------------------------------------
+router:
+  enabled: false
+  port: 30001
+  policy: cache_aware
+  workerUrls:
+    - "http://21.151.225.144:30000"  # GZ test-0 (ins-bjoqlzak)
+    - "http://21.151.225.132:30000"  # GZ test-1 (ins-6qgdzzvu)
+    - "http://21.151.225.172:30000"  # GZ test-2 (ins-o8y5rwq2)
+    - "http://21.151.225.152:30000"  # GZ test-3 (ins-1g40idxe)
+  cacheThreshold: 0.3
+  balanceAbsThreshold: 64
+  balanceRelThreshold: 1.5
+  # Router image — when both image and tag are set, the router Deployment uses
+  # this image instead of the worker image (lets you deploy a sgl-model-gateway
+  # build with /v1/messages support). Leave unset to reuse the worker image.
+  image: ""
+  tag: ""
+  # Router pod node selection — empty by default, override per-release.
+  nodeName: ""
+  nodeSelector: {}
+  # Tolerations for the router pod — typically mirrors the worker tolerations
+  # so the router can land on the same dedicated group as the workers.
+  tolerations: []
+
+# ---------------------------------------------------------------------------
+# llm-d Router — EPP (Endpoint Picker) + Envoy sidecar
+# Replaces sgl-model-gateway. Uses file-discovery plugin (no InferencePool CRD).
+# EPP scorers: prefix-cache (w3), queue (w2), kv-cache-util (w2), no-hit-lru (w2)
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: true
+  port: 30001
+  eppImage: mirrors.tencent.com/ti-platform/llm-d-router-endpoint-picker
+  eppVersion: v0.9.0-amd64
+  envoyImage: mirrors.tencent.com/ti-platform/envoy
+  envoyVersion: distroless-v1.33.2-amd64
+  nodeName: ""  # Set to pin router to a specific node
+  endpoints:
+    - name: sglang-test-0
+      address: 21.151.225.144
+      port: 30000
+    - name: sglang-test-1
+      address: 21.151.225.132
+      port: 30000
+    - name: sglang-test-2
+      address: 21.151.225.172
+      port: 30000
+    - name: sglang-test-3
+      address: 21.151.225.152
+      port: 30000
+
+# ---------------------------------------------------------------------------
+# Envoy Gateway — TEST environment (广州 GZ)
+# External: http://glm52-308x-test.jmpti.woa.com → envoy LB → GZ router
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-308x-test.jmpti.woa.com
+  lbAddress: 21.162.215.14
+
+# ---------------------------------------------------------------------------
+# PROD environment (中卫 ZW) — separate values file: values-prod.yaml
+# Router and gateway for ZW are configured via --values values-prod.yaml
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Health checks
+# ---------------------------------------------------------------------------
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 10
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 600
+  periodSeconds: 60
+  timeoutSeconds: 10
+  failureThreshold: 5
+
+# ---------------------------------------------------------------------------
+# EAGLE PR #31478 patch — broadcast greedy EAGLE verify results across TP ranks
+# Prevents per-rank argmax divergence causing decode coredump on ROCm when
+# --enable-aiter-allreduce-fusion makes all-reduce non-deterministic.
+# Idempotent: only applies if "PR #31478" marker is not already in the file.
+# ---------------------------------------------------------------------------
+eaglePatch:
+  enabled: true
+
+# ---------------------------------------------------------------------------
+# Aiter tuned GEMM config — pre-tuned bf16 GEMM shapes for GLM-5.2 on gfx942.
+# Without this ConfigMap, /sgl-workspace/aiter/aiter/configs/ only has 7
+# gfx942 K=6144 rows (all N=32). Many GLM-5.2 shapes fall back to torch GEMM
+# (30-50% slower). This CSV includes 33 gfx942 K=6144 rows covering N=32 and
+# N=256, M=1..16384. Mounted via AITER_CONFIG_GEMM_BF16 env var so it survives
+# pod restarts (writing to /sgl-workspace is lost on restart — image layer).
+# ConfigMap name is shared across releases; both W1 and W2 use the same CSV.
+# ---------------------------------------------------------------------------
+aitersTunedGemm:
+  enabled: true
+  configMapName: aiters-tuned-gemm

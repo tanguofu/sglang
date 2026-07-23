@@ -1,0 +1,10 @@
+# Patch for Mooncake rdma_context.h: add staging fields to MemoryRegionMeta
+--- a/mooncake-transfer-engine/include/transport/rdma_transport/rdma_context.h
++++ b/mooncake-transfer-engine/include/transport/rdma_transport/rdma_context.h
+@@ -70,6 +70,9 @@
+     void *addr;
+     struct ibv_mr *mr;
++    void *staging_host_buf = nullptr;
++    void *staging_gpu_addr = nullptr;
++    size_t staging_length = 0;
+ };

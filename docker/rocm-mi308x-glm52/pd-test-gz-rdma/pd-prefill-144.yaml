@@ -1,0 +1,192 @@
+# SGLang PD Prefill server on GZ node 144 (21.151.225.144)
+# RDMA mode with patched Mooncake (host staging + MC_DISABLE_HIP_TRANSPORT)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pd-prefill-144
+  namespace: kube-system
+  labels:
+    app: pd-prefill
+    pd-role: prefill
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeName: node-21.151.225.144
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 300
+  imagePullSecrets:
+    - name: tencent-registry
+  containers:
+    - name: sglang-prefill
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:0710
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -euo pipefail
+          # Overwrite installed Mooncake .so with patched version
+          cp /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so \
+             /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so
+          # Overwrite conn.py with SGLANG_PD_HOST_STAGING support
+          cp /data/mooncake-patched/conn.py \
+             /sgl-workspace/sglang/python/sglang/srt/disaggregation/mooncake/conn.py
+          # Install FlyDSL kernel to aiter package (fixes gfx942 fp8 MQA logits)
+          mkdir -p /sgl-workspace/aiter/aiter/ops/triton/_triton_kernels/attention/
+          cp /data/fp8_mqa_logits_flydsl_fixed.py \
+             /sgl-workspace/aiter/aiter/ops/triton/_triton_kernels/attention/fp8_mqa_logits.py
+          # Fix eagle_worker_v2.py: add _is_hip to DSA backend enablement
+          sed -i 's/if _is_cuda or _is_musa:/if _is_cuda or _is_musa or _is_hip:/g' \
+             /sgl-workspace/sglang/python/sglang/srt/speculative/eagle_worker_v2.py
+          sed -i 's/_is_cuda or _is_musa$/_is_cuda or _is_musa or _is_hip/g' \
+             /sgl-workspace/sglang/python/sglang/srt/speculative/eagle_worker_v2.py
+          # Fix dsa_indexer.py: enable dsa_indexer_fusion + dual stream on HIP
+          sed -i 's/DUAL_STREAM_TOKEN_THRESHOLD = 1024 if _is_cuda else 0/DUAL_STREAM_TOKEN_THRESHOLD = 1024/g' \
+             /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+          sed -i '/use_dsa_indexer_fusion/,/is_neox_style/s/_is_cuda$/(_is_cuda or _is_hip)/' \
+             /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_indexer.py
+          echo "============================================"
+          echo " GLM-5.2-FP8 SGLang PREFILL (MI308X gfx942)"
+          echo " PD Disaggregation — Mooncake RDMA mode + host staging"
+          echo " Host IP (bond0): 26.24.45.122"
+          echo "============================================"
+          exec python3 -m sglang.launch_server \
+            --model-path /data/model/glm52-fp8 \
+            --model-impl sglang \
+            --served-model-name glm-5.2 \
+            --api-key sk-46faecc9d0bc4dcd9db6a15c73ae91c8 \
+            --tp-size 8 --pp-size 1 --trust-remote-code \
+            --host 0.0.0.0 --port 30000 \
+            --context-length 1048576 \
+            --tool-call-parser glm47 --reasoning-parser glm45 \
+            --mem-fraction-static 0.88 \
+            --enable-aiter-allreduce-fusion \
+            --enable-mixed-chunk \
+            --chunked-prefill-size 32768 \
+            --enable-fused-qk-norm-rope \
+            --schedule-conservativeness 0.5 \
+            --prefill-max-requests 32 --max-prefill-tokens 32768 \
+            --kv-cache-dtype fp8_e4m3 \
+            --max-running-requests 32 \
+            --disaggregation-mode prefill \
+            --disaggregation-transfer-backend mooncake \
+            --disaggregation-ib-device '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}' \
+            --disaggregation-bootstrap-port 8998 \
+            --num-reserved-decode-tokens 1024 \
+            --disable-overlap-schedule \
+            --enable-metrics --skip-server-warmup \
+            --watchdog-timeout 3600 --log-level info
+      env:
+        - name: MODEL_PATH
+          value: "/data/model/glm52-fp8"
+        - name: PORT
+          value: "30000"
+        - name: API_KEY
+          value: "sk-46faecc9d0bc4dcd9db6a15c73ae91c8"
+        - name: DISAGG_BOOTSTRAP_PORT
+          value: "8998"
+        # ROCm environment
+        - name: HIP_VISIBLE_DEVICES
+          value: "0,1,2,3,4,5,6,7"
+        - name: NCCL_DEBUG
+          value: "INFO"
+        - name: HSA_ENABLE_SDMA
+          value: "0"
+        - name: HIP_FORCE_DEV_KERNARG
+          value: "1"
+        - name: HSA_NO_SCRATCH_RECLAIM
+          value: "1"
+        - name: NCCL_CUMEM_ENABLE
+          value: "0"
+        - name: NCCL_MIN_NCHANNELS
+          value: "112"
+        - name: NCCL_NVLS_ENABLE
+          value: "0"
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "expandable_segments:True"
+        - name: PYTORCH_ROCM_ARCH
+          value: "gfx942"
+        - name: ROCM_QUICK_REDUCE_QUANTIZATION
+          value: "INT8"
+        - name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN
+          value: "1"
+        - name: SGLANG_DISABLE_CUDNN_CHECK
+          value: "1"
+        - name: SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM
+          value: "1"
+        - name: SGLANG_INT4_WEIGHT
+          value: "0"
+        - name: SGLANG_MOE_PADDING
+          value: "1"
+        - name: SGLANG_ROCM_DISABLE_LINEARQUANT
+          value: "0"
+        - name: SGLANG_ROCM_FUSED_DECODE_MLA
+          value: "1"
+        - name: SGLANG_SET_CPU_AFFINITY
+          value: "1"
+        - name: SGLANG_USE_AITER
+          value: "1"
+        - name: SGLANG_USE_ROCM700A
+          value: "1"
+        - name: SGLANG_OPT_USE_TOPK_V2
+          value: "0"
+        # Mooncake RDMA settings
+        - name: MC_DISABLE_HIP_TRANSPORT
+          value: "1"
+        - name: MC_GID_INDEX
+          value: "3"
+        - name: SGLANG_HOST_IP
+          value: "26.24.45.122"
+        # SGLang-side host staging: copy GPU→host before transfer, host→GPU after
+        - name: SGLANG_PD_HOST_STAGING
+          value: "1"
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["SYS_PTRACE"]
+          drop: ["ALL"]
+        seccompProfile:
+          type: Unconfined
+      ports:
+        - name: http
+          containerPort: 30000
+          hostPort: 30000
+          protocol: TCP
+      volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: dev-kfd
+          mountPath: /dev/kfd
+        - name: dev-dri
+          mountPath: /dev/dri
+        - name: ib
+          mountPath: /dev/infiniband
+        - name: shm
+          mountPath: /dev/shm
+      resources:
+        requests:
+          cpu: "360"
+          memory: 2000Gi
+          amd.com/gpu: 8
+        limits:
+          amd.com/gpu: 8
+  volumes:
+    - name: data
+      hostPath:
+        path: /data
+        type: Directory
+    - name: dev-kfd
+      hostPath:
+        path: /dev/kfd
+        type: CharDevice
+    - name: dev-dri
+      hostPath:
+        path: /dev/dri
+        type: Directory
+    - name: ib
+      hostPath:
+        path: /dev/infiniband
+        type: Directory
+    - name: shm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 32Gi

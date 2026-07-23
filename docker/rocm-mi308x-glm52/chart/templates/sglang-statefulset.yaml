@@ -1,0 +1,327 @@
+# SGLang LLM Inference Service — StatefulSet for AMD MI308X (gfx942)
+# Uses official sglang-rocm mi30x image with ENV + command override (no custom image needed)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-sglang
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sglang.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ .Release.Name }}-sglang
+  podManagementPolicy: Parallel
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "sglang.selectorLabels" . | nindent 6 }}
+      app: sglang
+  template:
+    metadata:
+      labels:
+        {{- include "sglang.labels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      hostNetwork: {{ .Values.hostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- if .Values.nodeName }}
+      nodeName: {{ .Values.nodeName | quote }}
+      {{- else }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- $secrets := default list .Values.imagePullSecrets }}
+      {{- if .Values.imagePullSecret }}
+      {{- $secrets = append $secrets (dict "name" .Values.imagePullSecret) }}
+      {{- end }}
+      {{- if $secrets }}
+      imagePullSecrets:
+        {{- toYaml $secrets | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 300
+      containers:
+        - name: sglang
+          image: {{ include "sglang.image" . }}
+          imagePullPolicy: {{ .Values.pullPolicy }}
+          # Override entrypoint with our start_server logic
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              MODEL_PATH=${MODEL_PATH:-/data/model/glm52-fp8}
+              API_KEY=${API_KEY:-sk-46faecc9d0bc4dcd9db6a15c73ae91c8}
+              PORT=${PORT:-30000}
+              # Install numactl if missing (required by SGLang NUMA binding V2)
+              if ! command -v numactl &>/dev/null; then
+                echo "Installing numactl for NUMA memory binding..."
+                apt-get update -qq && apt-get install -y -qq numactl >/dev/null 2>&1
+              fi
+              # FIX: PR #31478 + request_receiver.py cpu_group revert
+              # - eagle_utils.py: broadcast greedy EAGLE verify across TP ranks
+              # - request_receiver.py: revert device_group -> cpu_group (Gloo)
+              # Idempotent: only applies if markers not already present.
+              python3 /tmp/apply_eagle_patch.py || echo "WARN: patch failed, continuing"
+              echo "=== GLM-5.2-FP8 SGLang (MI308X gfx942) ==="
+              exec python3 -m sglang.launch_server \
+                --model-path "$MODEL_PATH" \
+                --model-impl sglang \
+                --served-model-name {{ .Values.model.servedName }} \
+                --api-key "$API_KEY" \
+                --tp-size {{ .Values.sglang.tpSize }} --pp-size {{ .Values.sglang.ppSize }} --trust-remote-code \
+                --host 0.0.0.0 --port "$PORT" \
+                --numa-node {{ .Values.sglang.numaNode }} \
+                --context-length {{ .Values.sglang.contextLength | quote }} \
+                --tool-call-parser {{ .Values.sglang.toolCallParser }} --reasoning-parser {{ .Values.sglang.reasoningParser }} \
+                --mem-fraction-static {{ .Values.sglang.memFractionStatic }} \
+                --cuda-graph-bs-decode {{ .Values.sglang.cudaGraphBsDecode }} \
+                --cuda-graph-max-bs-decode {{ .Values.sglang.cudaGraphMaxBsDecode }} \
+                --enable-aiter-allreduce-fusion --enable-mixed-chunk \
+                --chunked-prefill-size {{ .Values.sglang.chunkedPrefillSize }} \
+                --enable-fused-qk-norm-rope \
+                --schedule-conservativeness {{ .Values.sglang.scheduleConservativeness }} \
+                --prefill-max-requests {{ .Values.sglang.prefillMaxRequests }} --max-prefill-tokens {{ .Values.sglang.maxPrefillTokens }} \
+                --kv-cache-dtype {{ .Values.sglang.kvCacheDtype }} \
+                {{- if ne .Values.sglang.speculativeAlgorithm "NONE" }}
+                --speculative-algorithm {{ .Values.sglang.speculativeAlgorithm }} \
+                --speculative-num-steps {{ .Values.sglang.speculativeNumSteps }} --speculative-num-draft-tokens {{ .Values.sglang.speculativeNumDraftTokens }} \
+                --speculative-eagle-topk {{ .Values.sglang.speculativeEagleTopk }} \
+                {{- end }}
+                --cuda-graph-backend-prefill {{ .Values.sglang.cudaGraphBackendPrefill }} \
+                --max-running-requests {{ .Values.sglang.maxRunningRequests }} \
+                --cuda-graph-bs-prefill {{ .Values.sglang.cudaGraphBsPrefill }} \
+                {{- if .Values.sglang.enableHierarchicalCache }}
+                --enable-hierarchical-cache \
+                --hicache-ratio {{ .Values.sglang.hicacheRatio }} \
+                --hicache-io-backend {{ .Values.sglang.hicacheIoBackend }} \
+                --hicache-mem-layout {{ .Values.sglang.hicacheMemLayout }} \
+                --hicache-write-policy {{ .Values.sglang.hicacheWritePolicy }} \
+                {{- end }}
+                --enable-metrics --skip-server-warmup \
+                --watchdog-timeout {{ .Values.sglang.watchdogTimeout }} --log-level {{ .Values.sglang.logLevel }}
+          env:
+            - name: MODEL_PATH
+              value: {{ .Values.model.path | quote }}
+            - name: PORT
+              value: {{ .Values.port | quote }}
+            - name: API_KEY
+              value: {{ .Values.model.apiKey | quote }}
+            # ROCm environment — 21 vars based on MI355X production config
+            - name: HIP_VISIBLE_DEVICES
+              value: "0,1,2,3,4,5,6,7"
+            - name: NCCL_DEBUG
+              value: "WARN"
+            - name: HSA_ENABLE_SDMA
+              value: "0"
+            - name: HIP_FORCE_DEV_KERNARG
+              value: "1"
+            - name: HSA_NO_SCRATCH_RECLAIM
+              value: "1"
+            - name: NCCL_CUMEM_ENABLE
+              value: "0"
+            - name: NCCL_MIN_NCHANNELS
+              value: "80"
+            - name: NCCL_NVLS_ENABLE
+              value: "0"
+            - name: PYTORCH_CUDA_ALLOC_CONF
+              value: "expandable_segments:True"
+            - name: PYTORCH_ROCM_ARCH
+              value: "gfx942"
+            - name: ROCM_QUICK_REDUCE_QUANTIZATION
+              value: {{ .Values.rocmQuickReduceQuantization | default "NONE" | quote }}
+            - name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN
+              value: "1"
+            - name: SGLANG_DISABLE_CUDNN_CHECK
+              value: "1"
+            - name: SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION
+              value: "false"
+            - name: SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM
+              value: "1"
+            - name: SGLANG_INT4_WEIGHT
+              value: "0"
+            - name: SGLANG_MOE_PADDING
+              value: "1"
+            - name: SGLANG_ROCM_DISABLE_LINEARQUANT
+              value: "0"
+            - name: SGLANG_ROCM_FUSED_DECODE_MLA
+              value: "1"
+            - name: SGLANG_SET_CPU_AFFINITY
+              value: "1"
+            - name: SGLANG_USE_AITER
+              value: "1"
+            - name: SGLANG_USE_ROCM700A
+              value: "1"
+            # Enable user-triggered GPU coredump so we can capture real GPU
+            # coredumps when the scheduler hangs in HIP memcpy. Without this,
+            # sglang logs only "CUDA coredump pipe not found" and we lose the
+            # GPU-side stack trace that ROCm team needs for root-cause.
+            - name: CUDA_ENABLE_USER_TRIGGERED_COREDUMP
+              value: "1"
+            {{- if .Values.aitersTunedGemm.enabled }}
+            - name: AITER_CONFIG_GEMM_BF16
+              value: /etc/aiter-configs/bf16_tuned_gemm.csv
+            {{- end }}
+          securityContext:
+            privileged: true
+            capabilities:
+              add:
+                - SYS_PTRACE
+              drop: ["ALL"]
+            seccompProfile:
+              type: Unconfined
+          ports:
+            - name: http
+              containerPort: {{ .Values.port }}
+              hostPort: {{ .Values.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.hostPaths.data }}
+            - name: dev-kfd
+              mountPath: {{ .Values.hostPaths.devKfd }}
+            - name: dev-dri
+              mountPath: {{ .Values.hostPaths.devDri }}
+            - name: shm
+              mountPath: /dev/shm
+            {{- if .Values.eaglePatch.enabled }}
+            - name: eagle-patch
+              mountPath: /tmp/apply_eagle_patch.py
+              subPath: apply_eagle_patch.py
+              readOnly: true
+            {{- end }}
+            {{- if .Values.aitersTunedGemm.enabled }}
+            - name: aiters-tuned-gemm
+              mountPath: /etc/aiter-configs
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+        {{- if .Values.llmDRouter.enabled }}
+        # EPP — llm-d Endpoint Picker (makes routing decisions via file-discovery)
+        - name: epp
+          image: "{{ .Values.llmDRouter.eppImage }}:{{ .Values.llmDRouter.eppVersion }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config-file=/etc/epp/config.yaml
+            - --pool-name=file-discovery
+            - --pool-namespace={{ .Values.namespace }}
+            - --grpc-port=9002
+            - --grpc-health-port=9003
+            - --metrics-port=9090
+            - --secure-serving=false
+            - --v=2
+          volumeMounts:
+            - name: epp-config
+              mountPath: /etc/epp
+              readOnly: true
+          resources:
+            requests:
+              cpu: "4"
+              memory: 8Gi
+            limits:
+              memory: 16Gi
+          readinessProbe:
+            grpc:
+              port: 9003
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 10
+          livenessProbe:
+            grpc:
+              port: 9003
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+        # Envoy — llm-d data plane (forwards to chosen SGLang instance)
+        - name: envoy
+          image: "{{ .Values.llmDRouter.envoyImage }}:{{ .Values.llmDRouter.envoyVersion }}"
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--service-node"
+            - "llm-d-envoy"
+            - "--log-level"
+            - "warn"
+            - "--concurrency"
+            - "8"
+            - "--drain-strategy"
+            - "immediate"
+            - "--drain-time-s"
+            - "60"
+            - "-c"
+            - "/etc/envoy/envoy.yaml"
+          ports:
+            - name: router
+              containerPort: {{ .Values.llmDRouter.port }}
+              hostPort: {{ .Values.llmDRouter.port }}
+              protocol: TCP
+          volumeMounts:
+            - name: envoy-config
+              mountPath: /etc/envoy
+              readOnly: true
+          resources:
+            requests:
+              cpu: "4"
+              memory: 8Gi
+            limits:
+              memory: 16Gi
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 19000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 10
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 19000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            failureThreshold: 5
+        {{- end }}
+      volumes:
+        - name: data
+          hostPath:
+            path: {{ .Values.hostPaths.data }}
+            type: Directory
+        - name: dev-kfd
+          hostPath:
+            path: {{ .Values.hostPaths.devKfd }}
+            type: CharDevice
+        - name: dev-dri
+          hostPath:
+            path: {{ .Values.hostPaths.devDri }}
+            type: Directory
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.shmSize }}
+        {{- if .Values.eaglePatch.enabled }}
+        - name: eagle-patch
+          configMap:
+            name: {{ .Release.Name }}-eagle-patch
+            defaultMode: 0755
+        {{- end }}
+        {{- if .Values.aitersTunedGemm.enabled }}
+        - name: aiters-tuned-gemm
+          configMap:
+            name: {{ .Values.aitersTunedGemm.configMapName }}
+            defaultMode: 0644
+        {{- end }}
+        {{- if .Values.llmDRouter.enabled }}
+        - name: epp-config
+          configMap:
+            name: {{ .Release.Name }}-llm-d-epp-config
+        - name: envoy-config
+          configMap:
+            name: {{ .Release.Name }}-llm-d-envoy-config
+        {{- end }}
