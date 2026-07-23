@@ -38,6 +38,11 @@ spec:
     args:
     - |
       set -euo pipefail
+      # Install numactl if missing (required by SGLang NUMA binding V2)
+      if ! command -v numactl >/dev/null 2>&1; then
+        echo "Installing numactl for NUMA memory binding..."
+        apt-get update -qq && apt-get install -y -qq numactl >/dev/null 2>&1 || echo "WARN: numactl install failed, continuing"
+      fi
       # Copy verified GDR engine.so from host (baked-in image engine.so ignores
       # MC_DISABLE_HIP_TRANSPORT=1 — must be replaced for GDR).
       if [ -f /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so ]; then
