@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "wikiDir": "/Users/guofutan/ti-cloud/teamai/ti-cloud-teamai/wiki",
+  "sourceDir": null,
+  "createdAt": "2026-07-19T23:50:00+08:00",
+  "updatedAt": "2026-07-19T23:55:00+08:00",
+  "sources": {},
+  "pages": {
+    "overview.md": {
+      "title": "Overview",
+      "category": "entity",
+      "tags": ["overview", "index"],
+      "outLinks": ["install-amdgpu-driver-tos44", "install-bnxt-re-rdma-driver-tos44", "use-bnxt-re-238-on-tos44", "bcm57608-nic", "amdgpu-driver", "dkms-module-signing", "initramfs-rebuild", "tos-44"],
+      "inLinks": [],
+      "updatedAt": "2026-07-19T23:55:00+08:00"
+    },
+    "entities/tos-44.md": {
+      "title": "TencentOS Server 4.4",
+      "category": "entity",
+      "tags": ["os", "tencent", "kernel-6.6", "tos-44"],
+      "outLinks": ["install-amdgpu-driver-tos44", "install-bnxt-re-rdma-driver-tos44", "amdgpu-driver", "bnxt-re-driver", "bcm57608-nic"],
+      "inLinks": ["install-amdgpu-driver-tos44", "install-bnxt-re-rdma-driver-tos44", "use-bnxt-re-238-on-tos44", "overview"],
+      "updatedAt": "2026-07-19T23:55:00+08:00"
+    },
+    "entities/bcm57608-nic.md": {
+      "title": "Broadcom BCM57608 NIC",
+      "category": "entity",
+      "tags": ["hardware", "nic", "broadcom", "roce", "200g", "pcie", "p2200g"],
+      "outLinks": ["bnxt-re-driver", "install-bnxt-re-rdma-driver-tos44", "tos-44", "use-bnxt-re-238-on-tos44"],
+      "inLinks": ["tos-44", "bnxt-re-driver", "install-bnxt-re-rdma-driver-tos44", "use-bnxt-re-238-on-tos44", "overview"],
+      "updatedAt": "2026-07-19T23:55:00+08:00"
+    },
+    "entities/bnxt-re-driver.md": {
+      "title": "bnxt_re Driver",
+      "category": "entity",
+      "tags": ["driver", "broadcom", "roce", "rdma", "kernel-module"],
+      "outLinks": ["bcm57608-nic", "install-bnxt-re-rdma-driver-tos44", "dkms-module-signing", "initramfs-rebuild", "tos-44"],
+      "inLinks": ["tos-44", "install-bnxt-re-rdma-driver-tos44", "use-bnxt-re-238-on-tos44", "dkms-module-signing", "initramfs-rebuild", "amdgpu-driver", "overview"],
+      "updatedAt": "2026-07-19T23:55:00+08:00"
+    },
+    "entities/amdgpu-driver.md": {
+      "title": "amdgpu Driver",
+      "category": "entity",
+      "tags": ["driver", "amd", "gpu", "kernel-module", "mi308x", "rocm"],
+      "outLinks": ["install-amdgpu-driver-tos44", "tos-44", "dkms-module-signing", "initramfs-rebuild", "bnxt-re-driver"],
+      "inLinks": ["tos-44", "install-amdgpu-driver-tos44", "dkms-module-signing", "initramfs-rebuild", "overview"],
+      "updatedAt": "2026-07-19T23:55:00+08:00"
+    },
+    "concepts/dkms-module-signing.md": {
+      "title": "DKMS Module Signing",
+      "category": "concept",
+      "tags": ["dkms", "mok", "secure-boot", "kernel-module", "signing"],
+      "outLinks": ["install-amdgpu-driver-tos44", "install-bnxt-re-rdma-driver-tos44", "initramfs-rebuild", "amdgpu-driver", "bnxt-re-driver"],
+      "inLinks": ["install-amdgpu-driver-tos44", "install-bnxt-re-rdma-driver-tos44", "amdgpu-driver", "bnxt-re-driver", "overview"],
+      "updatedAt": "2026-07-19T23:55:00+08:00"
+    },
+    "concepts/initramfs-rebuild.md": {
+      "title": "initramfs Rebuild",
+      "category": "concept",
+      "tags": ["initramfs", "dracut", "boot", "kernel-module"],
+      "outLinks": ["install-bnxt-re-rdma-driver-tos44", "install-amdgpu-driver-tos44", "dkms-module-signing", "bnxt-re-driver", "amdgpu-driver"],
+      "inLinks": ["install-bnxt-re-rdma-driver-tos44", "install-amdgpu-driver-tos44", "dkms-module-signing", "amdgpu-driver", "bnxt-re-driver", "overview"],
+      "updatedAt": "2026-07-19T23:55:00+08:00"
+    },
+    "decisions/use-bnxt-re-238-on-tos44.md": {
+      "title": "Use bnxt_re 238 on TOS 4.4 (not 233)",
+      "category": "decision",
+      "tags": ["decision", "driver-version", "bnxt-re", "tos-44", "kernel-6.6"],
+      "outLinks": ["install-bnxt-re-rdma-driver-tos44", "bnxt-re-driver", "bcm57608-nic", "tos-44"],
+      "inLinks": ["install-bnxt-re-rdma-driver-tos44", "bcm57608-nic", "overview"],
+      "updatedAt": "2026-07-19T23:55:00+08:00"
+    },
+    "processes/install-amdgpu-driver-tos44.md": {
+      "title": "Install amdgpu Driver on TOS 4.4",
+      "category": "process",
+      "tags": ["tos-44", "amdgpu", "mi308x", "dkms", "mok-signing", "rocm", "gpu-driver"],
+      "outLinks": ["install-bnxt-re-rdma-driver-tos44", "tos-44", "amdgpu-driver", "dkms-module-signing", "initramfs-rebuild"],
+      "inLinks": ["tos-44", "amdgpu-driver", "dkms-module-signing", "initramfs-rebuild", "overview"],
+      "updatedAt": "2026-07-19T23:55:00+08:00"
+    },
+    "processes/install-bnxt-re-rdma-driver-tos44.md": {
+      "title": "Install bnxt_re RDMA Driver on TOS 4.4",
+      "category": "process",
+      "tags": ["tos-44", "bnxt-re", "bnxt-en", "rdma", "roce", "bcm57608", "dkms", "firmware-upgrade", "niccli", "libbnxt-re"],
+      "outLinks": ["install-amdgpu-driver-tos44", "tos-44", "bcm57608-nic", "bnxt-re-driver", "dkms-module-signing", "initramfs-rebuild", "use-bnxt-re-238-on-tos44"],
+      "inLinks": ["tos-44", "bcm57608-nic", "bnxt-re-driver", "use-bnxt-re-238-on-tos44", "dkms-module-signing", "initramfs-rebuild", "amdgpu-driver", "overview"],
+      "updatedAt": "2026-07-19T23:55:00+08:00"
+    }
+  },
+  "stats": {
+    "totalPages": 10,
+    "totalSources": 0,
+    "totalLinks": 28,
+    "lastIngest": "2026-07-19T23:55:00+08:00",
+    "lastLint": null
+  }
+}
