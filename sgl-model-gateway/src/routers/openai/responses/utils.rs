@@ -233,3 +233,73 @@ pub(super) fn mask_tools_as_mcp(resp: &mut Value, original_body: &ResponsesReque
         obj.entry("tool_choice").or_insert(json!("auto"));
     }
 }
+
+/// Unwrap `namespace` tools into flat `function` tools before forwarding to worker.
+///
+/// Codex CLI sends tools wrapped in a `namespace` container for organizational
+/// purposes:
+/// ```json
+/// {"type":"namespace","tools":[{"type":"function","name":"shell",...}]}
+/// ```
+///
+/// SGLang worker's `/v1/responses` endpoint only accepts `function`,
+/// `web_search_preview`, `code_interpreter`, and `mcp` tool types. This
+/// function unwraps `namespace` containers and flattens their nested tools
+/// into the top-level `tools` array. Non-namespace tools are passed through
+/// unchanged.
+///
+/// Also drops tool types that SGLang worker does not accept (e.g. `web_search`,
+/// `file_search`, `image_generation`, `computer_use_preview`, `local_shell`,
+/// `custom`, `tool_search`) since the worker rejects them with a 400 error.
+pub(crate) fn unwrap_namespace_tools(payload: &mut Value) {
+    let Some(tools) = payload.get_mut("tools").and_then(|t| t.as_array_mut()) else {
+        return;
+    };
+
+    // Tool types that SGLang worker's /v1/responses endpoint accepts.
+    const ACCEPTED: &[&str] = &["function", "web_search_preview", "code_interpreter", "mcp"];
+
+    let mut flat_tools: Vec<Value> = Vec::with_capacity(tools.len());
+
+    for tool in tools.drain(..) {
+        let tool_type = tool
+            .get("type")
+            .and_then(|t| t.as_str())
+            .unwrap_or("function");
+
+        if tool_type == "namespace" {
+            // Unwrap nested tools from namespace container
+            if let Some(nested) = tool.get("tools").and_then(|t| t.as_array()) {
+                for inner in nested {
+                    // Only keep accepted tool types from within namespace
+                    let inner_type = inner
+                        .get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("function");
+                    if ACCEPTED.contains(&inner_type) {
+                        flat_tools.push(inner.clone());
+                    }
+                }
+            }
+        } else if ACCEPTED.contains(&tool_type) {
+            flat_tools.push(tool);
+        }
+        // Silently drop unsupported tool types (web_search, file_search, etc.)
+    }
+
+    *tools = flat_tools;
+}
+
+/// Default `stream` to `false` if not present in the payload.
+///
+/// SGLang worker's internal conversion from Responses API to Chat Completions
+/// requires `stream` to be a boolean, not null. When Codex CLI omits the field,
+/// the Rust router's serde deserialization produces `Option<bool> = None`,
+/// which serializes to `null` in the forwarded payload, causing a 400 error.
+pub(crate) fn ensure_stream_default(payload: &mut Value) {
+    if let Some(obj) = payload.as_object_mut() {
+        if !obj.contains_key("stream") || obj.get("stream").map(|v| v.is_null()).unwrap_or(true) {
+            obj.insert("stream".to_string(), Value::Bool(false));
+        }
+    }
+}

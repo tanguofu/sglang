@@ -1,11 +1,10 @@
 # GLM-5.2 2tp8 merged chart values (W1 + W2, replicas=2)
-# Synced 2026-07-22: STS patch applied via kubectl, now reflected in helm values.
+# Synced 2026-07-23: Native router (no Python proxy) with patched wheel.
 # Changes from previous revision:
-#   - tag: xgmi-opt-0716d → fix-eagle-coredump-v3 (NCCL deadlock fix)
-#   - sglang.cudaGraphBackendPrefill: breakable → tc_piecewise (ROCm BCG invalid)
-#   - sglang.hicacheRatio: 4 → 2 (avoid DSA indexer host memory OOM)
-#   - eaglePatch.enabled: true → false (PR #31478 baked into fix-eagle-coredump-v3)
-#   - Added podAnnotations + imagePullSecrets (reference cluster config)
+#   - tag: toolchoice-fix-0721 (base image, patched wheel installed via hostPath init)
+#   - Python proxy eliminated; Rust router handles /v1/responses, /v1/messages, /v1/chat/completions natively
+#   - Patched wheel at /tmp/wheel-cache on node-21.151.225.144
+#   - Fixes: unwrap_namespace_tools, ensure_stream_default, build_messages_routing_text
 aitersTunedGemm:
   configMapName: aiters-tuned-gemm
   enabled: true

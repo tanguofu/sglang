@@ -12,7 +12,7 @@ use tracing::warn;
 
 use super::{
     mcp::{execute_tool_loop, prepare_mcp_tools_as_functions},
-    utils::{mask_tools_as_mcp, patch_response_with_request_metadata},
+    utils::{ensure_stream_default, mask_tools_as_mcp, patch_response_with_request_metadata, unwrap_namespace_tools},
 };
 use crate::routers::{
     header_utils::{apply_provider_headers, extract_auth_header},
@@ -35,6 +35,12 @@ pub async fn handle_non_streaming_response(mut ctx: RequestContext) -> Response 
         url,
         previous_response_id,
     } = payload_state;
+
+    // Unwrap namespace tools and default stream before forwarding to worker.
+    // SGLang worker only accepts function/web_search_preview/code_interpreter/mcp
+    // tool types and requires stream to be a boolean, not null.
+    unwrap_namespace_tools(&mut payload);
+    ensure_stream_default(&mut payload);
 
     let original_body = ctx.responses_request();
     let worker = match ctx.worker() {

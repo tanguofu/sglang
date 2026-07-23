@@ -15,5 +15,10 @@ mod streaming;
 mod tool_handler;
 mod utils;
 
+// Re-export payload transformation helpers for use by context.rs and other
+// modules within the crate. These functions normalize the Responses API
+// payload before forwarding to SGLang workers.
+pub(crate) use utils::{ensure_stream_default, unwrap_namespace_tools};
+
 pub use non_streaming::handle_non_streaming_response;
 pub use streaming::handle_streaming_response;

@@ -805,26 +805,88 @@ fn convert_reqwest_error(e: reqwest::Error) -> Response {
 /// message and concatenates text from string content or text content blocks.
 /// Returns an empty string when no user text is available — cache-aware
 /// routing falls back to round-robin in that case.
-fn extract_messages_routing_text(messages: &[crate::protocols::messages::InputMessage]) -> String {
-    use crate::protocols::messages::{InputContent, InputContentBlock, Role};
+/// Extract routing text from an Anthropic Messages API request.
+///
+/// Combines the top-level `system` prompt with text from ALL messages so the
+/// radix tree sees the full conversation prefix. This matches the behavior of
+/// `extract_text_for_routing` for Chat Completions and Responses API, which
+/// also walk the full conversation. Extracting only the last user message (the
+/// previous implementation) starved the radix tree of the system-prompt and
+/// prior-turn prefixes that dominate cache hit rate for Claude Code sessions.
+fn build_messages_routing_text(body: &crate::protocols::messages::CreateMessageRequest) -> String {
+    use crate::protocols::messages::{InputContent, InputContentBlock, SystemContent, ToolResultContent};
 
-    let last_user = match messages.iter().rev().find(|m| m.role == Role::User) {
-        Some(m) => m,
-        None => return String::new(),
-    };
+    let mut buffer = String::new();
+    let mut has_content = false;
 
-    match &last_user.content {
-        InputContent::String(s) => s.clone(),
-        InputContent::Blocks(blocks) => {
-            let mut buf = String::new();
-            for block in blocks {
-                if let InputContentBlock::Text(t) = block {
-                    buf.push_str(&t.text);
-                }
-            }
-            buf
+    // System prompt (top-level field, not part of messages[])
+    if let Some(system) = &body.system {
+        let system_text = match system {
+            SystemContent::String(s) => s.clone(),
+            SystemContent::Blocks(blocks) => blocks
+                .iter()
+                .map(|b| b.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+        };
+        if !system_text.is_empty() {
+            buffer.push_str(&system_text);
+            has_content = true;
         }
     }
+
+    // All messages (user + assistant, including tool_use/tool_result/thinking)
+    for msg in &body.messages {
+        let parts: Vec<String> = match &msg.content {
+            InputContent::String(s) => vec![s.clone()],
+            InputContent::Blocks(blocks) => blocks
+                .iter()
+                .filter_map(|block| match block {
+                    InputContentBlock::Text(t) => Some(t.text.clone()),
+                    InputContentBlock::ToolUse(tu) => {
+                        // Include tool name + serialized input so repeated
+                        // tool calls with the same name share a prefix.
+                        Some(format!("{} {}", tu.name, tu.input))
+                    }
+                    InputContentBlock::ToolResult(tr) => {
+                        // Extract text from tool result content.
+                        match &tr.content {
+                            Some(ToolResultContent::String(s)) => Some(s.clone()),
+                            Some(ToolResultContent::Blocks(inner)) => {
+                                let texts: Vec<String> = inner
+                                    .iter()
+                                    .filter_map(|b| match b {
+                                        crate::protocols::messages::ToolResultContentBlock::Text(t) => {
+                                            Some(t.text.clone())
+                                        }
+                                        _ => None,
+                                    })
+                                    .collect();
+                                if texts.is_empty() { None } else { Some(texts.join(" ")) }
+                            }
+                            None => None,
+                        }
+                    }
+                    InputContentBlock::Thinking(tb) => Some(tb.thinking.clone()),
+                    // Image, Document, RedactedThinking, ServerToolUse, SearchResult,
+                    // WebSearchToolResult have no stable text prefix to contribute.
+                    _ => None,
+                })
+                .collect(),
+        };
+
+        for part in parts {
+            if has_content && !part.is_empty() {
+                buffer.push(' ');
+            }
+            if !part.is_empty() {
+                buffer.push_str(&part);
+                has_content = true;
+            }
+        }
+    }
+
+    buffer
 }
 
 use async_trait::async_trait;
@@ -887,8 +949,33 @@ impl RouterTrait for Router {
         body: &ResponsesRequest,
         model_id: Option<&str>,
     ) -> Response {
-        self.route_typed_request(headers, body, "/v1/responses", model_id)
-            .await
+        // Serialize to JSON and apply SGLang worker compatibility transforms:
+        // 1. Unwrap namespace tools → flat function tools (worker only accepts
+        //    function/web_search_preview/code_interpreter/mcp)
+        // 2. Default stream to false if null (worker requires boolean, not null)
+        let mut payload = match serde_json::to_value(body) {
+            Ok(v) => v,
+            Err(e) => {
+                return error::bad_request(
+                    "serialization_failed",
+                    format!("Convert ResponsesRequest to JSON failed: {}", e),
+                );
+            }
+        };
+        crate::routers::openai::responses::unwrap_namespace_tools(&mut payload);
+        crate::routers::openai::responses::ensure_stream_default(&mut payload);
+
+        let is_stream = body.is_stream();
+        let text = body.extract_text_for_routing();
+        self.route_serializable_request(
+            headers,
+            &payload,
+            "/v1/responses",
+            model_id,
+            is_stream,
+            &text,
+        )
+        .await
     }
 
     async fn route_messages(
@@ -898,10 +985,11 @@ impl RouterTrait for Router {
         model_id: Option<&str>,
     ) -> Response {
         let is_stream = body.is_stream();
-        // Extract text from the last user message for cache-aware routing.
-        // CreateMessageRequest doesn't impl GenerationRequest (orphan rule),
-        // so we use route_serializable_request which only requires Serialize + Clone.
-        let text = extract_messages_routing_text(&body.messages);
+        // Build routing text from system prompt + all messages so cache_aware
+        // routing sees the full conversation prefix (matching /v1/responses and
+        // /v1/chat/completions behavior). CreateMessageRequest doesn't impl
+        // GenerationRequest (orphan rule), so we use route_serializable_request.
+        let text = build_messages_routing_text(body);
         self.route_serializable_request(
             headers,
             body,
