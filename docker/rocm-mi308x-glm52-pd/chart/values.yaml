@@ -135,11 +135,6 @@ decodeExtraArgs: >-
   --speculative-eagle-topk 1
   --max-running-requests 128
   --mem-fraction-static 0.90
-  --enable-hierarchical-cache
-  --hicache-ratio 2
-  --hicache-io-backend direct
-  --hicache-mem-layout page_first_direct
-  --hicache-write-policy write_through_selective
   --disaggregation-mode decode
 
 # --- Common worker launch args ---
