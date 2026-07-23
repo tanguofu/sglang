@@ -186,6 +186,11 @@ class OpenAIServingResponses(OpenAIServingChat):
         if not self.tokenizer_manager:
             return self.create_error_response("Model not loaded")
 
+        # Fix BUG 1: Router may forward stream:null when the client omits the
+        # stream field. ChatCompletionRequest requires stream as bool.
+        if request.stream is None:
+            request.stream = False
+
         # FIXME: If the engine is dead, raise an error
         # This is required for the streaming case
 
@@ -285,6 +290,12 @@ class OpenAIServingResponses(OpenAIServingChat):
                 else:
                     assert len(tool_list) == 0
                     tool_sessions = {}
+
+                # Fix BUG 2: Pass require_reasoning so the scheduler counts
+                # reasoning tokens. Without this, reasoning_tokens is always 0
+                # in the Responses API (the scheduler skips the counting path).
+                require_reasoning = self._is_thinking_enabled_for_request(request)
+
                 for i, engine_prompt in enumerate(engine_prompts):
                     # Calculate default max tokens from context length minus prompt length
                     if isinstance(engine_prompt, list):
@@ -363,6 +374,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                         session_id=request.session_id,
                         extra_key=self._compute_extra_key(request),
                         background=request.background,
+                        require_reasoning=require_reasoning,
                     )
 
                     generator = self._generate_with_builtin_tools(
@@ -619,7 +631,24 @@ class OpenAIServingResponses(OpenAIServingChat):
                 if stored_response is None or stored_response.status != "cancelled":
                     self.response_store[response.id] = response
 
-        return response
+        # Convert usage from Chat Completions format (UsageInfo) to Responses
+        # API format (input_tokens/output_tokens/output_tokens_details) so
+        # non-streaming responses match the streaming path (lines ~2316-2328)
+        # and the OpenAI Responses API spec.
+        response_dict = response.model_dump()
+        if response_dict.get("usage"):
+            u = response_dict["usage"]
+            cached = (u.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+            response_dict["usage"] = {
+                "input_tokens": u.get("prompt_tokens", 0),
+                "input_tokens_details": {"cached_tokens": cached},
+                "output_tokens": u.get("completion_tokens", 0),
+                "output_tokens_details": {
+                    "reasoning_tokens": u.get("reasoning_tokens", 0)
+                },
+                "total_tokens": u.get("total_tokens", 0),
+            }
+        return ORJSONResponse(content=response_dict)
 
     @staticmethod
     def _wants_reasoning_summary(request: ResponsesRequest) -> bool:
@@ -2386,6 +2415,7 @@ class OpenAIServingResponses(OpenAIServingChat):
                 return_text_in_logprobs=adapted_request.return_text_in_logprobs,
                 return_hidden_states=adapted_request.return_hidden_states,
                 background=adapted_request.background,
+                require_reasoning=adapted_request.require_reasoning,
             )
 
             # Update sampling params with reduced max_tokens

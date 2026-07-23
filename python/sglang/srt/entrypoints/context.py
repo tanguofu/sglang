@@ -97,6 +97,8 @@ class HarmonyContext(ConversationContext):
                     self.num_cached_tokens = meta_info["cached_tokens"]
                 if "completion_tokens" in meta_info:
                     self.num_output_tokens += meta_info["completion_tokens"]
+                if "reasoning_tokens" in meta_info:
+                    self.num_reasoning_tokens += meta_info["reasoning_tokens"]
 
         else:
             output_msgs = output
