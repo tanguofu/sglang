@@ -219,4 +219,297 @@ mod pd_routing_tests {
 
         ctx.shutdown().await;
     }
+
+    // ------------------------------------------------------------------
+    // /v1/responses and /v1/messages PD integration tests
+    // ------------------------------------------------------------------
+
+    /// Test PD mode routes /v1/responses (non-streaming) to prefill+decode
+    #[tokio::test]
+    async fn test_pd_mode_responses_basic() {
+        let config = RouterConfig::builder()
+            .prefill_decode_mode(
+                vec![("http://127.0.0.1:19830".to_string(), None)],
+                vec!["http://127.0.0.1:19831".to_string()],
+            )
+            .round_robin_policy()
+            .host("127.0.0.1")
+            .port(3803)
+            .max_payload_size(256 * 1024 * 1024)
+            .request_timeout_secs(600)
+            .worker_startup_timeout_secs(5)
+            .worker_startup_check_interval_secs(1)
+            .max_concurrent_requests(64)
+            .queue_timeout_secs(60)
+            .build_unchecked();
+
+        let ctx = AppTestContext::new_with_config(
+            config,
+            vec![
+                TestWorkerConfig::prefill(19830),
+                TestWorkerConfig::decode(19831),
+            ],
+        )
+        .await;
+
+        let app = ctx.create_app().await;
+
+        let payload = json!({
+            "model": "test-model",
+            "input": "Hello, world!",
+            "stream": false
+        });
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/responses")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_string(&payload).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "PD mode /v1/responses should succeed"
+        );
+
+        ctx.shutdown().await;
+    }
+
+    /// Test PD mode routes /v1/responses (streaming) to prefill+decode
+    #[tokio::test]
+    async fn test_pd_mode_responses_streaming() {
+        let config = RouterConfig::builder()
+            .prefill_decode_mode(
+                vec![("http://127.0.0.1:19832".to_string(), None)],
+                vec!["http://127.0.0.1:19833".to_string()],
+            )
+            .round_robin_policy()
+            .host("127.0.0.1")
+            .port(3804)
+            .max_payload_size(256 * 1024 * 1024)
+            .request_timeout_secs(600)
+            .worker_startup_timeout_secs(5)
+            .worker_startup_check_interval_secs(1)
+            .max_concurrent_requests(64)
+            .queue_timeout_secs(60)
+            .build_unchecked();
+
+        let ctx = AppTestContext::new_with_config(
+            config,
+            vec![
+                TestWorkerConfig::prefill(19832),
+                TestWorkerConfig::decode(19833),
+            ],
+        )
+        .await;
+
+        let app = ctx.create_app().await;
+
+        let payload = json!({
+            "model": "test-model",
+            "input": "Hello, streaming world!",
+            "stream": true
+        });
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/responses")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_string(&payload).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "PD mode /v1/responses streaming should succeed"
+        );
+
+        ctx.shutdown().await;
+    }
+
+    /// Test PD mode routes /v1/messages (non-streaming) to prefill+decode
+    #[tokio::test]
+    async fn test_pd_mode_messages_basic() {
+        let config = RouterConfig::builder()
+            .prefill_decode_mode(
+                vec![("http://127.0.0.1:19834".to_string(), None)],
+                vec!["http://127.0.0.1:19835".to_string()],
+            )
+            .round_robin_policy()
+            .host("127.0.0.1")
+            .port(3805)
+            .max_payload_size(256 * 1024 * 1024)
+            .request_timeout_secs(600)
+            .worker_startup_timeout_secs(5)
+            .worker_startup_check_interval_secs(1)
+            .max_concurrent_requests(64)
+            .queue_timeout_secs(60)
+            .build_unchecked();
+
+        let ctx = AppTestContext::new_with_config(
+            config,
+            vec![
+                TestWorkerConfig::prefill(19834),
+                TestWorkerConfig::decode(19835),
+            ],
+        )
+        .await;
+
+        let app = ctx.create_app().await;
+
+        let payload = json!({
+            "model": "claude-3-5-sonnet",
+            "messages": [
+                {"role": "user", "content": "Hello!"}
+            ],
+            "max_tokens": 1024,
+            "stream": false
+        });
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/messages")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_string(&payload).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "PD mode /v1/messages should succeed"
+        );
+
+        ctx.shutdown().await;
+    }
+
+    /// Test PD mode routes /v1/messages (streaming) to prefill+decode
+    #[tokio::test]
+    async fn test_pd_mode_messages_streaming() {
+        let config = RouterConfig::builder()
+            .prefill_decode_mode(
+                vec![("http://127.0.0.1:19836".to_string(), None)],
+                vec!["http://127.0.0.1:19837".to_string()],
+            )
+            .round_robin_policy()
+            .host("127.0.0.1")
+            .port(3806)
+            .max_payload_size(256 * 1024 * 1024)
+            .request_timeout_secs(600)
+            .worker_startup_timeout_secs(5)
+            .worker_startup_check_interval_secs(1)
+            .max_concurrent_requests(64)
+            .queue_timeout_secs(60)
+            .build_unchecked();
+
+        let ctx = AppTestContext::new_with_config(
+            config,
+            vec![
+                TestWorkerConfig::prefill(19836),
+                TestWorkerConfig::decode(19837),
+            ],
+        )
+        .await;
+
+        let app = ctx.create_app().await;
+
+        let payload = json!({
+            "model": "claude-3-5-sonnet",
+            "messages": [
+                {"role": "user", "content": "Hello streaming!"}
+            ],
+            "max_tokens": 1024,
+            "stream": true
+        });
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/messages")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_string(&payload).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "PD mode /v1/messages streaming should succeed"
+        );
+
+        ctx.shutdown().await;
+    }
+
+    /// Test PD mode /v1/responses with Codex-style tool types that exercise
+    /// the expanded ResponseToolType enum (web_search, code_interpreter, etc.)
+    #[tokio::test]
+    async fn test_pd_mode_responses_codex_tool_types() {
+        let config = RouterConfig::builder()
+            .prefill_decode_mode(
+                vec![("http://127.0.0.1:19838".to_string(), None)],
+                vec!["http://127.0.0.1:19839".to_string()],
+            )
+            .round_robin_policy()
+            .host("127.0.0.1")
+            .port(3807)
+            .max_payload_size(256 * 1024 * 1024)
+            .request_timeout_secs(600)
+            .worker_startup_timeout_secs(5)
+            .worker_startup_check_interval_secs(1)
+            .max_concurrent_requests(64)
+            .queue_timeout_secs(60)
+            .build_unchecked();
+
+        let ctx = AppTestContext::new_with_config(
+            config,
+            vec![
+                TestWorkerConfig::prefill(19838),
+                TestWorkerConfig::decode(19839),
+            ],
+        )
+        .await;
+
+        let app = ctx.create_app().await;
+
+        // Payload with tool types that would fail deserialization before the
+        // vendored openai-protocol patch expanded ResponseToolType to 12 variants.
+        // Note: "mcp" requires server_url per validate_response_tools, and
+        // "function" requires a function definition — both omitted here to
+        // test only the enum expansion.
+        let payload = json!({
+            "model": "codex-test-model",
+            "input": "Search the web and write code",
+            "stream": false,
+            "tools": [
+                {"type": "web_search"},
+                {"type": "code_interpreter"},
+                {"type": "web_search_preview"},
+                {"type": "file_search"},
+                {"type": "image_generation"},
+                {"type": "computer_use_preview"},
+                {"type": "local_shell"},
+                {"type": "custom"},
+                {"type": "namespace"},
+                {"type": "tool_search"}
+            ]
+        });
+
+        let req = Request::builder()
+            .method("POST")
+            .uri("/v1/responses")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_string(&payload).unwrap()))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "PD mode /v1/responses with expanded Codex tool types should succeed"
+        );
+
+        ctx.shutdown().await;
+    }
 }

@@ -35,7 +35,9 @@ use crate::{
         completion::CompletionRequest,
         embedding::EmbeddingRequest,
         generate::GenerateRequest,
+        messages::CreateMessageRequest,
         rerank::RerankRequest,
+        responses::ResponsesRequest,
     },
     routers::{
         error,
@@ -1553,6 +1555,44 @@ impl RouterTrait for PDRouter {
         self.execute_dual_dispatch(headers, body, context).await
     }
 
+    async fn route_responses(
+        &self,
+        headers: Option<&HeaderMap>,
+        body: &ResponsesRequest,
+        model_id: Option<&str>,
+    ) -> Response {
+        let is_stream = body.stream.unwrap_or(false);
+        let context = PDRequestContext {
+            route: "/v1/responses",
+            batch_size: None,
+            is_stream,
+            return_logprob: false,
+            request_text: None,
+            model_id,
+            headers: headers.cloned(),
+        };
+        self.execute_dual_dispatch(headers, body, context).await
+    }
+
+    async fn route_messages(
+        &self,
+        headers: Option<&HeaderMap>,
+        body: &CreateMessageRequest,
+        model_id: Option<&str>,
+    ) -> Response {
+        let is_stream = body.is_stream();
+        let context = PDRequestContext {
+            route: "/v1/messages",
+            batch_size: None,
+            is_stream,
+            return_logprob: false,
+            request_text: None,
+            model_id,
+            headers: headers.cloned(),
+        };
+        self.execute_dual_dispatch(headers, body, context).await
+    }
+
     async fn route_completion(
         &self,
         headers: Option<&HeaderMap>,
@@ -1954,5 +1994,166 @@ mod tests {
         // Guards dropped when response dropped
         assert_eq!(prefill_ref.load(), 0);
         assert_eq!(decode_ref.load(), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // /v1/responses and /v1/messages PD support tests
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn test_route_responses_injects_bootstrap() {
+        // route_responses serializes ResponsesRequest to serde_json::Value and
+        // passes it to inject_bootstrap_into_value. Verify the core injection
+        // mechanism works with a /v1/responses-shaped JSON body.
+        let prefill = BasicWorkerBuilder::new("http://prefill:30000")
+            .worker_type(WorkerType::Prefill {
+                bootstrap_port: Some(8998),
+            })
+            .build();
+
+        let request = json!({
+            "model": "test-model",
+            "input": "Hello, world!",
+            "stream": false,
+        });
+
+        let result = PDRouter::inject_bootstrap_into_value(request, &prefill as &dyn Worker, None)
+            .expect("bootstrap injection should succeed for /v1/responses");
+
+        assert_eq!(result["bootstrap_host"], "prefill");
+        assert_eq!(result["bootstrap_port"], 8998);
+        assert!(
+            result["bootstrap_room"].is_i64(),
+            "bootstrap_room should be an integer"
+        );
+        // Original fields preserved
+        assert_eq!(result["model"], "test-model");
+        assert_eq!(result["input"], "Hello, world!");
+    }
+
+    #[tokio::test]
+    async fn test_route_responses_no_logprob_merge() {
+        // /v1/responses sets return_logprob=false so the PD router does
+        // pure byte passthrough instead of calling merge_logprobs_in_json
+        // (which expects chat-specific meta_info.input_token_logprobs).
+        // Verify prepare_pd_worker_requests works for /v1/responses and
+        // does not inject logprob-related fields into the request body.
+        let prefill = DPAwareWorkerBuilder::new("http://prefill:30000", 2, 4)
+            .worker_type(WorkerType::Prefill {
+                bootstrap_port: Some(8998),
+            })
+            .build();
+        let decode = DPAwareWorkerBuilder::new("http://decode:30001", 1, 4)
+            .worker_type(WorkerType::Decode)
+            .build();
+
+        let request = json!({
+            "model": "test-model",
+            "input": "Hello",
+            "bootstrap_host": "prefill",
+            "bootstrap_port": 8998,
+            "bootstrap_room": 1234,
+        });
+
+        let (prefill_request, decode_request) =
+            PDRouter::prepare_pd_worker_requests("/v1/responses", &request, &prefill, &decode)
+                .await
+                .unwrap();
+
+        assert_eq!(
+            prefill_request.endpoint_url,
+            "http://prefill:30000/v1/responses"
+        );
+        assert_eq!(
+            decode_request.endpoint_url,
+            "http://decode:30001/v1/responses"
+        );
+        assert_eq!(decode_request.body["disagg_prefill_dp_rank"], 2);
+        assert_eq!(decode_request.body["bootstrap_room"], 1234);
+        // No logprob fields should be injected by the PD router for /v1/responses
+        assert!(
+            prefill_request.body.get("logprobs").is_none(),
+            "logprobs should not be set for /v1/responses"
+        );
+        assert!(
+            decode_request.body.get("top_logprobs").is_none(),
+            "top_logprobs should not be set for /v1/responses"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_route_messages_injects_bootstrap() {
+        // route_messages serializes CreateMessageRequest to serde_json::Value
+        // and passes it to inject_bootstrap_into_value. Verify the core
+        // injection mechanism works with a /v1/messages-shaped JSON body.
+        let prefill = BasicWorkerBuilder::new("http://prefill:30000")
+            .worker_type(WorkerType::Prefill {
+                bootstrap_port: Some(8998),
+            })
+            .build();
+
+        let request = json!({
+            "model": "claude-3-5-sonnet",
+            "messages": [
+                {"role": "user", "content": "Hello!"}
+            ],
+            "max_tokens": 1024,
+            "stream": true,
+        });
+
+        let result = PDRouter::inject_bootstrap_into_value(request, &prefill as &dyn Worker, None)
+            .expect("bootstrap injection should succeed for /v1/messages");
+
+        assert_eq!(result["bootstrap_host"], "prefill");
+        assert_eq!(result["bootstrap_port"], 8998);
+        assert!(
+            result["bootstrap_room"].is_i64(),
+            "bootstrap_room should be an integer"
+        );
+        // Original fields preserved
+        assert_eq!(result["model"], "claude-3-5-sonnet");
+        assert_eq!(result["max_tokens"], 1024);
+        assert_eq!(result["stream"], true);
+    }
+
+    #[test]
+    fn test_responses_request_stream_option_bool() {
+        // ResponsesRequest.stream is Option<bool>, not bool. route_responses
+        // uses body.stream.unwrap_or(false). Verify deserialization handles
+        // stream=true, stream=false, stream=null, and stream missing.
+        let with_stream_true: ResponsesRequest = serde_json::from_value(json!({
+            "model": "test",
+            "input": "hi",
+            "stream": true,
+        }))
+        .expect("valid responses request with stream=true");
+        assert_eq!(with_stream_true.stream, Some(true));
+        assert!(with_stream_true.stream.unwrap_or(false));
+
+        let with_stream_false: ResponsesRequest = serde_json::from_value(json!({
+            "model": "test",
+            "input": "hi",
+            "stream": false,
+        }))
+        .expect("valid responses request with stream=false");
+        assert_eq!(with_stream_false.stream, Some(false));
+        assert!(!with_stream_false.stream.unwrap_or(false));
+
+        let with_stream_null: ResponsesRequest = serde_json::from_value(json!({
+            "model": "test",
+            "input": "hi",
+            "stream": null,
+        }))
+        .expect("valid responses request with stream=null");
+        assert_eq!(with_stream_null.stream, None);
+        assert!(!with_stream_null.stream.unwrap_or(false));
+
+        let with_stream_missing: ResponsesRequest = serde_json::from_value(json!({
+            "model": "test",
+            "input": "hi",
+        }))
+        .expect("valid responses request without stream field");
+        assert_eq!(with_stream_missing.stream, None);
+        assert!(!with_stream_missing.stream.unwrap_or(false));
     }
 }

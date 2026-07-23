@@ -94,6 +94,7 @@ impl MockWorker {
                 "/v1/responses/{response_id}/cancel",
                 post(responses_cancel_handler),
             )
+            .route("/v1/messages", post(messages_handler))
             .route("/flush_cache", post(flush_cache_handler))
             .route("/v1/models", get(v1_models_handler))
             .with_state(config);
@@ -1340,6 +1341,130 @@ async fn responses_handler(
             }))
             .into_response()
         }
+    }
+}
+
+/// Handler for Anthropic Messages API (/v1/messages)
+/// Returns a mock Anthropic-style response for PD integration tests.
+async fn messages_handler(
+    State(config): State<Arc<RwLock<MockWorkerConfig>>>,
+    Json(payload): Json<serde_json::Value>,
+) -> Response {
+    let config = config.read().await;
+
+    if should_fail(&config).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "type": "error",
+                "error": {
+                    "type": "internal_error",
+                    "message": "Random failure for testing"
+                }
+            })),
+        )
+            .into_response();
+    }
+
+    if config.response_delay_ms > 0 {
+        tokio::time::sleep(tokio::time::Duration::from_millis(config.response_delay_ms)).await;
+    }
+
+    let is_stream = payload
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let msg_id = format!(
+        "msg_{}",
+        Uuid::new_v4().to_string().split('-').next().unwrap()
+    );
+
+    if is_stream {
+        let events = vec![
+            // message_start
+            Ok::<_, Infallible>(
+                Event::default().event("message_start").data(
+                    json!({
+                        "type": "message_start",
+                        "message": {
+                            "id": msg_id.clone(),
+                            "type": "message",
+                            "role": "assistant",
+                            "model": "mock-model",
+                            "content": [],
+                            "stop_reason": null,
+                            "stop_sequence": null,
+                            "usage": {"input_tokens": 10, "output_tokens": 0}
+                        }
+                    })
+                    .to_string(),
+                ),
+            ),
+            // content_block_start
+            Ok(Event::default().event("content_block_start").data(
+                json!({
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""}
+                })
+                .to_string(),
+            )),
+            // content_block_delta
+            Ok(Event::default().event("content_block_delta").data(
+                json!({
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "This is a mock streamed response."}
+                })
+                .to_string(),
+            )),
+            // content_block_stop
+            Ok(Event::default().event("content_block_stop").data(
+                json!({
+                    "type": "content_block_stop",
+                    "index": 0
+                })
+                .to_string(),
+            )),
+            // message_delta
+            Ok(Event::default().event("message_delta").data(
+                json!({
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn", "stop_sequence": null},
+                    "usage": {"output_tokens": 5}
+                })
+                .to_string(),
+            )),
+            // message_stop
+            Ok(Event::default().event("message_stop").data(
+                json!({"type": "message_stop"})
+                .to_string(),
+            )),
+        ];
+
+        let stream = stream::iter(events);
+        Sse::new(stream)
+            .keep_alive(KeepAlive::default())
+            .into_response()
+    } else {
+        Json(json!({
+            "id": msg_id,
+            "type": "message",
+            "role": "assistant",
+            "model": "mock-model",
+            "content": [{
+                "type": "text",
+                "text": "This is a mock messages response."
+            }],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5
+            }
+        }))
+        .into_response()
     }
 }
 
