@@ -270,7 +270,84 @@ impl Router {
         response
     }
 
-    async fn route_typed_request_once<T: GenerationRequest + serde::Serialize + Clone>(
+    /// Like `route_typed_request` but for request types that don't impl
+    /// `GenerationRequest` (e.g., `CreateMessageRequest` from the Anthropic
+    /// Messages API, where the orphan rule prevents implementing an external
+    /// trait on an external type). The caller provides `is_stream` and
+    /// `text` directly.
+    pub async fn route_serializable_request<T: serde::Serialize + Clone>(
+        &self,
+        headers: Option<&HeaderMap>,
+        typed_req: &T,
+        route: &'static str,
+        model_id: Option<&str>,
+        is_stream: bool,
+        text: &str,
+    ) -> Response {
+        let start = Instant::now();
+        let model = model_id.unwrap_or(UNKNOWN_MODEL_ID);
+        let endpoint = route_to_endpoint(route);
+
+        Metrics::record_router_request(
+            metrics_labels::ROUTER_HTTP,
+            metrics_labels::BACKEND_REGULAR,
+            metrics_labels::CONNECTION_HTTP,
+            model,
+            endpoint,
+            bool_to_static_str(is_stream),
+        );
+
+        let response = RetryExecutor::execute_response_with_retry(
+            &self.retry_config,
+            |_: u32| async {
+                let res = self
+                    .route_typed_request_once(headers, typed_req, route, model_id, is_stream, text)
+                    .await;
+
+                Metrics::record_router_upstream_response(
+                    metrics_labels::ROUTER_HTTP,
+                    res.status().as_u16(),
+                    extract_error_code_from_response(&res),
+                );
+
+                res
+            },
+            |res, _attempt| is_retryable_status(res.status()),
+            |delay, attempt| {
+                Metrics::record_worker_retry(metrics_labels::WORKER_REGULAR, endpoint);
+                Metrics::record_worker_retry_backoff(attempt, delay);
+            },
+            || {
+                Metrics::record_worker_retries_exhausted(metrics_labels::WORKER_REGULAR, endpoint);
+            },
+        )
+        .await;
+
+        if response.status().is_success() {
+            let duration = start.elapsed();
+            Metrics::record_router_duration(
+                metrics_labels::ROUTER_HTTP,
+                metrics_labels::BACKEND_REGULAR,
+                metrics_labels::CONNECTION_HTTP,
+                model,
+                endpoint,
+                duration,
+            );
+        } else if !is_retryable_status(response.status()) {
+            Metrics::record_router_error(
+                metrics_labels::ROUTER_HTTP,
+                metrics_labels::BACKEND_REGULAR,
+                metrics_labels::CONNECTION_HTTP,
+                model,
+                endpoint,
+                error_type_from_status(response.status()),
+            );
+        }
+
+        response
+    }
+
+    async fn route_typed_request_once<T: serde::Serialize + Clone>(
         &self,
         headers: Option<&HeaderMap>,
         typed_req: &T,
@@ -722,6 +799,34 @@ fn convert_reqwest_error(e: reqwest::Error) -> Response {
     error::create_error(status, code, message)
 }
 
+/// Extract routing text from Anthropic Messages API input messages.
+///
+/// Used by cache-aware routing for prefix matching. Walks the last user
+/// message and concatenates text from string content or text content blocks.
+/// Returns an empty string when no user text is available — cache-aware
+/// routing falls back to round-robin in that case.
+fn extract_messages_routing_text(messages: &[crate::protocols::messages::InputMessage]) -> String {
+    use crate::protocols::messages::{InputContent, InputContentBlock, Role};
+
+    let last_user = match messages.iter().rev().find(|m| m.role == Role::User) {
+        Some(m) => m,
+        None => return String::new(),
+    };
+
+    match &last_user.content {
+        InputContent::String(s) => s.clone(),
+        InputContent::Blocks(blocks) => {
+            let mut buf = String::new();
+            for block in blocks {
+                if let InputContentBlock::Text(t) = block {
+                    buf.push_str(&t.text);
+                }
+            }
+            buf
+        }
+    }
+}
+
 use async_trait::async_trait;
 
 #[async_trait]
@@ -784,6 +889,28 @@ impl RouterTrait for Router {
     ) -> Response {
         self.route_typed_request(headers, body, "/v1/responses", model_id)
             .await
+    }
+
+    async fn route_messages(
+        &self,
+        headers: Option<&HeaderMap>,
+        body: &crate::protocols::messages::CreateMessageRequest,
+        model_id: Option<&str>,
+    ) -> Response {
+        let is_stream = body.is_stream();
+        // Extract text from the last user message for cache-aware routing.
+        // CreateMessageRequest doesn't impl GenerationRequest (orphan rule),
+        // so we use route_serializable_request which only requires Serialize + Clone.
+        let text = extract_messages_routing_text(&body.messages);
+        self.route_serializable_request(
+            headers,
+            body,
+            "/v1/messages",
+            model_id,
+            is_stream,
+            &text,
+        )
+        .await
     }
 
     async fn get_response(

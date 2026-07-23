@@ -205,3 +205,9 @@ codegen-units = 1
 [profile.dev-opt]
 inherits = "dev"
 opt-level = 1
+
+# Vendor patched openai-protocol to accept Codex's non-standard tool types
+# (custom, namespace, local_shell, tool_search, ...) and lenient input parsing.
+# Baseline: openai-protocol 1.0.0 from crates.io.
+[patch.crates-io]
+openai-protocol = { path = "vendor/openai-protocol-patched" }
