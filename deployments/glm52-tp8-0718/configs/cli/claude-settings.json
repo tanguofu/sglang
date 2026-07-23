@@ -1,0 +1,21 @@
+{
+  "_comment": "Claude Code config — copy to ~/.claude/settings.json. Replace ${ANTHROPIC_AUTH_TOKEN} with the real token.",
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "${ANTHROPIC_AUTH_TOKEN}",
+    "ANTHROPIC_BASE_URL": "https://glm52-2tp8.jmpti.woa.com",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "glm-5.2",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "glm-5.2",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "glm-5.2",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "glm-5.2",
+    "ANTHROPIC_MODEL": "glm-5.2",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "420000"
+  },
+  "permissions": {
+    "allow": [],
+    "deny": []
+  },
+  "skipDangerousModePermissionPrompt": true
+}

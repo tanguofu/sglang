@@ -1,0 +1,73 @@
+--- Metrics BEFORE ---
+
+Router:
+smg_router_upstream_responses_total{router_type="http",status_code="503",error_code="no_available_workers"} 35
+smg_router_upstream_responses_total{router_type="http",status_code="200",error_code=""} 179
+smg_router_upstream_responses_total{router_type="http",status_code="401",error_code=""} 20
+smg_worker_selection_total{worker_type="regular",connection_mode="http",model="glm-5.2",policy="cache_aware"} 199
+smg_http_connections_active 0
+smg_worker_requests_active{worker="http://21.234.170.103:30000"} 0
+smg_worker_requests_active{worker="http://21.234.170.38:30000"} 0
+
+Worker1:
+sglang:num_running_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:num_queue_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:gen_throughput{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 87.23921140945853
+sglang:cache_hit_rate{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:full_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:swa_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:pending_prealloc_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+
+Worker2:
+sglang:num_running_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 1.0
+sglang:num_queue_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:gen_throughput{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 1.838513896736761
+sglang:cache_hit_rate{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:full_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:swa_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:pending_prealloc_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+--- Metrics MID (3s) ---
+
+Router:
+smg_worker_requests_active{worker="http://21.234.170.38:30000"} 9
+smg_worker_requests_active{worker="http://21.234.170.103:30000"} 11
+smg_http_connections_active 0
+Worker1:
+sglang:num_running_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 11.0
+sglang:num_queue_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:gen_throughput{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 3.6943436076657252
+Worker2:
+sglang:num_running_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 9.0
+sglang:num_queue_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:gen_throughput{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 370.14837287281733
+--- Metrics AFTER ---
+
+Router:
+smg_worker_selection_total{worker_type="regular",connection_mode="http",model="glm-5.2",policy="cache_aware"} 219
+smg_router_upstream_responses_total{router_type="http",status_code="401",error_code=""} 20
+smg_router_upstream_responses_total{router_type="http",status_code="200",error_code=""} 199
+smg_router_upstream_responses_total{router_type="http",status_code="503",error_code="no_available_workers"} 35
+smg_worker_requests_active{worker="http://21.234.170.38:30000"} 0
+smg_worker_requests_active{worker="http://21.234.170.103:30000"} 0
+
+Worker1:
+sglang:num_running_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:num_queue_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:gen_throughput{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 376.7267165677285
+sglang:cache_hit_rate{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:full_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:swa_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:pending_prealloc_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+
+Worker2:
+sglang:num_running_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 2.0
+sglang:num_queue_reqs{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:gen_throughput{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 236.26915274452566
+sglang:cache_hit_rate{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.01
+sglang:full_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.006742738589211619
+sglang:swa_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0
+sglang:pending_prealloc_token_usage{engine_type="unified",model_name="glm-5.2",moe_ep_rank="0",pp_rank="0",tp_rank="0"} 0.0

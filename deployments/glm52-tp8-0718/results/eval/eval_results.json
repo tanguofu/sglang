@@ -1,0 +1,262 @@
+[
+  {
+    "id": "R1",
+    "category": "reasoning",
+    "ok": false,
+    "note": "no match for /mammal/",
+    "elapsed": 1.73120125,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "R2",
+    "category": "reasoning",
+    "ok": false,
+    "note": "no match for /yes|true/",
+    "elapsed": 1.8128145,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "R3",
+    "category": "reasoning",
+    "ok": false,
+    "note": "no match for /\\b9\\b/",
+    "elapsed": 0.4410731669999999,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "R4",
+    "category": "reasoning",
+    "ok": false,
+    "note": "no match for /(5|five).*(3|three)|(3|three).*(5|five)/",
+    "elapsed": 6.5177239160000005,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "M1",
+    "category": "math",
+    "ok": false,
+    "note": "no match for /56088/",
+    "elapsed": 0.44643675000000016,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "M2",
+    "category": "math",
+    "ok": false,
+    "note": "no match for /150/",
+    "elapsed": 1.8939369579999994,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "M3",
+    "category": "math",
+    "ok": false,
+    "note": "no match for /\\b6\\b/",
+    "elapsed": 1.828114833999999,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "M4",
+    "category": "math",
+    "ok": false,
+    "note": "no match for /\\b30\\b/",
+    "elapsed": 0.3772421669999986,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "C1",
+    "category": "code",
+    "ok": false,
+    "note": "no match for /def\\s+is_palindrome|def is_palindrome/",
+    "elapsed": 0.34516283299999984,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "C2",
+    "category": "code",
+    "ok": true,
+    "note": "matched",
+    "elapsed": 5.089598291999998,
+    "stop_reason": "end_turn",
+    "text": "```python\ndef fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n```",
+    "tool_text": ""
+  },
+  {
+    "id": "C3",
+    "category": "code",
+    "ok": false,
+    "note": "no match for /def\\s+binary_search/",
+    "elapsed": 0.3815746659999988,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "D1",
+    "category": "debug",
+    "ok": false,
+    "note": "no match for /return|indent/",
+    "elapsed": 3.0676345000000005,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "D2",
+    "category": "debug",
+    "ok": false,
+    "note": "no match for /empty|len|zero|division/",
+    "elapsed": 0.3635441660000005,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "I1",
+    "category": "instruction",
+    "ok": false,
+    "note": "no match for /1\\.\\s+\\w+\\n2\\.\\s+\\w+\\n3\\.\\s+\\w+/",
+    "elapsed": 0.3774352499999978,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "I2",
+    "category": "instruction",
+    "ok": false,
+    "note": "no match for /^\\W*(\\w+\\W+){4}\\w+\\W*$/",
+    "elapsed": 1.114898666000002,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "I3",
+    "category": "instruction",
+    "ok": false,
+    "note": "no match for /\\{\\s*\"name\"\\s*:\\s*\"GLM\"\\s*,\\s*\"version\"\\s*:\\s*5\\.2\\s*\\}/",
+    "elapsed": 0.37832387499999953,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "K1",
+    "category": "knowledge",
+    "ok": false,
+    "note": "no match for /Tokyo/",
+    "elapsed": 1.1079554999999992,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "K2",
+    "category": "knowledge",
+    "ok": false,
+    "note": "no match for /Shakespeare/",
+    "elapsed": 0.3763657500000015,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "K3",
+    "category": "knowledge",
+    "ok": false,
+    "note": "no match for /\\bAu\\b/",
+    "elapsed": 0.37464916700000117,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "ZH1",
+    "category": "chinese",
+    "ok": false,
+    "note": "no match for /北京/",
+    "elapsed": 1.0564857920000001,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "ZH2",
+    "category": "chinese",
+    "ok": false,
+    "note": "no match for /人工智能|AI|模拟.*智能|机器.*学习/",
+    "elapsed": 0.35456999999999894,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "ZH3",
+    "category": "chinese",
+    "ok": false,
+    "note": "no match for /def|gcd/",
+    "elapsed": 4.350691999999999,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "T1",
+    "category": "tool_use",
+    "ok": false,
+    "note": "no match for /tool_use|get_weather/",
+    "elapsed": 21.714821959,
+    "stop_reason": "tool_use",
+    "text": "",
+    "tool_text": "{\"city\": \"Tokyo\"}"
+  },
+  {
+    "id": "L1",
+    "category": "long_context",
+    "ok": false,
+    "note": "no match for /Papaya/",
+    "elapsed": 1.2773134580000018,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "CR1",
+    "category": "creative",
+    "ok": false,
+    "note": "no match for /\\n.*\\n.*\\n/",
+    "elapsed": 0.3586703329999992,
+    "stop_reason": null,
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "S1",
+    "category": "summarization",
+    "ok": false,
+    "note": "no match for /Apollo\\s*11|moo[nnd]|Armstrong/",
+    "elapsed": 2.328160957999998,
+    "stop_reason": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  }
+]

@@ -1,0 +1,21 @@
+# Codex CLI config — copy to ~/.codex/config.toml
+# Server context_length=524288 (512K), max_req_input_len=524282.
+# Auto-compact at 420000 (~80% of 512K) preserves headroom for tool outputs
+# and reasoning buffers during long sessions.
+
+model = "glm-5.2"
+model_provider = "custom"
+model_context_window = 524288
+model_auto_compact_token_limit = 420000
+
+[model_providers.custom]
+name = "GLM52 sglang router (2tp8)"
+wire_api = "responses"
+requires_openai_auth = true
+base_url = "https://glm52-2tp8.jmpti.woa.com/v1"
+stream_idle_timeout_ms = 300000
+stream_max_retries = 1
+
+# Set the API key via environment variable:
+#   export OPENAI_API_KEY="sk-..."
+# Or add `api_key = "..."` under [model_providers.custom] (not recommended).

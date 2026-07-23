@@ -1,0 +1,7 @@
+FROM mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:toolchoice-fix-0721
+
+COPY namespace_filter_proxy.py /opt/namespace_filter_proxy.py
+COPY entrypoint-ns-filter.sh /opt/entrypoint-ns-filter.sh
+RUN chmod +x /opt/entrypoint-ns-filter.sh /opt/namespace_filter_proxy.py
+
+ENTRYPOINT ["/opt/entrypoint-ns-filter.sh"]

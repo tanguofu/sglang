@@ -1,0 +1,21 @@
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: install-fixed-wheel
+        image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router-wheel:utf8fix
+        command: ["cp", "/wheel/sglang_router-fixed.whl", "/shared/sglang_router-fixed.whl"]
+        volumeMounts:
+        - name: wheel-shared
+          mountPath: /shared
+      containers:
+      - name: router
+        command: ["bash", "-c"]
+        args:
+        - "pip install --force-reinstall --no-deps /shared/sglang_router-fixed.whl && exec python3 -m sglang_router.launch_router --worker-urls http://21.234.170.103:30000 http://21.234.170.38:30000 --policy cache_aware --host 0.0.0.0 --port 30001 --cache-threshold 0.5 --balance-abs-threshold 32 --balance-rel-threshold 1.5"
+        volumeMounts:
+        - name: wheel-shared
+          mountPath: /shared
+      volumes:
+      - name: wheel-shared
+        emptyDir: {}

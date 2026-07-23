@@ -1,0 +1,113 @@
+# GLM-5.2 2tp8 merged chart values (W1 + W2, replicas=2)
+# Synced 2026-07-22: STS patch applied via kubectl, now reflected in helm values.
+# Changes from previous revision:
+#   - tag: xgmi-opt-0716d → fix-eagle-coredump-v3 (NCCL deadlock fix)
+#   - sglang.cudaGraphBackendPrefill: breakable → tc_piecewise (ROCm BCG invalid)
+#   - sglang.hicacheRatio: 4 → 2 (avoid DSA indexer host memory OOM)
+#   - eaglePatch.enabled: true → false (PR #31478 baked into fix-eagle-coredump-v3)
+#   - Added podAnnotations + imagePullSecrets (reference cluster config)
+aitersTunedGemm:
+  configMapName: aiters-tuned-gemm
+  enabled: true
+eaglePatch:
+  enabled: false
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-2tp8.jmpti.woa.com
+  httpsSectionName: https-glm52-2tp8
+  lbAddress: 21.162.215.14
+hostNetwork: true
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+imagePullSecret: ""
+imagePullSecrets:
+- name: tencent-registry
+- name: tencent-mirror-secret
+livenessProbe:
+  failureThreshold: 5
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 2400
+  periodSeconds: 60
+  timeoutSeconds: 10
+llmDRouter:
+  enabled: false
+namespace: kube-system
+nodeName: ""
+nodeSelector:
+  accelerator: amd-gpu
+  sglang-model: ready
+podAnnotations:
+  eks.tke.cloud.tencent.com/cluster-ip-switch: cluster
+port: 30000
+readinessProbe:
+  failureThreshold: 10
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 10
+replicas: 2
+rocmQuickReduceQuantization: NONE
+router:
+  balanceAbsThreshold: 1
+  balanceRelThreshold: 1.2
+  cacheThreshold: 0.2
+  enabled: true
+  image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router
+  nodeName: node-21.151.225.144
+  policy: cache_aware
+  port: 30080
+  tag: toolchoice-fix-0721
+  tolerations:
+  - effect: NoSchedule
+    key: dedicated
+    operator: Equal
+    value: sglang-1pd-A-group
+  workerUrls:
+  - http://21.151.225.152:30000
+  - http://21.151.225.172:30000
+sglang:
+  chunkedPrefillSize: 16384
+  contextLength: "524288"
+  cudaGraphBackendPrefill: tc_piecewise
+  cudaGraphBsDecode: 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32
+  cudaGraphBsPrefill: 4 8 16 32
+  cudaGraphMaxBsDecode: 32
+  enableAiterAllreduceFusion: true
+  enableFusedQkNormRope: true
+  enableHierarchicalCache: true
+  enableMetrics: true
+  enableMixedChunk: true
+  hicacheIoBackend: direct
+  hicacheMemLayout: page_first_direct
+  hicacheRatio: 2
+  hicacheWritePolicy: write_back
+  kvCacheDtype: fp8_e4m3
+  logLevel: info
+  maxPrefillTokens: 32768
+  maxRunningRequests: 48
+  memFractionStatic: 0.75
+  numaNode: 0 0 0 0 1 1 1 1
+  ppSize: 1
+  prefillMaxRequests: 8
+  reasoningParser: glm45
+  scheduleConservativeness: 1
+  skipServerWarmup: true
+  speculativeAlgorithm: NEXTN
+  speculativeEagleTopk: 1
+  speculativeNumDraftTokens: 4
+  speculativeNumSteps: 3
+  toolCallParser: glm47
+  tpSize: 8
+  watchdogTimeout: 1200
+shmSize: 32Gi
+tag: fix-eagle-coredump-v3
+tolerations:
+- effect: NoSchedule
+  key: dedicated
+  operator: Equal
+  value: sglang-2tp8

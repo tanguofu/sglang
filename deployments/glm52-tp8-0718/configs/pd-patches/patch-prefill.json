@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/args",
+    "value": [
+      "set -e\n# 4 项 sed 优化(prefill 无 batched-tokens)\nsed -i 's/--max-num-seqs 1/--max-num-seqs 4/' /start_server.sh\nsed -i 's/\"kv_buffer_size\": 1000000000/\"kv_buffer_size\": 2000000000/g' /start_server.sh\nsed -i 's/--block-size 64/--block-size 64 --kv-cache-dtype fp8/' /start_server.sh\nsed -i 's/UCX_MAX_RMA_RAILS=2/UCX_MAX_RMA_RAILS=8/' /start_server.sh\n# UCX 多端口\nsed -i 's|UCX_NET_DEVICES=.*|UCX_NET_DEVICES=bnxt_re_bond0:1,bnxt_re_bond1:1,bnxt_re_bond2:1,bnxt_re_bond3:1,bnxt_re_bond4:1,bnxt_re_bond5:1,bnxt_re_bond6:1,bnxt_re_bond7:1|' /start_server.sh\nsed -i '/UCX_IB_ROCE_REACHABILITY_MODE/a export UCX_IB_GID_INDEX=3' /start_server.sh\n# fusion\nsed -i 's|--compilation-config .*|--compilation-config '\\''{\"custom_ops\": [\"+rms_norm\"], \"pass_config\": {\"enable_sp\": true, \"fuse_gemm_comms\": true}}'\\''|' /start_server.sh\n# P0 修复: --compilation-config 行末补反斜杠,让后续 --host/--port/--kv-transfer-config/$EXTRA_ARGS 真正传入 vllm\nsed -i '/--compilation-config/ s/'\\''$/'\\'' \\\\/' /start_server.sh\nexec /start_server.sh\n"
+    ]
+  }
+]

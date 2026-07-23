@@ -1,0 +1,18 @@
+[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "VLLM_NIXL_SIDE_CHANNEL_HOST",
+      "value": "21.234.170.19"
+    }
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {
+      "name": "VLLM_NIXL_SIDE_CHANNEL_PORT",
+      "value": "5600"
+    }
+  }
+]

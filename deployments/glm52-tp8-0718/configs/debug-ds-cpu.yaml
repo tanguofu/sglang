@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: debug-ds-cpu
+  namespace: kube-system
+  labels:
+    app: debug-ds-cpu
+spec:
+  selector:
+    matchLabels:
+      app: debug-ds-cpu
+  template:
+    metadata:
+      labels:
+        app: debug-ds-cpu
+    spec:
+      hostNetwork: true
+      hostIPC: true
+      hostPID: true
+      nodeSelector:
+        workload: ts4-pd-test
+      imagePullSecrets:
+        - name: tencent-mirror-secret
+      tolerations: []
+      containers:
+        - name: debug
+          image: mirrors.tencent.com/tencentos/tencentos4-tiny:latest
+          imagePullPolicy: Always
+          command: ["sleep", "infinity"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - {name: host-root,    mountPath: /host,         mountPropagation: HostToContainer}
+            - {name: host-usr-bin, mountPath: /host-usr-bin, mountPropagation: HostToContainer}
+            - {name: host-bin,     mountPath: /host-bin,     mountPropagation: HostToContainer}
+            - {name: host-lib64,   mountPath: /host-lib64,   mountPropagation: HostToContainer}
+            - {name: host-sbin,    mountPath: /host-sbin,    mountPropagation: HostToContainer}
+            - {name: host-opt,     mountPath: /host-opt,     mountPropagation: HostToContainer}
+            - {name: host-etc,     mountPath: /host-etc,     mountPropagation: HostToContainer, readOnly: true}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits:   {cpu: 1,    memory: 1Gi}
+      volumes:
+        - {name: host-root,    hostPath: {path: /}}
+        - {name: host-usr-bin, hostPath: {path: /usr/bin}}
+        - {name: host-bin,     hostPath: {path: /bin}}
+        - {name: host-lib64,   hostPath: {path: /usr/lib64}}
+        - {name: host-sbin,    hostPath: {path: /usr/sbin}}
+        - {name: host-opt,     hostPath: {path: /opt}}
+        - {name: host-etc,     hostPath: {path: /etc}}

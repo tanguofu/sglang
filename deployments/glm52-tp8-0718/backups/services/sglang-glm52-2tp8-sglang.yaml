@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    meta.helm.sh/release-name: sglang-glm52-2tp8
+    meta.helm.sh/release-namespace: kube-system
+    service.cloud.tencent.com/sync-begin-time: "2026-07-15T13:20:45+08:00"
+    service.cloud.tencent.com/sync-end-time: "2026-07-15T13:20:45+08:00"
+  creationTimestamp: "2026-07-15T05:20:45Z"
+  labels:
+    accelerator: amd-gpu
+    app: sglang
+    app.kubernetes.io/instance: sglang-glm52-2tp8
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sglang-glm52-308x
+    helm.sh/chart: sglang-glm52-308x-0.1.0
+  name: sglang-glm52-2tp8-sglang
+  namespace: kube-system
+  resourceVersion: "268219421"
+  uid: d26d8194-b99e-4061-8cb1-e1de2150fe52
+spec:
+  clusterIP: 9.165.111.82
+  clusterIPs:
+  - 9.165.111.82
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: http
+    port: 30000
+    protocol: TCP
+    targetPort: http
+  selector:
+    app: sglang
+  sessionAffinity: None
+  type: ClusterIP
+status:
+  conditions:
+  - lastTransitionTime: "2026-07-15T05:20:45Z"
+    message: ""
+    reason: Success
+    status: "True"
+    type: Ready
+  loadBalancer: {}

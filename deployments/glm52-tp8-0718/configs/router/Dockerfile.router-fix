@@ -1,0 +1,3 @@
+FROM mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:messages-0717c
+COPY sglang_router-0.3.2-cp38-abi3-manylinux_2_34_x86_64.whl /tmp/
+RUN pip install --force-reinstall --no-deps /tmp/sglang_router-0.3.2-cp38-abi3-manylinux_2_34_x86_64.whl && rm /tmp/sglang_router-0.3.2-cp38-abi3-manylinux_2_34_x86_64.whl

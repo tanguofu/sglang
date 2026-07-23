@@ -1,0 +1,186 @@
+{
+  "spec": {
+    "rules": [
+      {
+        "matches": [
+          {
+            "path": {
+              "type": "PathPrefix",
+              "value": "/v1/messages/count_tokens"
+            }
+          }
+        ],
+        "backendRefs": [
+          {
+            "group": "",
+            "kind": "Service",
+            "name": "sglang-glm52-2tp8-sglang",
+            "namespace": "kube-system",
+            "port": 30000,
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "matches": [
+          {
+            "path": {
+              "type": "PathPrefix",
+              "value": "/metrics"
+            }
+          }
+        ],
+        "backendRefs": [
+          {
+            "group": "",
+            "kind": "Service",
+            "name": "sglang-glm52-2tp8-sglang",
+            "namespace": "kube-system",
+            "port": 30000,
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "matches": [
+          {
+            "path": {
+              "type": "PathPrefix",
+              "value": "/get_server_info"
+            }
+          }
+        ],
+        "backendRefs": [
+          {
+            "group": "",
+            "kind": "Service",
+            "name": "sglang-glm52-2tp8-sglang",
+            "namespace": "kube-system",
+            "port": 30000,
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "matches": [
+          {
+            "path": {
+              "type": "PathPrefix",
+              "value": "/get_model_info"
+            }
+          }
+        ],
+        "backendRefs": [
+          {
+            "group": "",
+            "kind": "Service",
+            "name": "sglang-glm52-2tp8-sglang",
+            "namespace": "kube-system",
+            "port": 30000,
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "matches": [
+          {
+            "path": {
+              "type": "PathPrefix",
+              "value": "/flush_cache"
+            }
+          }
+        ],
+        "backendRefs": [
+          {
+            "group": "",
+            "kind": "Service",
+            "name": "sglang-glm52-2tp8-sglang",
+            "namespace": "kube-system",
+            "port": 30000,
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "matches": [
+          {
+            "path": {
+              "type": "PathPrefix",
+              "value": "/engine_metrics"
+            }
+          }
+        ],
+        "backendRefs": [
+          {
+            "group": "",
+            "kind": "Service",
+            "name": "sglang-glm52-2tp8-sglang",
+            "namespace": "kube-system",
+            "port": 30000,
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "matches": [
+          {
+            "path": {
+              "type": "PathPrefix",
+              "value": "/liveness"
+            }
+          }
+        ],
+        "backendRefs": [
+          {
+            "group": "",
+            "kind": "Service",
+            "name": "sglang-glm52-2tp8-sglang",
+            "namespace": "kube-system",
+            "port": 30000,
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "matches": [
+          {
+            "path": {
+              "type": "PathPrefix",
+              "value": "/readiness"
+            }
+          }
+        ],
+        "backendRefs": [
+          {
+            "group": "",
+            "kind": "Service",
+            "name": "sglang-glm52-2tp8-sglang",
+            "namespace": "kube-system",
+            "port": 30000,
+            "weight": 1
+          }
+        ]
+      },
+      {
+        "backendRefs": [
+          {
+            "group": "",
+            "kind": "Service",
+            "name": "sglang-glm52-2tp8-router",
+            "namespace": "kube-system",
+            "port": 30001,
+            "weight": 1
+          }
+        ],
+        "matches": [
+          {
+            "path": {
+              "type": "PathPrefix",
+              "value": "/"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

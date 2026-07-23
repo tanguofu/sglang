@@ -1,0 +1,23 @@
+[
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/0/args",
+    "value": [
+      "--worker-urls",
+      "http://21.151.225.152:30000",
+      "http://21.151.225.172:30000",
+      "--policy",
+      "cache_aware",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "30001",
+      "--cache-threshold",
+      "0.2",
+      "--balance-abs-threshold",
+      "1",
+      "--balance-rel-threshold",
+      "1.2"
+    ]
+  }
+]

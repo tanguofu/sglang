@@ -1,0 +1,10 @@
+# OBSOLETE: W2 merged into sglang-glm52-2tp8 chart (replicas=2) on 2026-07-21.
+# Kept for historical reference only. Use sglang-glm52-2tp8-values.yaml.
+# tag updated 2026-07-22: xgmi-opt-0716d → fix-eagle-coredump-v3 (sync with main values)
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+llmDRouter:
+  enabled: false
+nodeName: node-21.151.225.172
+router:
+  enabled: false
+tag: fix-eagle-coredump-v3

@@ -1,0 +1,421 @@
+---
+# Source: sglang-glm52-308x/templates/sglang-router.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-glm52-2tp8-router
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: sglang-glm52-308x
+    app.kubernetes.io/instance: sglang-glm52-2tp8
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: sglang-glm52-308x-0.1.0
+    app: sglang
+    accelerator: amd-gpu
+    app: sglang-router
+spec:
+  type: ClusterIP
+  selector:
+    app: sglang-router
+  ports:
+    - name: http
+      port: 30001
+      targetPort: http
+      protocol: TCP
+---
+# Source: sglang-glm52-308x/templates/sglang-service.yaml
+# SGLang Service — ClusterIP for in-cluster discovery + envoy gateway routing.
+# With hostNetwork enabled, the pod is directly reachable at <nodeIP>:<port>.
+# This Service provides a stable DNS + endpoint for envoy gateway HTTPRoute.
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-glm52-2tp8-sglang
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: sglang-glm52-308x
+    app.kubernetes.io/instance: sglang-glm52-2tp8
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: sglang-glm52-308x-0.1.0
+    app: sglang
+    accelerator: amd-gpu
+spec:
+  type: ClusterIP
+  selector:
+    app: sglang
+  ports:
+    - name: http
+      port: 30000
+      targetPort: http
+      protocol: TCP
+---
+# Source: sglang-glm52-308x/templates/sglang-service.yaml
+# Headless Service for StatefulSet (required by StatefulSet spec)
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-glm52-2tp8-sglang-headless
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: sglang-glm52-308x
+    app.kubernetes.io/instance: sglang-glm52-2tp8
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: sglang-glm52-308x-0.1.0
+    app: sglang
+    accelerator: amd-gpu
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: sglang
+  ports:
+    - name: http
+      port: 30000
+      targetPort: http
+      protocol: TCP
+---
+# Source: sglang-glm52-308x/templates/sglang-router.yaml
+# SGLang Router — cache_aware prefix-aware load balancer across TP8 instances
+# Routes requests to the worker with the highest prefix match (radix cache optimization)
+# Launches via: python3 -m sglang_router.launch_router --worker-urls ... --policy cache_aware
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sglang-glm52-2tp8-router
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: sglang-glm52-308x
+    app.kubernetes.io/instance: sglang-glm52-2tp8
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: sglang-glm52-308x-0.1.0
+    app: sglang
+    accelerator: amd-gpu
+    app: sglang-router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sglang-router
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sglang-glm52-308x
+        app.kubernetes.io/instance: sglang-glm52-2tp8
+        app.kubernetes.io/managed-by: Helm
+        helm.sh/chart: sglang-glm52-308x-0.1.0
+        app: sglang
+        accelerator: amd-gpu
+        app: sglang-router
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      imagePullSecrets:
+        - name: tencent-registry
+      nodeSelector:
+        accelerator: amd-gpu
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: sglang-2tp8
+          effect: NoSchedule
+        - operator: Exists
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: router
+          image: "mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:messages-0717c"
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "-m", "sglang_router.launch_router"]
+          args:
+            - --worker-urls
+            - "http://21.234.170.103:30000"
+            - "http://21.234.170.38:30000"
+            - --policy
+            - "cache_aware"
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "30001"
+            - --cache-threshold
+            - "0.5"
+            - --balance-abs-threshold
+            - "32"
+            - --balance-rel-threshold
+            - "1.5"
+          ports:
+            - name: http
+              containerPort: 30001
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 2
+              memory: 4Gi
+            limits:
+              cpu: 4
+              memory: 8Gi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 30001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 30001
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+---
+# Source: sglang-glm52-308x/templates/sglang-statefulset.yaml
+# SGLang LLM Inference Service — StatefulSet for AMD MI308X (gfx942)
+# Uses official sglang-rocm mi30x image with ENV + command override (no custom image needed)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sglang-glm52-2tp8-sglang
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: sglang-glm52-308x
+    app.kubernetes.io/instance: sglang-glm52-2tp8
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: sglang-glm52-308x-0.1.0
+    app: sglang
+    accelerator: amd-gpu
+spec:
+  serviceName: sglang-glm52-2tp8-sglang
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sglang
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sglang-glm52-308x
+        app.kubernetes.io/instance: sglang-glm52-2tp8
+        app.kubernetes.io/managed-by: Helm
+        helm.sh/chart: sglang-glm52-308x-0.1.0
+        app: sglang
+        accelerator: amd-gpu
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeName: "node-21.234.170.103"
+      imagePullSecrets:
+        - name: tencent-registry
+      terminationGracePeriodSeconds: 300
+      containers:
+        - name: sglang
+          image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:xgmi-opt-0716d
+          imagePullPolicy: IfNotPresent
+          # Override entrypoint with our start_server logic
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              MODEL_PATH=${MODEL_PATH:-/data/model/glm52-fp8}
+              API_KEY=${API_KEY:-${ANTHROPIC_AUTH_TOKEN}}
+              PORT=${PORT:-30000}
+              # Install numactl if missing (required by SGLang NUMA binding V2)
+              if ! command -v numactl &>/dev/null; then
+                echo "Installing numactl for NUMA memory binding..."
+                apt-get update -qq && apt-get install -y -qq numactl >/dev/null 2>&1
+              fi
+              echo "=== GLM-5.2-FP8 SGLang (MI308X gfx942) ==="
+              exec python3 -m sglang.launch_server \
+                --model-path "$MODEL_PATH" \
+                --model-impl sglang \
+                --served-model-name glm-5.2 \
+                --api-key "$API_KEY" \
+                --tp-size 8 --pp-size 1 --trust-remote-code \
+                --host 0.0.0.0 --port "$PORT" \
+                --numa-node 0 0 0 0 1 1 1 1 \
+                --context-length "524288" \
+                --tool-call-parser glm47 --reasoning-parser glm45 \
+                --mem-fraction-static 0.88 \
+                --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 \
+                --cuda-graph-max-bs-decode 16 \
+                --enable-aiter-allreduce-fusion --enable-mixed-chunk \
+                --chunked-prefill-size 32768 \
+                --enable-fused-qk-norm-rope \
+                --schedule-conservativeness 0.5 \
+                --prefill-max-requests 32 --max-prefill-tokens 32768 \
+                --kv-cache-dtype fp8_e4m3 \
+                --speculative-algorithm NEXTN \
+                --speculative-num-steps 3 --speculative-num-draft-tokens 4 \
+                --speculative-eagle-topk 1 \
+                --cuda-graph-backend-prefill breakable \
+                --max-running-requests 32 \
+                --cuda-graph-bs-prefill 4 8 16 32 \
+                --enable-hierarchical-cache \
+                --hicache-ratio 1 \
+                --hicache-io-backend direct \
+                --hicache-mem-layout page_first_direct \
+                --hicache-write-policy write_through \
+                --enable-metrics --skip-server-warmup \
+                --watchdog-timeout 3600 --log-level info
+          env:
+            - name: MODEL_PATH
+              value: "/data/model/glm52-fp8"
+            - name: PORT
+              value: "30000"
+            - name: API_KEY
+              value: "${ANTHROPIC_AUTH_TOKEN}"
+            # ROCm environment — 21 vars based on MI355X production config
+            - name: HIP_VISIBLE_DEVICES
+              value: "0,1,2,3,4,5,6,7"
+            - name: NCCL_DEBUG
+              value: "INFO"
+            - name: HSA_ENABLE_SDMA
+              value: "0"
+            - name: HIP_FORCE_DEV_KERNARG
+              value: "1"
+            - name: HSA_NO_SCRATCH_RECLAIM
+              value: "1"
+            - name: NCCL_CUMEM_ENABLE
+              value: "0"
+            - name: NCCL_MIN_NCHANNELS
+              value: "112"
+            - name: NCCL_NVLS_ENABLE
+              value: "0"
+            - name: PYTORCH_CUDA_ALLOC_CONF
+              value: "expandable_segments:True"
+            - name: PYTORCH_ROCM_ARCH
+              value: "gfx942"
+            - name: ROCM_QUICK_REDUCE_QUANTIZATION
+              value: "INT8"
+            - name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN
+              value: "1"
+            - name: SGLANG_DISABLE_CUDNN_CHECK
+              value: "1"
+            - name: SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM
+              value: "1"
+            - name: SGLANG_INT4_WEIGHT
+              value: "0"
+            - name: SGLANG_MOE_PADDING
+              value: "1"
+            - name: SGLANG_ROCM_DISABLE_LINEARQUANT
+              value: "0"
+            - name: SGLANG_ROCM_FUSED_DECODE_MLA
+              value: "1"
+            - name: SGLANG_SET_CPU_AFFINITY
+              value: "1"
+            - name: SGLANG_USE_AITER
+              value: "1"
+            - name: SGLANG_USE_ROCM700A
+              value: "1"
+            # GLM-5.2 is detected as DeepseekV3 arch, so the DeepseekV4-only HIP
+            # override that auto-sets SGLANG_OPT_USE_TOPK_V2=false does not run.
+            # The dpsk_v4 topk_v2 JIT kernel fails to compile on gfx942 in this
+            # image (CLUSTER_TOPK_KERNEL/__grid_constant__/kPDL macro errors)
+            # during decode cuda-graph capture, crashlooping the pod. Disable
+            # the v2 folded top-k plan; the v1 topk transform (correct) is used.
+            - name: SGLANG_OPT_USE_TOPK_V2
+              value: "false"
+          securityContext:
+            privileged: true
+            capabilities:
+              add:
+                - SYS_PTRACE
+              drop: ["ALL"]
+            seccompProfile:
+              type: Unconfined
+          ports:
+            - name: http
+              containerPort: 30000
+              hostPort: 30000
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: dev-kfd
+              mountPath: /dev/kfd
+            - name: dev-dri
+              mountPath: /dev/dri
+            - name: shm
+              mountPath: /dev/shm
+          resources:
+            limits:
+              amd.com/gpu: 8
+            requests:
+              amd.com/gpu: 8
+              cpu: 360
+              memory: 2100Gi
+          readinessProbe:
+            failureThreshold: 10
+            httpGet:
+              path: /health
+              port: 30000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 10
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /health
+              port: 30000
+            initialDelaySeconds: 600
+            periodSeconds: 60
+            timeoutSeconds: 10
+      volumes:
+        - name: data
+          hostPath:
+            path: /data
+            type: Directory
+        - name: dev-kfd
+          hostPath:
+            path: /dev/kfd
+            type: CharDevice
+        - name: dev-dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 32Gi
+---
+# Source: sglang-glm52-308x/templates/sglang-httproute.yaml
+# HTTPRoute — envoy gateway forwarding to SGLang Router (or direct Service if router disabled).
+# Attaches to eg-tke Gateway in ti-cloud namespace (allowedRoutes: All).
+#
+# Two environments, each with its own HTTPRoute hostname:
+#   TEST:  glm52-308x-test.jmpti.woa.com  → GZ router (4x TP8 instances)
+#   PROD:  glm52-308x-prod.jmpti.woa.com  → ZW router (2x TP8 instances)
+#
+# External access: http://<hostname> → envoy LB (21.162.215.14:80) → router → TP8 instances
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: sglang-glm52-2tp8-sglang
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: sglang-glm52-308x
+    app.kubernetes.io/instance: sglang-glm52-2tp8
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: sglang-glm52-308x-0.1.0
+    app: sglang
+    accelerator: amd-gpu
+spec:
+  hostnames:
+    - "glm52-2tp8.jmpti.woa.com"
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: eg-tke
+      namespace: ti-cloud
+      sectionName: http
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          # Route to SGLang Router (sgl-model-gateway, cache_aware)
+          name: sglang-glm52-2tp8-router
+          namespace: kube-system
+          port: 30001
+          weight: 1
+

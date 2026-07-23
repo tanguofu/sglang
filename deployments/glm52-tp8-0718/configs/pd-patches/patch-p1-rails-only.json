@@ -1,0 +1,10 @@
+[
+  {
+    "op": "remove",
+    "path": "/spec/template/spec/containers/0/env/UCX_TLS"
+  },
+  {
+    "op": "remove",
+    "path": "/spec/template/spec/containers/0/env/UCX_NET_DEVICES"
+  }
+]

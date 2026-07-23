@@ -1,0 +1,203 @@
+{
+  "ts": "captured",
+  "ctx_tokens_target": 12000,
+  "max_tokens": 256,
+  "n_per_level": 8,
+  "runs": [
+    {
+      "concurrency": 4,
+      "n_req": 8,
+      "ctx_tokens_target": 12000,
+      "max_tokens": 256,
+      "wall_clock_s": 21.77,
+      "n_ok": 8,
+      "n_fail": 0,
+      "ttft_s": {
+        "p50": 0.02,
+        "p95": 0.058,
+        "mean": 0.029
+      },
+      "latency_s": {
+        "p50": 9.265,
+        "p95": 12.301,
+        "mean": 8.752
+      },
+      "throughput_tps": {
+        "mean": 11.99,
+        "p50": 9.0
+      },
+      "output_tokens": {
+        "mean": 83.6,
+        "total": 669
+      },
+      "worker_delta": {
+        "w1": {
+          "num_requests_total": 4.0,
+          "prompt_tokens_total": 42288.0,
+          "generation_tokens_total": 970.0,
+          "cached_tokens_total": 28800.0
+        },
+        "w2": {
+          "num_requests_total": 5.0,
+          "prompt_tokens_total": 103476.0,
+          "generation_tokens_total": 1338.0,
+          "cached_tokens_total": 81728.0
+        }
+      },
+      "load_split_by_prompt_tokens": {
+        "w1": 42288.0,
+        "w2": 103476.0,
+        "w1_pct": 29.0,
+        "w2_pct": 71.0
+      },
+      "router_delta": {
+        "selection": 9.0,
+        "requests": 57.0
+      },
+      "background_rate": {
+        "w1": {
+          "num_requests_total_per_s": 0.0,
+          "prompt_tokens_total_per_s": 0.0,
+          "generation_tokens_total_per_s": 0.0
+        },
+        "w2": {
+          "num_requests_total_per_s": 0.26666666666666666,
+          "prompt_tokens_total_per_s": 15861.4,
+          "generation_tokens_total_per_s": 46.86666666666667
+        }
+      },
+      "background_corrected_w1_reqs": 4.0,
+      "failures": []
+    },
+    {
+      "concurrency": 8,
+      "n_req": 8,
+      "ctx_tokens_target": 12000,
+      "max_tokens": 256,
+      "wall_clock_s": 6.9,
+      "n_ok": 8,
+      "n_fail": 0,
+      "ttft_s": {
+        "p50": 0.022,
+        "p95": 0.033,
+        "mean": 0.024
+      },
+      "latency_s": {
+        "p50": 5.253,
+        "p95": 5.768,
+        "mean": 5.049
+      },
+      "throughput_tps": {
+        "mean": 17.95,
+        "p50": 16.42
+      },
+      "output_tokens": {
+        "mean": 89.0,
+        "total": 712
+      },
+      "worker_delta": {
+        "w1": {
+          "num_requests_total": 7.0,
+          "prompt_tokens_total": 207089.0,
+          "generation_tokens_total": 4257.0,
+          "cached_tokens_total": 194880.0
+        },
+        "w2": {
+          "num_requests_total": 3.0,
+          "prompt_tokens_total": 31716.0,
+          "generation_tokens_total": 752.0,
+          "cached_tokens_total": 31680.0
+        }
+      },
+      "load_split_by_prompt_tokens": {
+        "w1": 207089.0,
+        "w2": 31716.0,
+        "w1_pct": 86.7,
+        "w2_pct": 13.3
+      },
+      "router_delta": {
+        "selection": 9.0,
+        "requests": 0.0
+      },
+      "background_rate": {
+        "w1": {
+          "num_requests_total_per_s": 0.0,
+          "prompt_tokens_total_per_s": 0.0,
+          "generation_tokens_total_per_s": 0.0
+        },
+        "w2": {
+          "num_requests_total_per_s": 0.0,
+          "prompt_tokens_total_per_s": 0.0,
+          "generation_tokens_total_per_s": 0.0
+        }
+      },
+      "background_corrected_w1_reqs": 7.0,
+      "failures": []
+    },
+    {
+      "concurrency": 16,
+      "n_req": 8,
+      "ctx_tokens_target": 12000,
+      "max_tokens": 256,
+      "wall_clock_s": 12.07,
+      "n_ok": 8,
+      "n_fail": 0,
+      "ttft_s": {
+        "p50": 0.026,
+        "p95": 0.047,
+        "mean": 0.029
+      },
+      "latency_s": {
+        "p50": 4.87,
+        "p95": 10.868,
+        "mean": 6.984
+      },
+      "throughput_tps": {
+        "mean": 15.16,
+        "p50": 19.08
+      },
+      "output_tokens": {
+        "mean": 89.9,
+        "total": 719
+      },
+      "worker_delta": {
+        "w1": {
+          "num_requests_total": 6.0,
+          "prompt_tokens_total": 122395.0,
+          "generation_tokens_total": 1806.0,
+          "cached_tokens_total": 121600.0
+        },
+        "w2": {
+          "num_requests_total": 3.0,
+          "prompt_tokens_total": 31716.0,
+          "generation_tokens_total": 762.0,
+          "cached_tokens_total": 31680.0
+        }
+      },
+      "load_split_by_prompt_tokens": {
+        "w1": 122395.0,
+        "w2": 31716.0,
+        "w1_pct": 79.4,
+        "w2_pct": 20.6
+      },
+      "router_delta": {
+        "selection": 10.0,
+        "requests": 0.0
+      },
+      "background_rate": {
+        "w1": {
+          "num_requests_total_per_s": 0.13333333333333333,
+          "prompt_tokens_total_per_s": 9067.8,
+          "generation_tokens_total_per_s": 61.0
+        },
+        "w2": {
+          "num_requests_total_per_s": 0.0,
+          "prompt_tokens_total_per_s": 0.0,
+          "generation_tokens_total_per_s": 0.0
+        }
+      },
+      "background_corrected_w1_reqs": 4.391331699999864,
+      "failures": []
+    }
+  ]
+}

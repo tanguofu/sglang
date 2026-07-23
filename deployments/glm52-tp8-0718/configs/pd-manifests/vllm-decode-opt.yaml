@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    app: vllm-pd
+    role: decode
+  name: vllm-decode
+  namespace: kube-system
+spec:
+  hostNetwork: true
+  nodeName: node-21.234.170.32
+  restartPolicy: Never
+  nodeSelector:
+    workload: vllm-glm52
+  tolerations:
+  - key: dedicated
+    value: vllm-glm52
+    effect: NoSchedule
+    operator: Equal
+  - key: node.cvm.com/ptl-unsupported
+    operator: Exists
+    effect: NoSchedule
+  - key: node.kubernetes.io/not-ready
+    operator: Exists
+    effect: NoExecute
+    tolerationSeconds: 300
+  - key: node.kubernetes.io/unreachable
+    operator: Exists
+    effect: NoExecute
+    tolerationSeconds: 300
+  containers:
+  - name: vllm-decode
+    image: mirrors.tencent.com/ti-platform/vllm-glm52-308x-pd:latest
+    imagePullPolicy: Always
+    ports:
+    - name: http
+      containerPort: 8000
+      hostPort: 8000
+    command:
+    - /bin/bash
+    - -c
+    - |
+      set -e
+      # 优化:decode max-num-seqs 6→32, batched-tokens 192→512
+      sed -i 's/--max-num-seqs 6/--max-num-seqs 32/' /start_server.sh
+      sed -i 's/--max-num-batched-tokens 192/--max-num-batched-tokens 512/' /start_server.sh
+      # KV transfer: 1GB→2GB(gpu buffer 内核不支持 dmabuf,保持 cpu)
+      sed -i 's/"kv_buffer_size": 1000000000/"kv_buffer_size": 2000000000/g' /start_server.sh
+      # KV cache dtype fp8(省显存)
+      sed -i 's/--block-size 64/--block-size 64 --kv-cache-dtype fp8/' /start_server.sh
+      # UCX 多端口: 2→8(8 个 IB 端口只用 1 个)
+      sed -i 's/UCX_MAX_RMA_RAILS=2/UCX_MAX_RMA_RAILS=8/' /start_server.sh
+      exec /start_server.sh
+    env:
+    - {name: PD_ROLE, value: decode}
+    - {name: MODEL_PATH, value: /data/model/glm52-fp8}
+    - {name: SERVED_MODEL_NAME, value: glm-5.2}
+    - {name: API_KEY, value: ${ANTHROPIC_AUTH_TOKEN}}
+    - {name: PORT, value: "8000"}
+    - {name: PEER_IP, value: 21.234.170.19}
+    - {name: TENSOR_PARALLEL_SIZE, value: "8"}
+    - {name: GPU_MEMORY_UTILIZATION, value: "0.9"}
+    - {name: MAX_MODEL_LEN, value: "262144"}
+    - {name: HIP_VISIBLE_DEVICES, value: "0,1,2,3,4,5,6,7"}
+    - {name: PYTORCH_ROCM_ARCH, value: gfx942}
+    - {name: NCCL_IB_HCA, value: bnxt_re}
+    - {name: NCCL_NET_GDR_LEVEL, value: "0"}
+    - {name: NCCL_SOCKET_IFNAME, value: bond0}
+    - {name: NCCL_DEBUG, value: INFO}
+    - {name: VLLM_ROCM_USE_AITER, value: "1"}
+    securityContext:
+      privileged: true
+      capabilities:
+        add: [SYS_PTRACE]
+        drop: [ALL]
+      seccompProfile:
+        type: Unconfined
+    volumeMounts:
+    - {name: data, mountPath: /data}
+    - {name: dev-kfd, mountPath: /dev/kfd}
+    - {name: dev-dri, mountPath: /dev/dri}
+    - {name: ib, mountPath: /dev/infiniband}
+    - {name: shm, mountPath: /dev/shm}
+    - {name: sys, mountPath: /sys}
+  volumes:
+  - {name: data, hostPath: {path: /data, type: Directory}}
+  - {name: dev-kfd, hostPath: {path: /dev/kfd, type: CharDevice}}
+  - {name: dev-dri, hostPath: {path: /dev/dri, type: Directory}}
+  - {name: ib, hostPath: {path: /dev/infiniband, type: Directory}}
+  - {name: shm, emptyDir: {medium: Memory, sizeLimit: 256Gi}}
+  - {name: sys, hostPath: {path: /sys, type: Directory}}

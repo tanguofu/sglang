@@ -1,0 +1,28 @@
+[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/volumes",
+    "value": [
+      {
+        "name": "proxy-script",
+        "configMap": {
+          "name": "vllm-pd-proxy-script",
+          "items": [
+            {"key": "disagg_proxy.py", "path": "disagg_proxy.py"}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/volumeMounts",
+    "value": [
+      {
+        "name": "proxy-script",
+        "mountPath": "/disagg_proxy.py",
+        "subPath": "disagg_proxy.py"
+      }
+    ]
+  }
+]

@@ -1,0 +1,82 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  annotations:
+    meta.helm.sh/release-name: sglang-glm52-2tp8
+    meta.helm.sh/release-namespace: kube-system
+  creationTimestamp: "2026-07-15T05:20:45Z"
+  generation: 8
+  labels:
+    accelerator: amd-gpu
+    app: sglang
+    app.kubernetes.io/instance: sglang-glm52-2tp8
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sglang-glm52-308x
+    helm.sh/chart: sglang-glm52-308x-0.1.0
+  name: sglang-glm52-2tp8-sglang
+  namespace: kube-system
+  resourceVersion: "274116217"
+  uid: f7436982-d438-4734-a083-2f560b36b6d0
+spec:
+  hostnames:
+  - glm52-2tp8.jmpti.woa.com
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: eg-tke
+    namespace: ti-cloud
+    sectionName: https-glm52-2tp8
+  rules:
+  - backendRefs:
+    - group: ""
+      kind: Service
+      name: sglang-glm52-2tp8-router
+      namespace: kube-system
+      port: 30001
+      weight: 1
+    matches:
+    - path:
+        type: PathPrefix
+        value: /
+status:
+  parents:
+  - conditions:
+    - lastTransitionTime: "2026-07-15T05:20:45Z"
+      message: Route is accepted
+      observedGeneration: 1
+      reason: Accepted
+      status: "True"
+      type: Accepted
+    - lastTransitionTime: "2026-07-15T05:20:45Z"
+      message: Resolved all the Object references for the Route
+      observedGeneration: 1
+      reason: ResolvedRefs
+      status: "True"
+      type: ResolvedRefs
+    controllerName: gateway.envoyproxy.io/gatewayclass-controller
+    parentRef:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: eg-tke
+      namespace: ti-cloud
+      sectionName: http
+  - conditions:
+    - lastTransitionTime: "2026-07-18T01:14:21Z"
+      message: Route is accepted
+      observedGeneration: 8
+      reason: Accepted
+      status: "True"
+      type: Accepted
+    - lastTransitionTime: "2026-07-18T01:14:21Z"
+      message: Resolved all the Object references for the Route
+      observedGeneration: 8
+      reason: ResolvedRefs
+      status: "True"
+      type: ResolvedRefs
+    controllerName: gateway.envoyproxy.io/gatewayclass-controller
+    parentRef:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: eg-tke
+      namespace: ti-cloud
+      sectionName: https-glm52-2tp8

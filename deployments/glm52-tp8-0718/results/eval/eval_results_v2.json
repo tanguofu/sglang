@@ -1,0 +1,626 @@
+[
+  {
+    "id": "R1",
+    "category": "reasoning",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 4.27,
+    "status": "completed",
+    "reasoning_len": 947,
+    "output_len": 7,
+    "output": "Mammal.",
+    "reasoning": "1.  **Analyze the Request:**\n    *   Premise 1: All cats are mammals.\n    *   Premise 2: Tom is a cat.\n    *   Question: What is Tom?\n    *   Constraint: Answer in one word.\n\n2.  **Evaluate the Logic:**\n    *   If A (cats) implies B (mammals).\n    *   If C (Tom) is A (cat).\n    *   Then C (Tom) is B",
+    "usage": {
+      "input_tokens": 31,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 300,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 331
+    },
+    "stderr": ""
+  },
+  {
+    "id": "R2",
+    "category": "reasoning",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 4.85,
+    "status": "completed",
+    "reasoning_len": 1244,
+    "output_len": 141,
+    "output": "Yes, because the transitive property of inequality states that if A is greater than B and B is greater than C, then A must be greater than C.",
+    "reasoning": "1.  **Analyze the Request:**\n    *   Premise 1: A > B\n    *   Premise 2: B > C\n    *   Question: Is A > C?\n    *   Constraint 1: Answer \"yes\" or \"no\".\n    *   Constraint 2: Provide exactly one sentence explaining why.\n\n2.  **Evaluate the Logic:**\n    *   The relationship \">\" represents a transitive ",
+    "usage": {
+      "input_tokens": 36,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 363,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 399
+    },
+    "stderr": ""
+  },
+  {
+    "id": "R3",
+    "category": "reasoning",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 2.0,
+    "status": "completed",
+    "reasoning_len": 452,
+    "output_len": 1,
+    "output": "9",
+    "reasoning": "1.  **Analyze the Request:** The user is asking a classic riddle: \"A farmer has 17 sheep. All but 9 run away. How many sheep does the farmer have left?\" The constraint is \"Just the number.\"\n2.  **Analyze the Riddle:** \"All but 9 run away\" means exactly 9 sheep did *not* run away. Therefore, the farm",
+    "usage": {
+      "input_tokens": 39,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 124,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 163
+    },
+    "stderr": ""
+  },
+  {
+    "id": "R4",
+    "category": "reasoning",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 15.62,
+    "status": "completed",
+    "reasoning_len": 2953,
+    "output_len": 1177,
+    "output": "Here is the step-by-step solution to get exactly 4 liters of water using a 5-liter jug and a 3-liter jug:\n\n**Step 1:** Fill the 5-liter jug completely. \n*(You now have 5 liters in the 5-liter jug and 0 liters in the 3-liter jug).*\n\n**Step 2:** Pour water from the 5-liter jug into the 3-liter jug until the 3-liter jug is full. \n*(You now have 2 liters in the 5-liter jug and 3 liters in the 3-liter jug).*\n\n**Step 3:** Empty the 3-liter jug completely. \n*(You now have 2 liters in the 5-liter jug and 0 liters in the 3-liter jug).*\n\n**Step 4:** Pour the remaining 2 liters from the 5-liter jug into the 3-liter jug. \n*(You now have 0 liters in the 5-liter jug and 2 liters in the 3-liter jug).*\n\n**Step 5:** Fill the 5-liter jug completely one more time. \n*(You now have 5 liters in the 5-liter jug ",
+    "reasoning": "1.  **Analyze the Request:**\n    *   Given: A 5-liter jug, a 3-liter jug, and an unlimited supply of water.\n    *   Goal: Measure exactly 4 liters of water.\n    *   Output format: List the steps.\n\n2.  **Understand the Problem (Die Hard water jug problem):**\n    *   Jug A capacity: 5 liters\n    *   J",
+    "usage": {
+      "input_tokens": 45,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 1370,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 1415
+    },
+    "stderr": ""
+  },
+  {
+    "id": "M1",
+    "category": "math",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 3.31,
+    "status": "completed",
+    "reasoning_len": 585,
+    "output_len": 5,
+    "output": "56088",
+    "reasoning": "1.  Identify the core request: Calculate 123 * 456.\n2.  Identify the constraint: \"Just the number.\" (No explanation, no formatting like commas unless standard, but usually just the raw digits).\n3.  Perform the calculation:\n    *   123 * 400 = 49200\n    *   123 * 50 = 6150\n    *   123 * 6 = 738\n    *",
+    "usage": {
+      "input_tokens": 25,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 245,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 270
+    },
+    "stderr": ""
+  },
+  {
+    "id": "M2",
+    "category": "math",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 3.04,
+    "status": "completed",
+    "reasoning_len": 600,
+    "output_len": 6,
+    "output": "150 km",
+    "reasoning": "1.  **Identify the core question:** Distance traveled by a train.\n2.  **Extract given information:**\n    *   Speed ($v$) = 60 km/h\n    *   Time ($t$) = 2.5 hours\n3.  **Identify the formula:** Distance ($d$) = Speed ($v$) $\\times$ Time ($t$)\n4.  **Perform the calculation:**\n    *   $d = 60 \\times 2.5",
+    "usage": {
+      "input_tokens": 40,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 208,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 248
+    },
+    "stderr": ""
+  },
+  {
+    "id": "M3",
+    "category": "math",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 1.93,
+    "status": "completed",
+    "reasoning_len": 301,
+    "output_len": 1,
+    "output": "6",
+    "reasoning": "1.  Identify the goal: Solve the equation $2x + 5 = 17$ for $x$.\n2.  Isolate the term with $x$: Subtract 5 from both sides.\n    $2x = 17 - 5$\n    $2x = 12$\n3.  Solve for $x$: Divide by 2.\n    $x = 12 / 2$\n    $x = 6$\n4.  Format the output: The user requested \"Just the value of x.\"\n5.  Final output: ",
+    "usage": {
+      "input_tokens": 33,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 120,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 153
+    },
+    "stderr": ""
+  },
+  {
+    "id": "M4",
+    "category": "math",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 1.78,
+    "status": "completed",
+    "reasoning_len": 318,
+    "output_len": 2,
+    "output": "30",
+    "reasoning": "1.  **Identify the core question:** The user wants to know 15% of 200.\n2.  **Perform the calculation:**\n    *   15% = 0.15\n    *   0.15 * 200 = 30\n    *   Alternatively: 10% of 200 = 20; 5% of 200 = 10; 20 + 10 = 30.\n3.  **Format the output:** The user explicitly requested \"Just the number.\"\n4.  **F",
+    "usage": {
+      "input_tokens": 25,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 121,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 146
+    },
+    "stderr": ""
+  },
+  {
+    "id": "C1",
+    "category": "code",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 6.42,
+    "status": "completed",
+    "reasoning_len": 1888,
+    "output_len": 112,
+    "output": "```python\ndef is_palindrome(s):\n    s = ''.join(c.lower() for c in s if c.isalnum())\n    return s == s[::-1]\n```",
+    "reasoning": "We need to write a Python function `is_palindrome(s)` that returns True if s is a palindrome, case-insensitive, ignoring non-alphanumeric characters. The user asks: \"Just the code.\" So we should output only the code, no explanation.\n\nWe need to implement the function. The function should:\n- Take a s",
+    "usage": {
+      "input_tokens": 44,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 486,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 530
+    },
+    "stderr": ""
+  },
+  {
+    "id": "C2",
+    "category": "code",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 6.14,
+    "status": "completed",
+    "reasoning_len": 1467,
+    "output_len": 101,
+    "output": "```python\ndef fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n```",
+    "reasoning": "We need to write a Python function `fib(n)` that returns the n-th Fibonacci number iteratively. The user says \"Just the code.\" So we should output only the code, no explanation. The function should be iterative, not recursive. We need to handle n=0 and n=1 appropriately. Typically Fibonacci sequence",
+    "usage": {
+      "input_tokens": 34,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 470,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 504
+    },
+    "stderr": ""
+  },
+  {
+    "id": "C3",
+    "category": "code",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 4.66,
+    "status": "completed",
+    "reasoning_len": 1084,
+    "output_len": 314,
+    "output": "```python\ndef binary_search(arr, target):\n    left, right = 0, len(arr) - 1\n    while left <= right:\n        mid = left + (right - left) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            left = mid + 1\n        else:\n            right = mid - 1\n    return -1\n```",
+    "reasoning": "We need to write a Python function `binary_search(arr, target)` that returns the index of target in sorted arr, or -1. The user says \"Just the code.\" So we should output only the code, no explanation. We need to implement binary search. The array is sorted. We'll assume it's a list of integers or co",
+    "usage": {
+      "input_tokens": 41,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 361,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 402
+    },
+    "stderr": ""
+  },
+  {
+    "id": "D1",
+    "category": "debug",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 8.16,
+    "status": "completed",
+    "reasoning_len": 2347,
+    "output_len": 221,
+    "output": "The `return count` statement is incorrectly indented inside the `for` loop, causing the function to return after counting only the first word; fix it by unindenting the `return` statement so it aligns with the `for` loop.",
+    "reasoning": "1.  **Analyze the Request:**\n    *   Input: A short Python function `count_words(text)`.\n    *   Task: Identify the bug.\n    *   Output format: State the bug and provide the fix in exactly *one sentence*.\n\n2.  **Analyze the Code:**\n    ```python\n    def count_words(text):\n        words = text.split(",
+    "usage": {
+      "input_tokens": 72,
+      "input_tokens_details": {
+        "cached_tokens": 64
+      },
+      "output_tokens": 655,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 727
+    },
+    "stderr": ""
+  },
+  {
+    "id": "D2",
+    "category": "debug",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 5.11,
+    "status": "completed",
+    "reasoning_len": 1380,
+    "output_len": 130,
+    "output": "The code raises a `ZeroDivisionError` when an empty list is passed because it attempts to divide by `len(numbers)`, which is zero.",
+    "reasoning": "1.  **Analyze the Request:**\n    *   Input: A short Python code snippet calculating the average of a list of numbers.\n    *   Task: Identify what's wrong with the code.\n    *   Constraint: Exactly one sentence on the bug.\n\n2.  **Analyze the Code:**\n    ```python\n    def get_average(numbers):\n       ",
+    "usage": {
+      "input_tokens": 50,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 389,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 439
+    },
+    "stderr": ""
+  },
+  {
+    "id": "I1",
+    "category": "instruction",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 2.55,
+    "status": "completed",
+    "reasoning_len": 535,
+    "output_len": 28,
+    "output": "1. Apple\n2. Banana\n3. Cherry",
+    "reasoning": "1.  **Analyze the Request:**\n    *   List exactly 3 fruits.\n    *   Format: one per line, numbered 1 to 3.\n    *   Constraint: Nothing else (no intro, no outro, no extra text).\n\n2.  **Select the Fruits:**\n    *   Apple\n    *   Banana\n    *   Cherry\n\n3.  **Format the Output:**\n    1. Apple\n    2. Ban",
+    "usage": {
+      "input_tokens": 32,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 182,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 214
+    },
+    "stderr": ""
+  },
+  {
+    "id": "I2",
+    "category": "instruction",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 3.83,
+    "status": "completed",
+    "reasoning_len": 878,
+    "output_len": 29,
+    "output": "This response has five words.",
+    "reasoning": "1.  **Analyze the Request:**\n    *   Constraint 1: Reply with exactly 5 words.\n    *   Constraint 2: No more, no less.\n\n2.  **Formulate a response:**\n    *   I need a sentence or phrase that has exactly 5 words.\n    *   \"I understand your strict constraints.\" (5 words)\n    *   \"This response has fiv",
+    "usage": {
+      "input_tokens": 25,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 278,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 303
+    },
+    "stderr": ""
+  },
+  {
+    "id": "I3",
+    "category": "instruction",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 3.61,
+    "status": "completed",
+    "reasoning_len": 790,
+    "output_len": 31,
+    "output": "{\"name\": \"GLM\", \"version\": 5.2}",
+    "reasoning": "1.  **Analyze the Request:**\n    *   Output format: JSON object.\n    *   Keys required: exactly two.\n    *   Key 1: 'name', value: string 'GLM'.\n    *   Key 2: 'version', value: number 5.2.\n    *   Constraint: \"Nothing else.\" (No markdown formatting, no extra text, just the JSON).\n\n2.  **Construct t",
+    "usage": {
+      "input_tokens": 44,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 253,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 297
+    },
+    "stderr": ""
+  },
+  {
+    "id": "K1",
+    "category": "knowledge",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 1.28,
+    "status": "completed",
+    "reasoning_len": 233,
+    "output_len": 5,
+    "output": "Tokyo",
+    "reasoning": "1.  Identify the core entity and the question: The user is asking for the capital of Japan.\n2.  Retrieve knowledge: The capital of Japan is Tokyo.\n3.  Check constraints: The user specified \"One word.\"\n4.  Formulate the answer: Tokyo.",
+    "usage": {
+      "input_tokens": 22,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 61,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 83
+    },
+    "stderr": ""
+  },
+  {
+    "id": "K2",
+    "category": "knowledge",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 1.84,
+    "status": "completed",
+    "reasoning_len": 411,
+    "output_len": 19,
+    "output": "William Shakespeare",
+    "reasoning": "1.  **Identify the core question:** The user is asking for the author of the play 'Romeo and Juliet'.\n2.  **Identify constraints:** \"One name.\" This means I should provide just the name of the author, without any additional context, explanation, or filler words.\n3.  **Retrieve knowledge:** The autho",
+    "usage": {
+      "input_tokens": 26,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 102,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 128
+    },
+    "stderr": ""
+  },
+  {
+    "id": "K3",
+    "category": "knowledge",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 1.68,
+    "status": "completed",
+    "reasoning_len": 331,
+    "output_len": 2,
+    "output": "Au",
+    "reasoning": "1.  Identify the core entity and question: The user is asking for the chemical symbol for gold.\n2.  Identify constraints: \"Just the symbol.\" This means no extra words, no punctuation unless part of the symbol, no explanation.\n3.  Retrieve knowledge: The chemical symbol for gold is Au (from Latin *au",
+    "usage": {
+      "input_tokens": 24,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 82,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 106
+    },
+    "stderr": ""
+  },
+  {
+    "id": "ZH1",
+    "category": "chinese",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 1.98,
+    "status": "completed",
+    "reasoning_len": 223,
+    "output_len": 2,
+    "output": "北京",
+    "reasoning": "1.  **分析请求：**\n    *   问题：中国的首都是哪里?（中国的首都是哪里？）\n    *   约束：只回答城市名。（仅回答城市名。）\n\n2.  **确定答案：**\n    *   中国的首都是北京（北京）。\n\n3.  **应用约束：**\n    *   仅输出城市名，不包含其他内容。\n    *   输出：北京\n\n4.  **最终验证：**\n    *   它是否回答了问题？是的。\n    *   它是否*仅*包含城市名？是的。",
+    "usage": {
+      "input_tokens": 22,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 129,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 151
+    },
+    "stderr": ""
+  },
+  {
+    "id": "ZH2",
+    "category": "chinese",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 6.96,
+    "status": "completed",
+    "reasoning_len": 934,
+    "output_len": 51,
+    "output": "人工智能是让机器模拟人类的感知、学习、推理和决策能力，以执行通常需要人类智能才能完成的复杂任务的技术。",
+    "reasoning": "1.  **分析请求：**\n    *   **主题：** 人工智能 (AI) / 人工智能\n    *   **约束条件：** 恰好一句话 / 一句话\n    *   **目标：** 清晰简明地解释什么是人工智能。\n\n2.  **定义人工智能（核心概念）：**\n    *   它是什么？机器/计算机模拟人类智能。\n    *   它做什么？学习、推理、解决问题、感知、理解语言。\n    *   目标是什么？执行通常需要人类智能才能完成的任务。\n\n3.  **起草初步解释（头脑风暴）：**\n    *   *草稿 1：* 人工智能是让计算机模拟人类的思维和行为，从而完成需要人类智能才能完成的任",
+    "usage": {
+      "input_tokens": 18,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 521,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 539
+    },
+    "stderr": ""
+  },
+  {
+    "id": "ZH3",
+    "category": "chinese",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 2.63,
+    "status": "completed",
+    "reasoning_len": 325,
+    "output_len": 78,
+    "output": "```python\ndef gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a\n```",
+    "reasoning": "1.  **分析请求**：用户要求写一个Python函数，计算两个数的最大公约数（GCD）。并且明确要求“只给代码”。\n2.  **确定算法**：计算最大公约数最常用且高效的方法是欧几里得算法（辗转相除法）。\n3.  **编写代码**：\n    ```python\n    def gcd(a, b):\n        while b:\n            a, b = b, a % b\n        return a\n    ```\n4.  **检查约束条件**：用户要求“只给代码”，所以不能有任何解释性文字、Markdown代码块以外的内容（最好连Markdown的说明都不要，直接给代",
+    "usage": {
+      "input_tokens": 29,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 191,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 220
+    },
+    "stderr": ""
+  },
+  {
+    "id": "T1",
+    "category": "tool_use",
+    "ok": true,
+    "note": "matched in reasoning (output empty/truncated)",
+    "elapsed": 1.09,
+    "status": "completed",
+    "reasoning_len": 115,
+    "output_len": 0,
+    "output": "",
+    "reasoning": "The user wants to know the weather in Tokyo. I'll call the get_weather function with \"Tokyo\" as the city parameter.",
+    "usage": {
+      "input_tokens": 168,
+      "input_tokens_details": {
+        "cached_tokens": 128
+      },
+      "output_tokens": 40,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 208
+    },
+    "stderr": ""
+  },
+  {
+    "id": "L1",
+    "category": "long_context",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 3.24,
+    "status": "completed",
+    "reasoning_len": 642,
+    "output_len": 6,
+    "output": "Papaya",
+    "reasoning": "1.  **Analyze the Request:**\n    *   Input: A list of 20 items (fruits/ingredients).\n    *   Question: What was Item 14?\n    *   Constraint: \"Just the answer.\"\n\n2.  **Scan the List for Item 14:**\n    *   Item 1: Apple\n    *   Item 2: Banana\n    *   Item 3: Cherry\n    *   Item 4: Date\n    *   Item 5:",
+    "usage": {
+      "input_tokens": 163,
+      "input_tokens_details": {
+        "cached_tokens": 128
+      },
+      "output_tokens": 235,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 398
+    },
+    "stderr": ""
+  },
+  {
+    "id": "CR1",
+    "category": "creative",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 14.73,
+    "status": "completed",
+    "reasoning_len": 3304,
+    "output_len": 105,
+    "output": "Endless rolling waves,\nWhisper secrets to the shore,\nSalt hangs in the air,\nMoonlight dances on the deep.",
+    "reasoning": "1.  **Analyze the Request:**\n    *   Topic: The ocean.\n    *   Format: Haiku (4-line haiku - wait, traditional haiku is 3 lines. Let me re-read carefully: \"Write a 4-line haiku\". This is a specific constraint. A 4-line haiku is often called a *haikai* or *senryu* variant, or sometimes just a 4-line ",
+    "usage": {
+      "input_tokens": 28,
+      "input_tokens_details": {
+        "cached_tokens": 0
+      },
+      "output_tokens": 1107,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 1135
+    },
+    "stderr": ""
+  },
+  {
+    "id": "S1",
+    "category": "summarization",
+    "ok": true,
+    "note": "matched in output",
+    "elapsed": 6.84,
+    "status": "completed",
+    "reasoning_len": 2057,
+    "output_len": 218,
+    "output": "In July 1969, Apollo 11 became the first manned mission to land on the Moon, where Neil Armstrong and Buzz Aldrin walked the lunar surface while Michael Collins orbited above, before all three safely returned to Earth.",
+    "reasoning": "1.  **Analyze the Request:**\n    *   Task: Summarize the provided text.\n    *   Constraint: Exactly one sentence.\n    *   Input text: \"The Apollo 11 mission was the first manned mission to land on the Moon. It was launched on July 16, 1969, and carried astronauts Neil Armstrong, Buzz Aldrin, and Mic",
+    "usage": {
+      "input_tokens": 92,
+      "input_tokens_details": {
+        "cached_tokens": 64
+      },
+      "output_tokens": 540,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 632
+    },
+    "stderr": ""
+  }
+]

@@ -1,0 +1,55 @@
+{
+  "task": "aiter bf16 GEMM tuning for gfx942 (MI308X) decode hot path on node-21.234.170.19",
+  "worker": "tune19-sglang-0 (tune19- prefixed, isolated; prod pods untouched)",
+  "model": "glm-5.2 fp8, TP8, NEXTN speculative (spec_num_steps=3, spec_num_draft_tokens=4)",
+  "benchmark": {
+    "script": "scripts/bench_decode_tune19.py",
+    "params": {
+      "endpoint": "http://127.0.0.1:30000 (in-pod, fair BEFORE/AFTER)",
+      "concurrency": 8,
+      "ctx_tokens": 12000,
+      "max_tokens": 256,
+      "duration_s": 180,
+      "temperature": 0.7,
+      "note": "counts content + reasoning_content deltas (GLM-5.2 is a reasoning model)"
+    },
+    "metric_caveat": "aggregate_gen_throughput = total_output_tokens / wall. Output length is stochastic (temp 0.7), so single runs are noisy; first sustained run after every restart is a ~56 tps cold-start outlier in BOTH states (restart property, not tuning-related). Steady-state = runs 2+."
+  },
+  "before_untuned": {
+    "config": "regenerated /tmp/aiter_configs/bf16_tuned_gemm.csv from bundled sources (no gfx942 N=256/K=6144 rows -> 'not found' -> torch default fallback)",
+    "runs_tps": [56.45, 100.05, 99.56],
+    "steady_state_mean_tps": 99.8,
+    "steady_state_per_req_mean_tps": 12.69,
+    "not_found_shapes_N256_K6144": "many (M=4,5,6,7,8,9,36,40,48,64,...) -- the decode hot path gap"
+  },
+  "after_tuned": {
+    "config": "env AITER_CONFIG_GEMM_BF16=/data/aiter_configs/bf16_tuned_gemm.csv (2381 rows, 0 dup keys; +28 new gfx942 K=6144 rows: 14 N=256 asm splitK + 14 N=32 torch)",
+    "runs_tps": [56.33, 102.36, 102.30],
+    "steady_state_mean_tps": 102.3,
+    "steady_state_per_req_mean_tps": 13.0,
+    "not_found_N256_K6144": 0,
+    "not_found_remaining": "M=156 N=32 K=6144 only (16 lines; shape not in tuning set, falls back to torch)"
+  },
+  "speculative_decoding": {
+    "spec_accept_rate": 0.629,
+    "spec_accept_length": 2.887,
+    "verdict": "healthy, unchanged by tuning"
+  },
+  "conclusion": {
+    "throughput_delta_steady_state_pct": 2.5,
+    "verdict": "throughput-NEUTRAL within run-to-run noise. Tuning CLOSED the not-found gap for the N=256/K=6144 decode hot path (concrete win: tuned asm splitK kernels now used instead of torch default fallback), but did NOT measurably improve aggregate decode throughput. The decode bf16 GEMM was already served by a torch default fallback ~as fast as the tuned kernels, and GEMM is a small fraction of decode time (attention/MoE-dispatch/allreduce dominate), so headroom was limited.",
+    "faithful_note": "Per team-lead instruction: reporting real numbers. No throughput win claimed."
+  },
+  "persisted_csv": "/data/aiter_configs/bf16_tuned_gemm.csv (hostPath /data, survives restart)",
+  "reload_mechanism": "env AITER_CONFIG_GEMM_BF16 -> aiter.jit.core get_config_file() loads the single path directly, bypassing the bundled-source merge that regenerates /tmp/aiter_configs on every start",
+  "tuning_details": {
+    "entrypoint": "/sgl-workspace/aiter/csrc/gemm_a16w16/gemm_a16w16_tune.py",
+    "libtypes": "asm,torch (opus skipped: 156 candidates x splitK 1-16 = hours)",
+    "shapes_tuned": 28,
+    "backends_won": "N=256 small M (16-128) -> asm splitK (splitK 8-16, us 7.4-12.3); N=256 large M (512-16384) -> torch; N=32 all M -> torch (asm needs N%64==0)",
+    "wall_time_s": 90,
+    "failures": 0
+  },
+  "blockers": [],
+  "final_state": "tune19-sglang-0 RUNNING with tuned csv (env override active), /health 200"
+}

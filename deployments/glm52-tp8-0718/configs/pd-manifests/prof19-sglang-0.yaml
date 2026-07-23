@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: prof19-sglang-0
+  namespace: kube-system
+  labels:
+    accelerator: amd-gpu
+    app: sglang
+    app.kubernetes.io/name: sglang-glm52-308x
+    prof19: "true"
+spec:
+  nodeName: node-21.234.170.19
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  restartPolicy: Always
+  terminationGracePeriodSeconds: 300
+  imagePullSecrets:
+    - name: tencent-registry
+  tolerations:
+    - key: dedicated
+      value: glm52-prod
+      effect: NoSchedule
+    - key: node.cvm.com/ptl-unsupported
+      effect: NoSchedule
+    - key: node.kubernetes.io/not-ready
+      operator: Exists
+      effect: NoExecute
+      tolerationSeconds: 300
+    - key: node.kubernetes.io/unreachable
+      operator: Exists
+      effect: NoExecute
+      tolerationSeconds: 300
+  containers:
+    - name: sglang
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:fix-eagle-coredump-v3
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -euo pipefail
+          MODEL_PATH=${MODEL_PATH:-/data/model/glm52-fp8}
+          API_KEY=${API_KEY:-sk-46faecc9d0bc4dcd9db6a15c73ae91c8}
+          PORT=${PORT:-30000}
+          if ! command -v numactl &>/dev/null; then
+            echo "Installing numactl for NUMA memory binding..."
+            apt-get update -qq && apt-get install -y -qq numactl >/dev/null 2>&1
+          fi
+          echo "=== prof19: GLM-5.2-FP8 SGLang (MI308X gfx942) — decode cuda-graph OFF for py-spy attribution ==="
+          exec python3 -m sglang.launch_server \
+            --model-path "$MODEL_PATH" \
+            --model-impl sglang \
+            --served-model-name glm-5.2 \
+            --api-key "$API_KEY" \
+            --tp-size 8 --pp-size 1 --trust-remote-code \
+            --host 0.0.0.0 --port "$PORT" \
+            --numa-node 0 0 0 0 1 1 1 1 \
+            --context-length "524288" \
+            --tool-call-parser glm47 --reasoning-parser glm45 \
+            --mem-fraction-static 0.75 \
+            --enable-aiter-allreduce-fusion --enable-mixed-chunk \
+            --chunked-prefill-size 16384 \
+            --enable-fused-qk-norm-rope \
+            --schedule-conservativeness 1 \
+            --prefill-max-requests 4 --max-prefill-tokens 32768 \
+            --kv-cache-dtype fp8_e4m3 \
+            --speculative-algorithm NEXTN \
+            --speculative-num-steps 3 --speculative-num-draft-tokens 4 \
+            --speculative-eagle-topk 1 \
+            --cuda-graph-backend-prefill tc_piecewise \
+            --max-running-requests 32 \
+            --cuda-graph-bs-prefill 4 8 16 32 \
+            --enable-hierarchical-cache \
+            --hicache-ratio 2 \
+            --hicache-io-backend direct \
+            --hicache-mem-layout page_first_direct \
+            --hicache-write-policy write_back \
+            --enable-metrics --skip-server-warmup \
+            --watchdog-timeout 1200 --log-level info
+      env:
+        - {name: MODEL_PATH, value: /data/model/glm52-fp8}
+        - {name: PORT, value: "30000"}
+        - {name: API_KEY, value: sk-46faecc9d0bc4dcd9db6a15c73ae91c8}
+        - {name: HIP_VISIBLE_DEVICES, value: "0,1,2,3,4,5,6,7"}
+        - {name: NCCL_DEBUG, value: WARN}
+        - {name: HSA_ENABLE_SDMA, value: "0"}
+        - {name: HIP_FORCE_DEV_KERNARG, value: "1"}
+        - {name: HSA_NO_SCRATCH_RECLAIM, value: "1"}
+        - {name: NCCL_CUMEM_ENABLE, value: "0"}
+        - {name: NCCL_MIN_NCHANNELS, value: "80"}
+        - {name: NCCL_NVLS_ENABLE, value: "0"}
+        - {name: PYTORCH_CUDA_ALLOC_CONF, value: expandable_segments:True}
+        - {name: PYTORCH_ROCM_ARCH, value: gfx942}
+        - {name: ROCM_QUICK_REDUCE_QUANTIZATION, value: NONE}
+        - {name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN, value: "1"}
+        - {name: SGLANG_DISABLE_CUDNN_CHECK, value: "1"}
+        - {name: SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION, value: "false"}
+        - {name: SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM, value: "1"}
+        - {name: SGLANG_FORCE_COARSE_WAR_BARRIER, value: "true"}
+        - {name: SGLANG_INT4_WEIGHT, value: "0"}
+        - {name: SGLANG_MOE_PADDING, value: "1"}
+        - {name: SGLANG_ROCM_DISABLE_LINEARQUANT, value: "0"}
+        - {name: SGLANG_ROCM_FUSED_DECODE_MLA, value: "1"}
+        - {name: SGLANG_SET_CPU_AFFINITY, value: "1"}
+        - {name: SGLANG_USE_AITER, value: "1"}
+        - {name: SGLANG_USE_ROCM700A, value: "1"}
+        - {name: CUDA_ENABLE_USER_TRIGGERED_COREDUMP, value: "1"}
+        - {name: AITER_CONFIG_GEMM_BF16, value: /data/aiter_configs/bf16_tuned_gemm.csv}
+      ports:
+        - {name: http, containerPort: 30000, hostPort: 30000, protocol: TCP}
+      resources:
+        limits:
+          amd.com/gpu: "8"
+        requests:
+          amd.com/gpu: "8"
+          cpu: 360
+          memory: 2100Gi
+      securityContext:
+        privileged: true
+        capabilities:
+          add: [SYS_PTRACE]
+          drop: [ALL]
+        seccompProfile:
+          type: Unconfined
+      livenessProbe:
+        httpGet: {path: /health, port: 30000, scheme: HTTP}
+        initialDelaySeconds: 600
+        periodSeconds: 60
+        failureThreshold: 5
+        timeoutSeconds: 10
+      readinessProbe:
+        httpGet: {path: /health, port: 30000, scheme: HTTP}
+        initialDelaySeconds: 120
+        periodSeconds: 30
+        failureThreshold: 10
+        timeoutSeconds: 10
+      volumeMounts:
+        - {name: data, mountPath: /data}
+        - {name: dev-kfd, mountPath: /dev/kfd}
+        - {name: dev-dri, mountPath: /dev/dri}
+        - {name: shm, mountPath: /dev/shm}
+  volumes:
+    - name: data
+      hostPath: {path: /data, type: Directory}
+    - name: dev-kfd
+      hostPath: {path: /dev/kfd, type: CharDevice}
+    - name: dev-dri
+      hostPath: {path: /dev/dri, type: Directory}
+    - name: shm
+      emptyDir: {medium: Memory, sizeLimit: 32Gi}

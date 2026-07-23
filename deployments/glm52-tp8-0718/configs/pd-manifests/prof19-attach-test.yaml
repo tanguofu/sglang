@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: prof19-attach-test
+  namespace: kube-system
+  labels:
+    prof19: "true"
+spec:
+  nodeName: node-21.234.170.19
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  restartPolicy: Always
+  terminationGracePeriodSeconds: 30
+  imagePullSecrets:
+    - name: tencent-registry
+  tolerations:
+    - {key: dedicated, value: glm52-prod, effect: NoSchedule}
+    - {key: node.cvm.com/ptl-unsupported, effect: NoSchedule}
+    - {key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 300}
+    - {key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 300}
+  containers:
+    - name: t
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:fix-eagle-coredump-v3
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -e
+          # GPU kernel loop with ROCPROF config env pre-set (tool NOT preloaded).
+          # rocprofv3 --attach should inject the tool, which reads this env.
+          python3 -c "
+          import torch, time, os
+          torch.cuda.synchronize()
+          print('ROCPROF env:', {k:v for k,v in os.environ.items() if 'ROCPROF' in k}, flush=True)
+          t0=time.time()
+          while time.time()-t0 < 600:
+              x=torch.randn(2048,2048,device='cuda'); y=x@x
+          torch.cuda.synchronize()
+          "
+      env:
+        - {name: HIP_VISIBLE_DEVICES, value: "0"}
+        - {name: ROCPROFILER_LIBRARY_CTOR, value: "1"}
+        - {name: ROCPROF_KERNEL_TRACE, value: "1"}
+        - {name: ROCPROF_OUTPUT_FORMAT, value: "csv"}
+        - {name: ROCPROF_OUTPUT_PATH, value: "/data/prof19/attachtest"}
+      resources:
+        limits: {amd.com/gpu: "1"}
+        requests: {amd.com/gpu: "1", cpu: "4", memory: "16Gi"}
+      securityContext:
+        privileged: true
+        capabilities: {add: [SYS_PTRACE], drop: [ALL]}
+        seccompProfile: {type: Unconfined}
+      volumeMounts:
+        - {name: data, mountPath: /data}
+        - {name: dev-kfd, mountPath: /dev/kfd}
+        - {name: dev-dri, mountPath: /dev/dri}
+        - {name: shm, mountPath: /dev/shm}
+  volumes:
+    - {name: data, hostPath: {path: /data, type: Directory}}
+    - {name: dev-kfd, hostPath: {path: /dev/kfd, type: CharDevice}}
+    - {name: dev-dri, hostPath: {path: /dev/dri, type: Directory}}
+    - {name: shm, emptyDir: {medium: Memory, sizeLimit: 8Gi}}

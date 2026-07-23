@@ -1,0 +1,262 @@
+[
+  {
+    "id": "R1",
+    "category": "reasoning",
+    "ok": false,
+    "note": "no match for /mammal/",
+    "elapsed": 2.62,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "R2",
+    "category": "reasoning",
+    "ok": false,
+    "note": "no match for /yes|true/",
+    "elapsed": 2.49,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "R3",
+    "category": "reasoning",
+    "ok": false,
+    "note": "no match for /\\b9\\b/",
+    "elapsed": 2.54,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "R4",
+    "category": "reasoning",
+    "ok": false,
+    "note": "no match for /(5|five).*(3|three)|(3|three).*(5|five)/",
+    "elapsed": 7.96,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "M1",
+    "category": "math",
+    "ok": false,
+    "note": "no match for /56088/",
+    "elapsed": 2.42,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "M2",
+    "category": "math",
+    "ok": false,
+    "note": "no match for /150/",
+    "elapsed": 2.53,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "M3",
+    "category": "math",
+    "ok": false,
+    "note": "no match for /\\b6\\b/",
+    "elapsed": 2.53,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "M4",
+    "category": "math",
+    "ok": false,
+    "note": "no match for /\\b30\\b/",
+    "elapsed": 2.37,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "C1",
+    "category": "code",
+    "ok": true,
+    "note": "matched",
+    "elapsed": 4.33,
+    "stop": "end_turn",
+    "text": "```python\ndef is_palindrome(s):\n    filtered = ''.join(c.lower() for c in s if c.isalnum())\n    return filtered == filtered[::-1]\n```",
+    "tool_text": ""
+  },
+  {
+    "id": "C2",
+    "category": "code",
+    "ok": true,
+    "note": "matched",
+    "elapsed": 6.38,
+    "stop": "end_turn",
+    "text": "```python\ndef fib(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n```",
+    "tool_text": ""
+  },
+  {
+    "id": "C3",
+    "category": "code",
+    "ok": true,
+    "note": "matched",
+    "elapsed": 4.8,
+    "stop": "end_turn",
+    "text": "```python\ndef binary_search(arr, target):\n    left, right = 0, len(arr) - 1\n    while left <= right:\n        mid = left + (right - left) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            left = mid + 1\n        else:\n            right = mid - 1\n    return -1\n```",
+    "tool_text": ""
+  },
+  {
+    "id": "D1",
+    "category": "debug",
+    "ok": false,
+    "note": "no match for /return|indent/",
+    "elapsed": 4.61,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "D2",
+    "category": "debug",
+    "ok": false,
+    "note": "no match for /empty|len|zero|division/",
+    "elapsed": 3.62,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "I1",
+    "category": "instruction",
+    "ok": false,
+    "note": "no match for /1[.)]\\s+\\w+\\s*2[.)]\\s+\\w+\\s*3[.)]\\s+\\w+/",
+    "elapsed": 2.44,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "I2",
+    "category": "instruction",
+    "ok": false,
+    "note": "no match for /^\\W*(\\w+\\W+){4}\\w+\\W*$/",
+    "elapsed": 1.79,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "I3",
+    "category": "instruction",
+    "ok": false,
+    "note": "no match for /\"name\"\\s*:\\s*\"GLM\"\\s*,\\s*\"version\"\\s*:\\s*5\\.2/",
+    "elapsed": 2.45,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "K1",
+    "category": "knowledge",
+    "ok": false,
+    "note": "no match for /Tokyo/",
+    "elapsed": 1.89,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "K2",
+    "category": "knowledge",
+    "ok": false,
+    "note": "no match for /Shakespeare/",
+    "elapsed": 1.83,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "K3",
+    "category": "knowledge",
+    "ok": false,
+    "note": "no match for /\\bAu\\b/",
+    "elapsed": 1.95,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "ZH1",
+    "category": "chinese",
+    "ok": false,
+    "note": "no match for /北京/",
+    "elapsed": 1.76,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "ZH2",
+    "category": "chinese",
+    "ok": false,
+    "note": "no match for /人工智能|AI|模拟.*智能|机器.*学习/",
+    "elapsed": 4.05,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "ZH3",
+    "category": "chinese",
+    "ok": true,
+    "note": "matched",
+    "elapsed": 4.69,
+    "stop": "end_turn",
+    "text": "def gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a",
+    "tool_text": ""
+  },
+  {
+    "id": "T1",
+    "category": "tool_use",
+    "ok": true,
+    "note": "matched",
+    "elapsed": 1.84,
+    "stop": "tool_use",
+    "text": "",
+    "tool_text": "{\"city\": \"Tokyo\"}"
+  },
+  {
+    "id": "L1",
+    "category": "long_context",
+    "ok": false,
+    "note": "no match for /Papaya/",
+    "elapsed": 2.03,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "CR1",
+    "category": "creative",
+    "ok": false,
+    "note": "no match for /\\n.*\\n/",
+    "elapsed": 2.53,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  },
+  {
+    "id": "S1",
+    "category": "summarization",
+    "ok": false,
+    "note": "no match for /Apollo\\s*11|moon|Armstrong/",
+    "elapsed": 3.57,
+    "stop": "max_tokens",
+    "text": "",
+    "tool_text": ""
+  }
+]

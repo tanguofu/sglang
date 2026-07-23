@@ -1,0 +1,22 @@
+[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {"name": "UCX_MAX_EAGER_RAILS", "value": "4"}
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {"name": "UCX_MAX_RNDV_RAILS", "value": "4"}
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {"name": "UCX_NET_DEVICES", "value": "bnxt_re_bond0:1,bnxt_re_bond1:1,bnxt_re_bond2:1,bnxt_re_bond3:1"}
+  },
+  {
+    "op": "add",
+    "path": "/spec/template/spec/containers/0/env/-",
+    "value": {"name": "UCX_TLS", "value": "rc_verbs,rocm,cma"}
+  }
+]

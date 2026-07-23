@@ -1,0 +1,363 @@
+# TYPE smg_router_request_errors_total counter
+smg_router_request_errors_total{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",error_type="validation_error"} 11
+smg_router_request_errors_total{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",error_type="validation_error"} 2
+
+# TYPE smg_worker_cb_outcomes_total counter
+smg_worker_cb_outcomes_total{worker="http://21.234.170.103:30000",outcome="failure"} 12
+smg_worker_cb_outcomes_total{worker="http://21.234.170.103:30000",outcome="success"} 26
+
+# TYPE smg_worker_selection_total counter
+smg_worker_selection_total{worker_type="regular",connection_mode="http",model="glm-5.2[1M]",policy="cache_aware"} 82
+smg_worker_selection_total{worker_type="regular",connection_mode="http",model="unknown-model",policy="cache_aware"} 1
+smg_worker_selection_total{worker_type="regular",connection_mode="http",model="glm-5.2",policy="cache_aware"} 106
+
+# TYPE smg_http_responses_total counter
+smg_http_responses_total{status_code="200",error_code=""} 2186
+smg_http_responses_total{status_code="400",error_code=""} 13
+smg_http_responses_total{status_code="405",error_code=""} 1
+smg_http_responses_total{status_code="401",error_code=""} 1
+
+# TYPE smg_router_upstream_responses_total counter
+smg_router_upstream_responses_total{router_type="http",status_code="200",error_code=""} 96
+smg_router_upstream_responses_total{router_type="http",status_code="400",error_code=""} 13
+
+# TYPE smg_router_requests_total counter
+smg_router_requests_total{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",streaming="false"} 10
+smg_router_requests_total{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",streaming="true"} 52
+smg_router_requests_total{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",streaming="false"} 11
+smg_router_requests_total{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",streaming="false"} 8
+smg_router_requests_total{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",streaming="false"} 9
+smg_router_requests_total{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",streaming="true"} 15
+smg_router_requests_total{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",streaming="true"} 4
+
+# TYPE smg_worker_health_checks_total counter
+smg_worker_health_checks_total{worker_type="regular",result="success"} 496
+smg_worker_health_checks_total{worker_type="regular",result="failure"} 2
+
+# TYPE smg_http_requests_total counter
+smg_http_requests_total{method="GET",path="/health"} 2004
+smg_http_requests_total{method="POST",path="/v1/messages"} 80
+smg_http_requests_total{method="POST",path="/v1/chat/completions"} 22
+smg_http_requests_total{method="GET",path="/health_generate"} 2
+smg_http_requests_total{method="GET",path="/v1/models"} 6
+smg_http_requests_total{method="GET",path="/get_server_info"} 1
+smg_http_requests_total{method="POST",path="/v1/responses"} 87
+smg_http_requests_total{method="POST",path="/health"} 1
+
+# TYPE smg_http_inflight_request_age_count gauge
+smg_http_inflight_request_age_count{gt="3600",le="7200"} 0
+smg_http_inflight_request_age_count{gt="7200",le="14400"} 0
+smg_http_inflight_request_age_count{gt="0",le="30"} 0
+smg_http_inflight_request_age_count{gt="60",le="180"} 0
+smg_http_inflight_request_age_count{gt="14400",le="28800"} 0
+smg_http_inflight_request_age_count{gt="28800",le="86400"} 0
+smg_http_inflight_request_age_count{gt="180",le="300"} 0
+smg_http_inflight_request_age_count{gt="600",le="1200"} 0
+smg_http_inflight_request_age_count{gt="300",le="600"} 0
+smg_http_inflight_request_age_count{gt="1200",le="3600"} 0
+smg_http_inflight_request_age_count{gt="86400",le="+Inf"} 0
+smg_http_inflight_request_age_count{gt="30",le="60"} 0
+
+# TYPE smg_worker_pool_size gauge
+smg_worker_pool_size{worker_type="regular",connection_mode="http",model="unknown"} 2
+
+# TYPE smg_http_connections_active gauge
+smg_http_connections_active 2
+
+# TYPE smg_worker_cb_state gauge
+smg_worker_cb_state{worker="http://21.234.170.38:30000"} 0
+smg_worker_cb_state{worker="http://21.234.170.103:30000"} 0
+
+# TYPE smg_worker_health gauge
+smg_worker_health{worker="http://21.234.170.38:30000"} 1
+smg_worker_health{worker="http://21.234.170.103:30000"} 1
+
+# TYPE smg_worker_requests_active gauge
+smg_worker_requests_active{worker="http://21.234.170.103:30000"} 0
+
+# TYPE smg_worker_cb_consecutive_failures gauge
+smg_worker_cb_consecutive_failures{worker="http://21.234.170.103:30000"} 0
+
+# TYPE smg_worker_cb_consecutive_successes gauge
+smg_worker_cb_consecutive_successes{worker="http://21.234.170.103:30000"} 37
+
+# TYPE smg_router_request_duration_seconds histogram
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="0.001"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="0.005"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="0.01"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="0.025"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="0.05"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="0.1"} 4
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="0.25"} 11
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="0.5"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="1"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="2.5"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="5"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="10"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="15"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="30"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="45"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="60"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="90"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="120"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="180"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="240"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat",le="+Inf"} 12
+smg_router_request_duration_seconds_sum{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat"} 1.9212127099999998
+smg_router_request_duration_seconds_count{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="chat"} 12
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="0.001"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="0.005"} 14
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="0.01"} 14
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="0.025"} 14
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="0.05"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="0.1"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="0.25"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="0.5"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="1"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="2.5"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="5"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="10"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="15"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="30"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="45"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="60"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="90"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="120"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="180"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="240"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses",le="+Inf"} 15
+smg_router_request_duration_seconds_sum{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses"} 0.085200101
+smg_router_request_duration_seconds_count{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2[1M]",endpoint="responses"} 15
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="0.001"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="0.005"} 34
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="0.01"} 34
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="0.025"} 34
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="0.05"} 51
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="0.1"} 51
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="0.25"} 51
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="0.5"} 51
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="1"} 52
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="2.5"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="5"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="10"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="15"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="30"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="45"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="60"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="90"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="120"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="180"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="240"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses",le="+Inf"} 59
+smg_router_request_duration_seconds_sum{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses"} 12.796732781000001
+smg_router_request_duration_seconds_count{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="responses"} 59
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="0.001"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="0.005"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="0.01"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="0.025"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="0.05"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="0.1"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="0.25"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="0.5"} 0
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="1"} 9
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="2.5"} 10
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="5"} 10
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="10"} 10
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="15"} 10
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="30"} 10
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="45"} 10
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="60"} 10
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="90"} 10
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="120"} 10
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="180"} 10
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="240"} 10
+smg_router_request_duration_seconds_bucket{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat",le="+Inf"} 10
+smg_router_request_duration_seconds_sum{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat"} 7.647457576999999
+smg_router_request_duration_seconds_count{router_type="http",backend_type="regular",connection_mode="http",model="glm-5.2",endpoint="chat"} 10
+
+# TYPE smg_http_request_duration_seconds histogram
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="0.001"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="0.005"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="0.01"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="0.025"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="0.05"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="0.1"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="0.25"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="0.5"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="1"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="2.5"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="5"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="10"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="15"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="30"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="45"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="60"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="90"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="120"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="180"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="240"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/health",le="+Inf"} 1
+smg_http_request_duration_seconds_sum{method="POST",path="/health"} 0.000085572
+smg_http_request_duration_seconds_count{method="POST",path="/health"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="0.001"} 0
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="0.005"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="0.01"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="0.025"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="0.05"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="0.1"} 1
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="0.25"} 14
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="0.5"} 31
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="1"} 50
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="2.5"} 59
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="5"} 66
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="10"} 77
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="15"} 77
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="30"} 78
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="45"} 78
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="60"} 78
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="90"} 78
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="120"} 78
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="180"} 78
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="240"} 78
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/messages",le="+Inf"} 78
+smg_http_request_duration_seconds_sum{method="POST",path="/v1/messages"} 161.571434119
+smg_http_request_duration_seconds_count{method="POST",path="/v1/messages"} 78
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="0.001"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="0.005"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="0.01"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="0.025"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="0.05"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="0.1"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="0.25"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="0.5"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="1"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="2.5"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="5"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="10"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="15"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="30"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="45"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="60"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="90"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="120"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="180"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="240"} 2004
+smg_http_request_duration_seconds_bucket{method="GET",path="/health",le="+Inf"} 2004
+smg_http_request_duration_seconds_sum{method="GET",path="/health"} 0.14637051199999998
+smg_http_request_duration_seconds_count{method="GET",path="/health"} 2004
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="0.001"} 0
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="0.005"} 0
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="0.01"} 0
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="0.025"} 0
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="0.05"} 0
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="0.1"} 4
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="0.25"} 11
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="0.5"} 12
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="1"} 21
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="2.5"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="5"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="10"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="15"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="30"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="45"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="60"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="90"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="120"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="180"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="240"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/chat/completions",le="+Inf"} 22
+smg_http_request_duration_seconds_sum{method="POST",path="/v1/chat/completions"} 9.572680418000001
+smg_http_request_duration_seconds_count{method="POST",path="/v1/chat/completions"} 22
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="0.001"} 0
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="0.005"} 61
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="0.01"} 61
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="0.025"} 61
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="0.05"} 62
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="0.1"} 62
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="0.25"} 79
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="0.5"} 79
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="1"} 80
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="2.5"} 87
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="5"} 87
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="10"} 87
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="15"} 87
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="30"} 87
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="45"} 87
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="60"} 87
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="90"} 87
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="120"} 87
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="180"} 87
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="240"} 87
+smg_http_request_duration_seconds_bucket{method="POST",path="/v1/responses",le="+Inf"} 87
+smg_http_request_duration_seconds_sum{method="POST",path="/v1/responses"} 14.951995259
+smg_http_request_duration_seconds_count{method="POST",path="/v1/responses"} 87
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="0.001"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="0.005"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="0.01"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="0.025"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="0.05"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="0.1"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="0.25"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="0.5"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="1"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="2.5"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="5"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="10"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="15"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="30"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="45"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="60"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="90"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="120"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="180"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="240"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/get_server_info",le="+Inf"} 1
+smg_http_request_duration_seconds_sum{method="GET",path="/get_server_info"} 0.000096461
+smg_http_request_duration_seconds_count{method="GET",path="/get_server_info"} 1
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="0.001"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="0.005"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="0.01"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="0.025"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="0.05"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="0.1"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="0.25"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="0.5"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="1"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="2.5"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="5"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="10"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="15"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="30"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="45"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="60"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="90"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="120"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="180"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="240"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/v1/models",le="+Inf"} 6
+smg_http_request_duration_seconds_sum{method="GET",path="/v1/models"} 0.000633732
+smg_http_request_duration_seconds_count{method="GET",path="/v1/models"} 6
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="0.001"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="0.005"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="0.01"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="0.025"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="0.05"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="0.1"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="0.25"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="0.5"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="1"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="2.5"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="5"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="10"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="15"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="30"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="45"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="60"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="90"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="120"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="180"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="240"} 2
+smg_http_request_duration_seconds_bucket{method="GET",path="/health_generate",le="+Inf"} 2
+smg_http_request_duration_seconds_sum{method="GET",path="/health_generate"} 0.000180144
+smg_http_request_duration_seconds_count{method="GET",path="/health_generate"} 2
+

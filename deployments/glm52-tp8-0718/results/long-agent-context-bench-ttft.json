@@ -1,0 +1,73 @@
+{
+  "ts": "captured",
+  "ctx_tokens_target": 12000,
+  "max_tokens": 256,
+  "n_per_level": 8,
+  "runs": [
+    {
+      "concurrency": 8,
+      "n_req": 8,
+      "ctx_tokens_target": 12000,
+      "max_tokens": 256,
+      "wall_clock_s": 6.63,
+      "n_ok": 8,
+      "n_fail": 0,
+      "ttft_s": {
+        "p50": 1.742,
+        "p95": 1.849,
+        "mean": 1.734
+      },
+      "latency_s": {
+        "p50": 4.7,
+        "p95": 5.52,
+        "mean": 4.825
+      },
+      "throughput_tps": {
+        "mean": 20.59,
+        "p50": 20.56
+      },
+      "output_tokens": {
+        "mean": 86.5,
+        "total": 692
+      },
+      "worker_delta": {
+        "w1": {
+          "num_requests_total": 4.0,
+          "prompt_tokens_total": 42288.0,
+          "generation_tokens_total": 1016.0,
+          "cached_tokens_total": 42240.0
+        },
+        "w2": {
+          "num_requests_total": 4.0,
+          "prompt_tokens_total": 42288.0,
+          "generation_tokens_total": 1016.0,
+          "cached_tokens_total": 42240.0
+        }
+      },
+      "load_split_by_prompt_tokens": {
+        "w1": 42288.0,
+        "w2": 42288.0,
+        "w1_pct": 50.0,
+        "w2_pct": 50.0
+      },
+      "router_delta": {
+        "selection": 8.0,
+        "requests": 0.0
+      },
+      "background_rate": {
+        "w1": {
+          "num_requests_total_per_s": 0.0,
+          "prompt_tokens_total_per_s": 0.0,
+          "generation_tokens_total_per_s": 0.0
+        },
+        "w2": {
+          "num_requests_total_per_s": 0.4,
+          "prompt_tokens_total_per_s": 30247.8,
+          "generation_tokens_total_per_s": 32.93333333333333
+        }
+      },
+      "background_corrected_w1_reqs": 4.0,
+      "failures": []
+    }
+  ]
+}

@@ -1,0 +1,138 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "31"
+    meta.helm.sh/release-name: sglang-glm52-2tp8
+    meta.helm.sh/release-namespace: kube-system
+  creationTimestamp: "2026-07-16T08:25:45Z"
+  generation: 31
+  labels:
+    accelerator: amd-gpu
+    app: sglang-router
+    app.kubernetes.io/instance: sglang-glm52-2tp8
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sglang-glm52-308x
+    helm.sh/chart: sglang-glm52-308x-0.1.0
+  name: sglang-glm52-2tp8-router
+  namespace: kube-system
+  resourceVersion: "274116461"
+  uid: 23b0aeea-aacb-4040-a7a5-50feb49d5644
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: sglang-router
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-07-17T12:53:32+08:00"
+      creationTimestamp: null
+      labels:
+        accelerator: amd-gpu
+        app: sglang-router
+        app.kubernetes.io/instance: sglang-glm52-2tp8
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: sglang-glm52-308x
+        helm.sh/chart: sglang-glm52-308x-0.1.0
+    spec:
+      containers:
+      - args:
+        - --worker-urls
+        - http://21.234.170.103:30000
+        - http://21.234.170.38:30000
+        - --policy
+        - cache_aware
+        - --host
+        - 0.0.0.0
+        - --port
+        - "30001"
+        - --cache-threshold
+        - "0.5"
+        - --balance-abs-threshold
+        - "32"
+        - --balance-rel-threshold
+        - "1.5"
+        command:
+        - python3
+        - -m
+        - sglang_router.launch_router
+        image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:messages-0717c
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /health
+            port: 30001
+            scheme: HTTP
+          initialDelaySeconds: 15
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 5
+        name: router
+        ports:
+        - containerPort: 30001
+          name: http
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /health
+            port: 30001
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+        resources:
+          limits:
+            cpu: "4"
+            memory: 8Gi
+          requests:
+            cpu: "2"
+            memory: 4Gi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirstWithHostNet
+      hostNetwork: true
+      imagePullSecrets:
+      - name: tencent-registry
+      nodeSelector:
+        accelerator: amd-gpu
+        kubernetes.io/hostname: node-21.234.170.38
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - effect: NoSchedule
+        key: dedicated
+        operator: Equal
+        value: sglang-2tp8
+      - operator: Exists
+status:
+  availableReplicas: 1
+  conditions:
+  - lastTransitionTime: "2026-07-18T01:14:31Z"
+    lastUpdateTime: "2026-07-18T01:14:31Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  - lastTransitionTime: "2026-07-18T00:05:38Z"
+    lastUpdateTime: "2026-07-18T01:14:31Z"
+    message: ReplicaSet "sglang-glm52-2tp8-router-697df7c955" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  observedGeneration: 31
+  readyReplicas: 1
+  replicas: 1
+  updatedReplicas: 1
