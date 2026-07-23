@@ -284,5 +284,9 @@ artifacts/
 .claude/scheduled_tasks.lock
 .humanize/
 
+# Binary artifacts (wheels, profiling SVGs)
+*.whl
+*.svg
+
 # Internal, non-published docs
 internal-docs/
