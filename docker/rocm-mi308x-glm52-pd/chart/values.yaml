@@ -2,8 +2,8 @@
 # Deploy: helm install glm52-pd ./chart -n kube-system -f chart/values.yaml
 
 # --- Images (built from Dockerfile + Dockerfile.router, pushed to mirrors) ---
-workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:pd-resp-msg-v6
-routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:pd-resp-msg-v1
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:pd-resp-msg-v7
+routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:pd-resp-msg-v2
 
 # --- API ---
 apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
@@ -23,15 +23,40 @@ routerIP: "21.151.225.172"
 ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
 bootstrapPort: "8998"
 
+# --- Per-bond static routes (GDR prerequisite) ---
+# Each bond needs a /30 route to the peer node's corresponding bond.
+# Without these, all RDMA traffic goes through bond7 catch-all route.
+prefillRoutes:
+  - "29.199.73.120/30 via 29.199.73.109 dev bond0"
+  - "29.199.73.144/30 via 29.199.73.149 dev bond1"
+  - "29.199.73.136/30 via 29.199.73.117 dev bond2"
+  - "29.199.73.128/30 via 29.199.73.113 dev bond3"
+  - "29.199.73.8/30 via 29.199.73.73 dev bond4"
+  - "29.199.73.88/30 via 29.199.73.37 dev bond5"
+  - "29.199.73.96/30 via 29.199.73.81 dev bond6"
+  - "29.199.73.44/30 via 29.199.73.153 dev bond7"
+decodeRoutes:
+  - "29.199.73.108/30 via 29.199.73.121 dev bond0"
+  - "29.199.73.148/30 via 29.199.73.145 dev bond1"
+  - "29.199.73.116/30 via 29.199.73.137 dev bond2"
+  - "29.199.73.112/30 via 29.199.73.129 dev bond3"
+  - "29.199.73.72/30 via 29.199.73.9 dev bond4"
+  - "29.199.73.36/30 via 29.199.73.89 dev bond5"
+  - "29.199.73.80/30 via 29.199.73.97 dev bond6"
+  - "29.199.73.152/30 via 29.199.73.45 dev bond7"
+
 # --- Worker common env ---
+# Aligned with 1tp8 production config + PD-specific GDR settings.
+# Key differences from 1tp8:
+#   - MC_GID_INDEX=3 / MC_DISABLE_HIP_TRANSPORT=1 (mooncake GDR on bnxt_re)
+#   - SGLANG_DSA_DISABLE_AITER_PA_MQA=1 (gfx942 Triton MLIR crash workaround)
+#   - No SGLANG_PD_HOST_STAGING (GDR via dmabuf, not host staging)
 workerEnv:
   - name: MOONCAKE_PROTOCOL
     value: "rdma"
   - name: MC_GID_INDEX
     value: "3"
   - name: MC_DISABLE_HIP_TRANSPORT
-    value: "1"
-  - name: SGLANG_PD_HOST_STAGING
     value: "1"
   - name: HIP_VISIBLE_DEVICES
     value: "0,1,2,3,4,5,6,7"
@@ -42,7 +67,7 @@ workerEnv:
   - name: NCCL_CUMEM_ENABLE
     value: "0"
   - name: NCCL_MIN_NCHANNELS
-    value: "112"
+    value: "80"
   - name: NCCL_NVLS_ENABLE
     value: "0"
   - name: HSA_ENABLE_SDMA
@@ -54,7 +79,7 @@ workerEnv:
   - name: PYTORCH_ROCM_ARCH
     value: "gfx942"
   - name: ROCM_QUICK_REDUCE_QUANTIZATION
-    value: "INT8"
+    value: "NONE"
   - name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN
     value: "1"
   - name: SGLANG_DISABLE_CUDNN_CHECK
@@ -73,16 +98,23 @@ workerEnv:
     value: "1"
   - name: SGLANG_USE_AITER
     value: "1"
+  - name: SGLANG_OPT_USE_AITER_INDEXER
+    value: "1"
   - name: SGLANG_DSA_DISABLE_AITER_PA_MQA
     value: "1"
   - name: SGLANG_USE_ROCM700A
     value: "1"
   - name: SGLANG_OPT_USE_TOPK_V2
     value: "0"
-  # NOTE: HSA_NO_SCRATCH_RECLAIM removed — that's an Ascend NPU var, not ROCm
+  - name: FLYDSL_FP8_MQA_LOGITS_VARIANT
+    value: "mfma_r4_w4"
 
 # --- Prefill launch args (beyond common) ---
 prefillExtraArgs: >-
+  --attention-backend dsa
+  --dsa-prefill-backend tilelang
+  --dsa-decode-backend tilelang
+  --numa-node 0 0 0 0 1 1 1 1
   --cuda-graph-backend-prefill breakable
   --cuda-graph-bs-prefill 4 8 16 32
   --max-running-requests 128
@@ -92,6 +124,10 @@ prefillExtraArgs: >-
 
 # --- Decode launch args (beyond common) ---
 decodeExtraArgs: >-
+  --attention-backend dsa
+  --dsa-prefill-backend tilelang
+  --dsa-decode-backend tilelang
+  --numa-node 0 0 0 0 1 1 1 1
   --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16
   --cuda-graph-max-bs-decode 16
   --speculative-algorithm NEXTN
@@ -99,6 +135,11 @@ decodeExtraArgs: >-
   --speculative-eagle-topk 1
   --max-running-requests 128
   --mem-fraction-static 0.90
+  --enable-hierarchical-cache
+  --hicache-ratio 2
+  --hicache-io-backend direct
+  --hicache-mem-layout page_first_direct
+  --hicache-write-policy write_through_selective
   --disaggregation-mode decode
 
 # --- Common worker launch args ---
@@ -108,8 +149,8 @@ workerCommonArgs: >-
   --api-key sk-46faecc9d0bc4dcd9db6a15c73ae91c8
   --tp-size 8 --pp-size 1 --trust-remote-code
   --host 0.0.0.0 --port 30000
-  --context-length 1048576
-  --tool-call-parser glm47
+  --context-length 524288
+  --tool-call-parser glm47 --reasoning-parser glm45
   --enable-aiter-allreduce-fusion
   --chunked-prefill-size 32768
   --enable-fused-qk-norm-rope
@@ -117,6 +158,5 @@ workerCommonArgs: >-
   --kv-cache-dtype fp8_e4m3
   --disaggregation-transfer-backend mooncake
   --num-reserved-decode-tokens 1024
-  --disable-overlap-schedule
   --enable-metrics --skip-server-warmup
   --watchdog-timeout 3600 --log-level info

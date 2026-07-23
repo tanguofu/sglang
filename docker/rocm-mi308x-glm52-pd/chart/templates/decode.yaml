@@ -12,6 +12,24 @@ spec:
   hostIPC: true
   restartPolicy: Always
   nodeName: {{ .Values.decodeNode }}
+  initContainers:
+  - name: setup-routes
+    image: {{ .Values.workerImage }}
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/bash", "-c"]
+    args:
+    - |
+      set -e
+      echo "=== Installing per-bond static routes ==="
+      {{- range .Values.decodeRoutes }}
+      ip route replace {{ . }} 2>&1 || echo "WARN: route add failed: {{ . }}"
+      {{- end }}
+      echo "=== Routes installed ==="
+      ip route | grep "29.199.73" | sort -t. -k4 -n
+    securityContext:
+      privileged: true
+      capabilities:
+        add: ["NET_ADMIN"]
   containers:
   - name: sglang
     image: {{ .Values.workerImage }}
@@ -20,35 +38,74 @@ spec:
     args:
     - |
       set -euo pipefail
-      cp /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so
-      cp /data/mooncake-patched/conn.py /sgl-workspace/sglang/python/sglang/srt/disaggregation/mooncake/conn.py
-      cp /data/patches/dsa_indexer.py /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_indexer.py
-      echo "=== GLM-5.2 DECODE (MI308X) ==="
+      # Copy verified GDR engine.so from host (baked-in image engine.so ignores
+      # MC_DISABLE_HIP_TRANSPORT=1 — must be replaced for GDR).
+      if [ -f /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so ]; then
+        cp /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so \
+           /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so
+        echo "Copied verified GDR engine.so from /data/mooncake-patched/"
+      else
+        echo "ERROR: /data/mooncake-patched/engine.so not found!" >&2
+        exit 1
+      fi
+      # Auto-detect kernel bnxt_re driver version and select matching user-space driver.
+      KERN_BNXT_VER=$(cat /sys/module/bnxt_re/version 2>/dev/null || echo "unknown")
+      echo "Kernel bnxt_re version: ${KERN_BNXT_VER}"
+      if echo "${KERN_BNXT_VER}" | grep -q "^238"; then
+        if [ -f /data/mooncake-patched/libbnxt_re-rdmav34.so ]; then
+          cp /data/mooncake-patched/libbnxt_re-rdmav34.so /usr/local/lib/libbnxt_re-rdmav34.so
+          ln -sf /usr/local/lib/libbnxt_re-rdmav34.so \
+                 /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so
+          ldconfig
+          echo "Installed libbnxt_re 238.1.138.5 (OOB) for TL4 kernel"
+        fi
+      elif echo "${KERN_BNXT_VER}" | grep -q "^23[0-5]"; then
+        if [ -f /usr/local/lib/libbnxt_re-235.2.86.0.so ]; then
+          cp /usr/local/lib/libbnxt_re-235.2.86.0.so /usr/local/lib/libbnxt_re-rdmav34.so
+          ln -sf /usr/local/lib/libbnxt_re-rdmav34.so \
+                 /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so
+          ldconfig
+          echo "Installed libbnxt_re 235.2.86.0 (inbox) for old kernel"
+        fi
+      fi
+      echo "=== GLM-5.2 DECODE (MI308X, GDR via HIP dmabuf) ==="
       exec python3 -m sglang.launch_server \
         --model-path {{ .Values.modelPath }} \
         --model-impl sglang --served-model-name {{ .Values.modelName }} \
         --api-key {{ .Values.apiKey }} \
         --tp-size 8 --pp-size 1 --trust-remote-code \
         --host 0.0.0.0 --port 30000 \
-        --context-length 1048576 \
+        --context-length 524288 \
         --tool-call-parser glm47 --reasoning-parser glm45 \
         --mem-fraction-static 0.90 \
-        --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 --cuda-graph-max-bs-decode 16 \
         --enable-aiter-allreduce-fusion --enable-fused-qk-norm-rope \
         --schedule-conservativeness 0.5 --kv-cache-dtype fp8_e4m3 \
+        --attention-backend dsa \
+        --dsa-prefill-backend tilelang \
+        --dsa-decode-backend tilelang \
+        --numa-node 0 0 0 0 1 1 1 1 \
+        --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 --cuda-graph-max-bs-decode 16 \
         --speculative-algorithm NEXTN --speculative-num-steps 2 \
         --speculative-num-draft-tokens 4 --speculative-eagle-topk 1 \
         --max-running-requests 128 \
+        --enable-hierarchical-cache \
+        --hicache-ratio 2 \
+        --hicache-io-backend direct \
+        --hicache-mem-layout page_first_direct \
+        --hicache-write-policy write_through_selective \
         --disaggregation-mode decode --disaggregation-transfer-backend mooncake \
         --disaggregation-ib-device '{{ .Values.ibDevice }}' \
         --disaggregation-bootstrap-port {{ .Values.bootstrapPort }} \
         --num-reserved-decode-tokens 1024 \
-        --disable-overlap-schedule --enable-metrics --skip-server-warmup \
+        --enable-metrics --skip-server-warmup \
         --watchdog-timeout 3600 --log-level info
     securityContext:
       privileged: true
       allowPrivilegeEscalation: true
       readOnlyRootFilesystem: false
+      capabilities:
+        add: ["SYS_PTRACE", "IPC_LOCK", "SYS_ADMIN"]
+        drop: ["ALL"]
       seccompProfile:
         type: Unconfined
     resources:
@@ -62,6 +119,33 @@ spec:
     - name: SGLANG_HOST_IP
       value: "{{ .Values.decodeIP }}"
     {{- toYaml .Values.workerEnv | nindent 4 }}
+    livenessProbe:
+      httpGet:
+        path: /health
+        port: 30000
+        scheme: HTTP
+      initialDelaySeconds: 900
+      periodSeconds: 30
+      failureThreshold: 40
+      timeoutSeconds: 60
+    readinessProbe:
+      httpGet:
+        path: /health
+        port: 30000
+        scheme: HTTP
+      initialDelaySeconds: 900
+      periodSeconds: 30
+      failureThreshold: 40
+      timeoutSeconds: 60
+    ports:
+    - containerPort: 30000
+      hostPort: 30000
+      name: http
+      protocol: TCP
+    - containerPort: 8998
+      hostPort: 8998
+      name: bootstrap
+      protocol: TCP
     volumeMounts:
     - name: shm
       mountPath: /dev/shm
@@ -73,6 +157,9 @@ spec:
       mountPath: /dev/dri
     - name: data
       mountPath: /data
+    - name: aiters-tuned-gemm
+      mountPath: /etc/aiter-configs
+      readOnly: true
   volumes:
   - name: shm
     emptyDir:
@@ -94,5 +181,8 @@ spec:
     hostPath:
       path: /data
       type: Directory
+  - name: aiters-tuned-gemm
+    configMap:
+      name: aiters-tuned-gemm
   tolerations:
   - operator: Exists

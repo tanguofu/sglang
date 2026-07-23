@@ -18,7 +18,7 @@ spec:
     args:
     - |
       set -euo pipefail
-      echo "=== SGLang PD Router (responses) ==="
+      echo "=== SGLang PD Router (3 APIs: chat/responses/messages) ==="
       exec python3 -m sglang_router.launch_router \
         --pd-disaggregation \
         --prefill http://{{ .Values.prefillIP }}:30000 {{ .Values.bootstrapPort }} \
