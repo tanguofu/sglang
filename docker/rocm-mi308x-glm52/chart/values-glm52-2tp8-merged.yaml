@@ -21,20 +21,23 @@
 #               helm drift sync — watchdogTimeout 3600→1200, router tuning
 #   2026-07-21: Merge W1+W2 into single chart (one STS, replicas=2).
 #               Zero precision loss: ROCM_QUICK_REDUCE_QUANTIZATION INT8→NONE
-#               (only affects QuickAllReduce path; AiterCustomAllreduce is default
-#                for bf16+world_size=8 on gfx942, so INT8 never triggers anyway).
 #               Concurrency improvement (conservative, zero precision loss):
-#                 prefillMaxRequests 4→8
-#                 maxRunningRequests 32→48
-#                 cudaGraphMaxBsDecode 16→32
-#                 cudaGraphBsDecode adds 20, 24, 32
-#               Memory budget: ~39 GB free VRAM/rank, est. +10-18 GB usage.
+#                 prefillMaxRequests 4→8, maxRunningRequests 32→48,
+#                 cudaGraphMaxBsDecode 16→32, cudaGraphBsDecode adds 20/24/32
+#   2026-07-23: Align with 1tp8 benchmark-optimized config:
+#                 tag → fix-eagle-coredump-v3, eaglePatch → false
+#                 cudaGraphBackendPrefill → tc_piecewise (DSA indexer crash fix)
+#                 memFraction 0.75→0.88, chunkedPrefill 16384→32768,
+#                 prefillMax 8→32, scheduleConserv 1.0→0.5, watchdog 1200→3600
+#                 hicacheRatio 4→2, hicacheWritePolicy → write_through_selective
+#                 maxRunning 48→32, cudaGraphMaxBsDecode 32→16,
+#                 cudaGraphBsDecode removes 20/24/32
 
 # ---------------------------------------------------------------------------
-# Image — xgmi-opt-0716d build (XGMI P2P + ROCm 7.2.4 + sglang 0.5.14)
+# Image — fix-eagle-coredump-v3 (PR #31478 baked in, NCCL deadlock fix)
 # ---------------------------------------------------------------------------
 image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
-tag: pd-resp-msg-v1
+tag: fix-eagle-coredump-v3
 # Clear the legacy single-secret field to avoid duplication with imagePullSecrets.
 imagePullSecret: ""
 # Image pull secrets — kubernetes.io/dockerconfigjson Secrets in kube-system.
@@ -76,48 +79,39 @@ tolerations:
     effect: NoSchedule
 
 # ---------------------------------------------------------------------------
-# SGLang server parameters — OOM fix + HiCache fix + concurrency improvement
+# SGLang server parameters — aligned with 1tp8 benchmark-optimized config
 # ---------------------------------------------------------------------------
 sglang:
   tpSize: 8
   ppSize: 1
   contextLength: "524288"            # 512K (chart default is 1M, reduced for stability)
   numaNode: "0 0 0 0 1 1 1 1"
-  memFractionStatic: 0.75            # OOM fix: was 0.88, left ~2.5GB/rank activation room
+  memFractionStatic: 0.88            # Aligned with 1tp8; OOM was old image bug, not memory pressure
   kvCacheDtype: fp8_e4m3
-  chunkedPrefillSize: 16384          # OOM fix: was 32768, smaller chunks = less peak activation
-  # Concurrency improvement (2026-07-21, conservative):
-  #   prefillMaxRequests 4→8 (still well below the original 32 that caused OOM;
-  #     with chunkedPrefillSize=16384, 8 concurrent prefills peak ~16 GB/rank activation)
-  #   maxRunningRequests 32→48 (decode is much lighter than prefill; CUDA graph
-  #     captures up to bs=32, beyond that falls back to eager — 48 leaves headroom)
-  prefillMaxRequests: 8
-  maxRunningRequests: 48
+  chunkedPrefillSize: 32768          # Aligned with 1tp8; larger chunks = higher throughput
+  prefillMaxRequests: 32             # Aligned with 1tp8; more concurrent prefill
+  maxRunningRequests: 32             # Aligned with 1tp8; decode beyond CG max_bs goes eager
   maxPrefillTokens: 32768
-  scheduleConservativeness: 1.0      # OOM fix: was 0.5, more conservative scheduling
-  # CUDA graph decode batch sizes — add 20, 24, 32 to cover higher decode concurrency.
-  # Capturing more graphs costs ~1-2 GB VRAM (one-time, at startup) but eliminates
-  # eager-mode overhead for bs in [17, 32]. Beyond 32, eager mode kicks in (still
-  # correct, just slower).
-  cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16 20 24 32"
-  cudaGraphMaxBsDecode: 32
+  scheduleConservativeness: 0.5      # Aligned with 1tp8; more aggressive scheduling
+  cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16"
+  cudaGraphMaxBsDecode: 16           # Aligned with 1tp8; reduce CG memory overhead
   cudaGraphBsPrefill: "4 8 16 32"
-  cudaGraphBackendPrefill: breakable
+  cudaGraphBackendPrefill: tc_piecewise  # breakable triggers DSA indexer assert crash
   speculativeAlgorithm: NEXTN
   speculativeNumSteps: 3
   speculativeNumDraftTokens: 4
   speculativeEagleTopk: 1
   enableHierarchicalCache: true
-  hicacheRatio: 4                    # HiCache: was 1→8 → 4 (NUMA 1 OOM on .152 at ratio=8); .152 rebooted 2026-07-22, GPU memory cleared
+  hicacheRatio: 2.0                  # Aligned with 1tp8; reduce host memory pressure
   hicacheIoBackend: direct
   hicacheMemLayout: page_first_direct
-  hicacheWritePolicy: write_back     # HiCache fix: was write_through, fixes host load-back=0
+  hicacheWritePolicy: write_through_selective  # Aligned with 1tp8; no load-back=0 bug
   enableAiterAllreduceFusion: true
   enableMixedChunk: true
   enableFusedQkNormRope: true
   enableMetrics: true
   skipServerWarmup: true
-  watchdogTimeout: 1200              # fail faster on stuck detokenizer (chart default 3600)
+  watchdogTimeout: 3600              # Aligned with 1tp8; 1200s too short for long requests
   logLevel: info
   toolCallParser: glm47
   reasoningParser: glm45
@@ -207,10 +201,10 @@ livenessProbe:
   failureThreshold: 5
 
 # ---------------------------------------------------------------------------
-# EAGLE PR #31478 patch — broadcast greedy EAGLE verify across TP ranks
+# EAGLE PR #31478 patch — DISABLED, PR is baked into fix-eagle-coredump-v3 image
 # ---------------------------------------------------------------------------
 eaglePatch:
-  enabled: true
+  enabled: false
 
 # ---------------------------------------------------------------------------
 # Aiter tuned GEMM config — pre-tuned bf16 GEMM shapes for GLM-5.2 on gfx942

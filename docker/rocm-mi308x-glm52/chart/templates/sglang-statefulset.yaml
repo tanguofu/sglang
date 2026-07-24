@@ -66,7 +66,11 @@ spec:
               # - eagle_utils.py: broadcast greedy EAGLE verify across TP ranks
               # - request_receiver.py: revert device_group -> cpu_group (Gloo)
               # Idempotent: only applies if markers not already present.
+              {{- if .Values.eaglePatch.enabled }}
               python3 /tmp/apply_eagle_patch.py || echo "WARN: patch failed, continuing"
+              {{- else }}
+              echo "EAGLE patch disabled (eaglePatch.enabled=false); image should have PR #31478 baked in"
+              {{- end }}
               echo "=== GLM-5.2-FP8 SGLang (MI308X gfx942) ==="
               exec python3 -m sglang.launch_server \
                 --model-path "$MODEL_PATH" \

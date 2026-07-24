@@ -1,10 +1,12 @@
 # GLM-5.2 2tp8 merged chart values (W1 + W2, replicas=2)
-# Synced 2026-07-23: Native router (no Python proxy) with patched wheel.
+# Synced 2026-07-23: Aligned with 1tp8 benchmark-optimized config.
 # Changes from previous revision:
-#   - tag: toolchoice-fix-0721 (base image, patched wheel installed via hostPath init)
-#   - Python proxy eliminated; Rust router handles /v1/responses, /v1/messages, /v1/chat/completions natively
-#   - Patched wheel at /tmp/wheel-cache on node-21.151.225.144
-#   - Fixes: unwrap_namespace_tools, ensure_stream_default, build_messages_routing_text
+#   - P0: tag fix-eagle-coredump-v3, eaglePatch false, cudaGraphBackendPrefill tc_piecewise
+#   - P1: memFraction 0.75→0.88, chunkedPrefill 16384→32768, prefillMax 8→32,
+#         scheduleConserv 1→0.5, watchdog 1200→3600, hicacheRatio 4→2,
+#         hicacheWritePolicy write_back→write_through_selective
+#   - P2: maxRunning 48→32, cudaGraphMaxBsDecode 32→16, cudaGraphBsDecode removes 20/24/32
+#   - Router: native (no Python proxy), patched wheel via hostPath
 aitersTunedGemm:
   configMapName: aiters-tuned-gemm
   enabled: true
@@ -70,12 +72,12 @@ router:
   - http://21.151.225.152:30000
   - http://21.151.225.172:30000
 sglang:
-  chunkedPrefillSize: 16384
+  chunkedPrefillSize: 32768
   contextLength: "524288"
   cudaGraphBackendPrefill: tc_piecewise
-  cudaGraphBsDecode: 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32
+  cudaGraphBsDecode: 1 2 3 4 5 6 7 8 9 10 12 16
   cudaGraphBsPrefill: 4 8 16 32
-  cudaGraphMaxBsDecode: 32
+  cudaGraphMaxBsDecode: 16
   enableAiterAllreduceFusion: true
   enableFusedQkNormRope: true
   enableHierarchicalCache: true
@@ -83,18 +85,18 @@ sglang:
   enableMixedChunk: true
   hicacheIoBackend: direct
   hicacheMemLayout: page_first_direct
-  hicacheRatio: 2
-  hicacheWritePolicy: write_back
+  hicacheRatio: 2.0
+  hicacheWritePolicy: write_through_selective
   kvCacheDtype: fp8_e4m3
   logLevel: info
   maxPrefillTokens: 32768
-  maxRunningRequests: 48
-  memFractionStatic: 0.75
+  maxRunningRequests: 32
+  memFractionStatic: 0.88
   numaNode: 0 0 0 0 1 1 1 1
   ppSize: 1
-  prefillMaxRequests: 8
+  prefillMaxRequests: 32
   reasoningParser: glm45
-  scheduleConservativeness: 1
+  scheduleConservativeness: 0.5
   skipServerWarmup: true
   speculativeAlgorithm: NEXTN
   speculativeEagleTopk: 1
@@ -102,7 +104,7 @@ sglang:
   speculativeNumSteps: 3
   toolCallParser: glm47
   tpSize: 8
-  watchdogTimeout: 1200
+  watchdogTimeout: 3600
 shmSize: 32Gi
 tag: fix-eagle-coredump-v3
 tolerations:
