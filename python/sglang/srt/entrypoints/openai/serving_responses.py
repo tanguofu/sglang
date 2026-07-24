@@ -1351,9 +1351,17 @@ class OpenAIServingResponses(OpenAIServingChat):
             sequence_number += 1
             # Get event type from the event's type field if it exists
             event_type = getattr(event, "type", "unknown")
+            data = event.model_dump_json(indent=None)
+            # Fix BUG: OpenAI SDK's Response.created_at is typed as float,
+            # so model_dump_json() emits e.g. "created_at":1784884708.0
+            # which breaks strict clients (grok serde i64). Force int.
+            import re
+            data = re.sub(
+                r'"created_at":(\d+)\.0\b', r'"created_at":\1', data
+            )
             return (
                 f"event: {event_type}\n"
-                f"data: {event.model_dump_json(indent=None)}\n\n"
+                f"data: {data}\n\n"
             )
 
         current_content_index = 0
@@ -1808,9 +1816,17 @@ class OpenAIServingResponses(OpenAIServingChat):
                 event.sequence_number = sequence_number
             sequence_number += 1
             event_type = getattr(event, "type", "unknown")
+            data = event.model_dump_json(indent=None)
+            # Fix BUG: OpenAI SDK's Response.created_at is typed as float,
+            # so model_dump_json() emits e.g. "created_at":1784884708.0
+            # which breaks strict clients (grok serde i64). Force int.
+            import re
+            data = re.sub(
+                r'"created_at":(\d+)\.0\b', r'"created_at":\1', data
+            )
             return (
                 f"event: {event_type}\n"
-                f"data: {event.model_dump_json(indent=None)}\n\n"
+                f"data: {data}\n\n"
             )
 
         # The streaming Response* event models echo ``tools`` through a
