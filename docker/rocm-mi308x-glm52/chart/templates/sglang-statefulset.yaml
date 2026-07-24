@@ -106,6 +106,9 @@ spec:
                 --hicache-mem-layout {{ .Values.sglang.hicacheMemLayout }} \
                 --hicache-write-policy {{ .Values.sglang.hicacheWritePolicy }} \
                 {{- end }}
+                {{- if .Values.sglang.enableCacheReport }}
+                --enable-cache-report \
+                {{- end }}
                 --enable-metrics --skip-server-warmup \
                 --watchdog-timeout {{ .Values.sglang.watchdogTimeout }} --log-level {{ .Values.sglang.logLevel }}
           env:

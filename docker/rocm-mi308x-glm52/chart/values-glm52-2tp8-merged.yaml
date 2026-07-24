@@ -110,6 +110,7 @@ sglang:
   enableMixedChunk: true
   enableFusedQkNormRope: true
   enableMetrics: true
+  enableCacheReport: true             # Let router see cached_tokens for cache_aware routing
   skipServerWarmup: true
   watchdogTimeout: 3600              # Aligned with 1tp8; 1200s too short for long requests
   logLevel: info
