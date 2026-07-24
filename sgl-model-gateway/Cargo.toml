@@ -205,3 +205,11 @@ codegen-units = 1
 [profile.dev-opt]
 inherits = "dev"
 opt-level = 1
+
+# Vendored openai-protocol with API compatibility patches:
+#   1. responses.rs normalize(): coerce tool_choice to None when no tools
+#      (fixes codex CLI 400 — "tool_choice is only allowed when tools are specified")
+#   2. chat.rs: stream: bool → Option<bool> (fixes non-streaming 400 when stream omitted)
+#   3. messages.rs: ThinkingConfig + Adaptive variant (Claude 4.7 SDK compatibility)
+[patch.crates-io]
+openai-protocol = { path = "vendor/openai-protocol-1.0.0" }
