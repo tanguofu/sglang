@@ -160,6 +160,10 @@ spec:
               value: "1"
             - name: SGLANG_USE_ROCM700A
               value: "1"
+            - name: SGLANG_OPT_USE_AITER_INDEXER
+              value: "1"
+            - name: FLYDSL_FP8_MQA_LOGITS_VARIANT
+              value: "mfma_r4_w4"
             # Enable user-triggered GPU coredump so we can capture real GPU
             # coredumps when the scheduler hangs in HIP memcpy. Without this,
             # sglang logs only "CUDA coredump pipe not found" and we lose the
