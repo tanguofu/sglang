@@ -636,6 +636,11 @@ class OpenAIServingResponses(OpenAIServingChat):
         # non-streaming responses match the streaming path (lines ~2316-2328)
         # and the OpenAI Responses API spec.
         response_dict = response.model_dump()
+        # Fix created_at float and tool_choice-without-tools for strict clients
+        if isinstance(response_dict.get("created_at"), float):
+            response_dict["created_at"] = int(response_dict["created_at"])
+        if not response_dict.get("tools") and response_dict.get("tool_choice") not in (None, "none"):
+            response_dict["tool_choice"] = "none"
         if response_dict.get("usage"):
             u = response_dict["usage"]
             cached = (u.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
@@ -1356,15 +1361,28 @@ class OpenAIServingResponses(OpenAIServingChat):
         current_item_id = f"item_{random_uuid()}"
         sent_output_item_added = False
 
-        initial_response = ResponsesResponse.from_request(
-            request,
-            sampling_params,
-            model_name=model_name,
-            created_time=created_time,
-            output=[],
-            status="in_progress",
-            usage=None,
-        ).model_dump()
+        def _sanitize_response_dict(d: dict) -> dict:
+            # OpenAI SDK Response.created_at is float; force int for strict
+            # clients (grok) that deserialize into i64.
+            if isinstance(d.get("created_at"), float):
+                d["created_at"] = int(d["created_at"])
+            # tool_choice only allowed when tools are specified; otherwise
+            # strict clients return 400.
+            if not d.get("tools") and d.get("tool_choice") not in (None, "none"):
+                d["tool_choice"] = "none"
+            return d
+
+        initial_response = _sanitize_response_dict(
+            ResponsesResponse.from_request(
+                request,
+                sampling_params,
+                model_name=model_name,
+                created_time=created_time,
+                output=[],
+                status="in_progress",
+                usage=None,
+            ).model_dump()
+        )
         yield _send_event(
             openai_responses_types.ResponseCreatedEvent(
                 type="response.created",
@@ -1797,9 +1815,21 @@ class OpenAIServingResponses(OpenAIServingChat):
 
         # The streaming Response* event models echo ``tools`` through a
         # narrower OpenAI SDK Tool union; strip it to avoid pydantic
-        # validation failures on extended tool types.
+        # validation failures on extended tool types. Also fix two
+        # compatibility issues with strict clients (e.g. grok):
+        #   - created_at: OpenAI SDK's Response.created_at is typed as
+        #     ``float``; model_dump_json() emits ``1784884708.0`` which
+        #     breaks clients that deserialize into i64. Force int.
+        #   - tool_choice: when no tools are supplied, echoing
+        #     ``tool_choice="auto"`` triggers a 400 in clients that
+        #     validate "tool_choice only allowed when tools are specified".
+        #     Set to "none" in that case.
         def _sanitize_response_dict(d: dict) -> dict:
             d["tools"] = []
+            if isinstance(d.get("created_at"), float):
+                d["created_at"] = int(d["created_at"])
+            if not d.get("tools") and d.get("tool_choice") not in (None, "none"):
+                d["tool_choice"] = "none"
             return d
 
         initial_response = _sanitize_response_dict(
