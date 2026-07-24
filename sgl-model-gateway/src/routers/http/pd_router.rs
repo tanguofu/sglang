@@ -36,6 +36,7 @@ use crate::{
         embedding::EmbeddingRequest,
         generate::GenerateRequest,
         rerank::RerankRequest,
+        responses::ResponsesRequest,
     },
     routers::{
         error,
@@ -969,6 +970,47 @@ impl PDRouter {
         }
     }
 
+    fn build_responses_request_text(body: &ResponsesRequest) -> Option<String> {
+        // Extract text from ResponsesRequest.input for cache-aware routing.
+        // StringOrContentParts is either a plain String or an Array of content parts.
+        // Serialize content parts to JSON and extract "text" fields.
+        use crate::protocols::responses::{ResponseInput, ResponseInputOutputItem, StringOrContentParts};
+        let mut parts: Vec<String> = Vec::new();
+
+        let items: Vec<&ResponseInputOutputItem> = match &body.input {
+            ResponseInput::Text(_) => return None,
+            ResponseInput::Items(items) => items.iter().collect(),
+        };
+
+        for item in items {
+            if let ResponseInputOutputItem::SimpleInputMessage { content, .. } = item {
+                match content {
+                    StringOrContentParts::String(s) => parts.push(s.clone()),
+                    StringOrContentParts::Array(content_parts) => {
+                        // Serialize content parts to JSON Value to extract text fields
+                        if let Ok(json_val) = serde_json::to_value(content_parts) {
+                            if let Some(arr) = json_val.as_array() {
+                                for elem in arr {
+                                    if let Some(text) = elem.get("text").and_then(|v| v.as_str()) {
+                                        parts.push(text.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" "))
+        }
+    }
+
+
+
     async fn select_pd_pair(
         &self,
         request_text: Option<&str>,
@@ -1653,6 +1695,39 @@ impl RouterTrait for PDRouter {
 
         self.execute_dual_dispatch(headers, body, context).await
     }
+
+    async fn route_responses(
+        &self,
+        headers: Option<&HeaderMap>,
+        body: &ResponsesRequest,
+        model_id: Option<&str>,
+    ) -> Response {
+        let is_stream = body.stream.unwrap_or(false);
+
+        // Extract text for cache-aware routing from ResponsesRequest input items
+        let request_text = if self.policies_need_request_text() {
+            Self::build_responses_request_text(body)
+        } else {
+            None
+        };
+
+        // Use n=1 as default batch size since Responses API doesn't have explicit n param
+        let batch_size = Some(1usize);
+
+        let context = PDRequestContext {
+            route: "/v1/responses",
+            batch_size,
+            is_stream,
+            return_logprob: false,
+            request_text,
+            model_id,
+            headers: headers.cloned(),
+        };
+
+        self.execute_dual_dispatch(headers, body, context).await
+    }
+
+
 
     async fn route_rerank(
         &self,
