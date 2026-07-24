@@ -327,6 +327,7 @@ spec:
           configMap:
             name: {{ .Values.aitersTunedGemm.configMapName }}
             defaultMode: 0644
+            optional: true
         {{- end }}
         {{- if .Values.llmDRouter.enabled }}
         - name: epp-config
