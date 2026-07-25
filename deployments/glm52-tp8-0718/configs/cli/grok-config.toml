@@ -1,25 +1,36 @@
 # grok CLI config — copy to ~/.grok/config.toml
-# Points to glm52-vllm-pd (vLLM PD disaggregated, 256K context).
-# This is a DIFFERENT deployment from glm52-2tp8 (sglang, 512K context).
+# Points to glm52-2tp8 (sglang router, 2×8-GPU, TP=8, 512K context).
+# Aligned with codex-config.toml and claude-settings.json in this directory.
 #
-# Verified 2026-07-17: POST https://glm52-vllm-pd.jmpti.woa.com/v1/responses -> 200.
-# Backend: vllm-pd-proxy -> vllm-prefill/vllm-decode (PD disaggregated), model glm-5.2.
-# MAX_MODEL_LEN on the vllm pod = 262144, so context_window is set to match.
+# Verified 2026-07-17: POST https://glm52-2tp8.jmpti.woa.com/v1/responses -> 200.
+# Backend: sglang-glm52-2tp8 router (cache_aware) -> 2× sglang workers, model glm-5.2.
+# Server --context-length 524288, so context_window = 524288.
+# Auto-compact at 80% of 512K ≈ 420000, matching codex/claude (CLAUDE_CODE_AUTO_COMPACT_WINDOW).
 
 [models]
-default = "glm52-vllm-pd"
+default = "glm52-2tp8"
 
-[model.glm52-vllm-pd]
+[model.glm52-2tp8]
+# chat_completions, not responses: sglang's /v1/responses emits created_at as a
+# float (e.g. 1784884848.0) which grok's strict serde (i64) rejects with
+# "serialization error: invalid type: floating point". /v1/chat/completions
+# returns an integer created timestamp and works. codex/claude are lenient and
+# can keep using responses.
 model = "glm-5.2"
-base_url = "https://glm52-vllm-pd.jmpti.woa.com/v1"
-api_backend = "responses"
-api_key = "${GROK_API_KEY}"
-context_window = 262144
+base_url = "https://glm52-2tp8.jmpti.woa.com/v1"
+api_backend = "chat_completions"
+env_key = "GROK_API_KEY"
+context_window = 524288
 temperature = 0.7
 top_p = 0.95
+
+[session]
+auto_compact_threshold_percent = 80
 
 # Skills/rules/agents are synced into ~/.grok/{skills,rules,agents}/ by `teamai pull`.
 # Grok scans ~/.grok/skills/ by default, so no [skills] paths override is needed.
 #
+# Set the API key via environment variable:
+#   export GROK_API_KEY="sk-..."
 # Headless usage: grok is a TUI app requiring a TTY.
 # Use `grok -p "prompt"` or `grok --single "prompt"` for non-interactive single-turn.

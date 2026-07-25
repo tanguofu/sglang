@@ -1,12 +1,17 @@
 # GLM-5.2 2tp8 merged chart values (W1 + W2, replicas=2)
-# Synced 2026-07-23: Aligned with 1tp8 benchmark-optimized config.
+# Synced 2026-07-23: Benchmark-optimized parameters aligned with 1tp8 reference.
 # Changes from previous revision:
-#   - P0: tag fix-eagle-coredump-v3, eaglePatch false, cudaGraphBackendPrefill tc_piecewise
-#   - P1: memFraction 0.75→0.88, chunkedPrefill 16384→32768, prefillMax 8→32,
-#         scheduleConserv 1→0.5, watchdog 1200→3600, hicacheRatio 4→2,
-#         hicacheWritePolicy write_back→write_through_selective
-#   - P2: maxRunning 48→32, cudaGraphMaxBsDecode 32→16, cudaGraphBsDecode removes 20/24/32
-#   - Router: native (no Python proxy), patched wheel via hostPath
+#   - tag: xgmi-opt-0716d → fix-eagle-coredump-v3 (NCCL deadlock fix)
+#   - sglang.cudaGraphBackendPrefill: breakable → tc_piecewise (ROCm BCG invalid)
+#   - sglang.hicacheRatio: 4 → 2 (avoid DSA indexer host memory OOM)
+#   - eaglePatch.enabled: true → false (PR #31478 baked into fix-eagle-coredump-v3)
+#   - Added podAnnotations + imagePullSecrets (reference cluster config)
+# 2026-07-23 benchmark alignment (P0+P1+P2):
+#   P0: memFraction 0.75→0.88, cudaGraphBsDecode removed 20/24/32, cudaGraphMaxBsDecode 32→16,
+#       cudaGraphBackendPrefill tc_piecewise (already set), enableMixedChunk true→false (EAGLE mutex)
+#   P1: chunkedPrefillSize 16384→32768, prefillMaxRequests 8→32, scheduleConservativeness 1→0.5,
+#       watchdogTimeout 1200→3600, hicacheRatio 2 (already set), hicacheWritePolicy write_back→write_through_selective
+#   P2: maxRunningRequests 48→32 (concurrency convergence with prefillMaxRequests)
 aitersTunedGemm:
   configMapName: aiters-tuned-gemm
   enabled: true
@@ -82,10 +87,10 @@ sglang:
   enableFusedQkNormRope: true
   enableHierarchicalCache: true
   enableMetrics: true
-  enableMixedChunk: true
+  enableMixedChunk: false
   hicacheIoBackend: direct
   hicacheMemLayout: page_first_direct
-  hicacheRatio: 2.0
+  hicacheRatio: 2
   hicacheWritePolicy: write_through_selective
   kvCacheDtype: fp8_e4m3
   logLevel: info
