@@ -32,12 +32,16 @@
 #                 hicacheRatio 4→2, hicacheWritePolicy → write_through_selective
 #                 maxRunning 48→32, cudaGraphMaxBsDecode 32→16,
 #                 cudaGraphBsDecode removes 20/24/32
+#   2026-07-25: Switch to breakable CUDA graph backend (align with 1tp8):
+#                 tag → breakable (6 patches P1-P6 baked in)
+#                 cudaGraphBackendPrefill → breakable (was tc_piecewise)
+#                 cudaGraphBsPrefill → "1 2 3 4 8 16 32" (adds small bs)
 
 # ---------------------------------------------------------------------------
-# Image — fix-eagle-coredump-v3 (PR #31478 baked in, NCCL deadlock fix)
+# Image — breakable (6 breakable-required patches P1-P6 baked in, aligned with 1tp8)
 # ---------------------------------------------------------------------------
 image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
-tag: fix-eagle-coredump-v3
+tag: breakable
 # Clear the legacy single-secret field to avoid duplication with imagePullSecrets.
 imagePullSecret: ""
 # Image pull secrets — kubernetes.io/dockerconfigjson Secrets in kube-system.
@@ -95,8 +99,8 @@ sglang:
   scheduleConservativeness: 0.5      # Aligned with 1tp8; more aggressive scheduling
   cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16"
   cudaGraphMaxBsDecode: 16           # Aligned with 1tp8; reduce CG memory overhead
-  cudaGraphBsPrefill: "4 8 16 32"
-  cudaGraphBackendPrefill: tc_piecewise  # breakable triggers DSA indexer assert crash
+  cudaGraphBsPrefill: "1 2 3 4 8 16 32"  # Aligned with 1tp8; adds small batch sizes for CG capture
+  cudaGraphBackendPrefill: breakable    # Aligned with 1tp8; breakable image has P1-P6 patches (P3 fixes DSA indexer assert)
   speculativeAlgorithm: NEXTN
   speculativeNumSteps: 3
   speculativeNumDraftTokens: 4
