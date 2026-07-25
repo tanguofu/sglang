@@ -1,0 +1,30 @@
+# Router image for GLM-5.2 with native /v1/responses + /v1/messages support.
+# Source includes:
+#   - route_responses + route_messages in router.rs (Codex + Claude Code support)
+#   - unwrap_namespace_tools: flatten Codex namespace tool containers
+#   - ensure_stream_default: default stream=false for /v1/responses
+#   - build_messages_routing_text: full conversation prefix for cache_aware routing
+#   - vendored openai-protocol-1.0.0 with tool_choice coercion + ThinkingConfig Adaptive
+#
+# Build (from repo root):
+#   docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile.router \
+#     -t mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:codex-claude-v1 .
+
+FROM lmsysorg/sglang-rocm:v0.5.15-rocm720-mi30x-20260710
+
+LABEL maintainer="guofutan"
+LABEL description="SGLang Router with native /v1/responses + /v1/messages + Codex/Claude tool-type support"
+
+# Overlay sgl-model-gateway source (includes vendor/openai-protocol-1.0.0/ with API compat patches)
+COPY sgl-model-gateway/ /sgl-workspace/sglang/sgl-model-gateway/
+
+# Download remaining dependencies (vendored openai-protocol is a path dep, no fetch needed for it)
+RUN cd /sgl-workspace/sglang/sgl-model-gateway && cargo fetch
+
+# Build + install the wheel (route_responses + route_messages + Codex/Claude transforms baked in)
+RUN cd /sgl-workspace/sglang/sgl-model-gateway/bindings/python && \
+    CARGO_BUILD_JOBS=8 maturin build --release --out dist --features vendored-openssl && \
+    pip install --force-reinstall --no-deps dist/sglang_router-0.3.2-*.whl && \
+    python3 -c "import sglang_router; print('sglang_router OK')"
+
+CMD ["/bin/bash"]
