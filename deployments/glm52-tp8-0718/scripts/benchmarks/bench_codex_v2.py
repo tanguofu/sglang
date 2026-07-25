@@ -8,10 +8,10 @@ GLM-5.2 always emits reasoning_text before output_text. We measure:
 - Reasoning vs output token split
 - Total wall clock
 """
-import json, subprocess, time, statistics, sys
+import json, subprocess, time, statistics, sys, os
 
 GATEWAY = "https://glm52-2tp8.jmpti.woa.com"
-TOKEN = "${ANTHROPIC_AUTH_TOKEN}"
+TOKEN = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
 MODEL = "glm-5.2"
 
 def stream_request(prompt, max_tokens=400):

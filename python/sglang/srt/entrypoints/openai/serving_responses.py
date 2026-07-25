@@ -707,7 +707,6 @@ class OpenAIServingResponses(OpenAIServingChat):
                 stream_reasoning=False,
                 force_reasoning=self._is_thinking_enabled_for_request(request),
                 request=request,
-                tokenizer=self.tokenizer_manager.tokenizer,
             )
             reasoning_content, content = reasoning_parser.parse_non_stream(final_output)
         else:
@@ -1903,7 +1902,6 @@ class OpenAIServingResponses(OpenAIServingChat):
                 stream_reasoning=True,
                 force_reasoning=self._is_thinking_enabled_for_request(request),
                 request=request,
-                tokenizer=self.tokenizer_manager.tokenizer,
             )
 
         current_output_index = -1
