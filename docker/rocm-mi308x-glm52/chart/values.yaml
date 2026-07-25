@@ -148,6 +148,15 @@ router:
   # Tolerations for the router pod — typically mirrors the worker tolerations
   # so the router can land on the same dedicated group as the workers.
   tolerations: []
+  # Concurrency protection — prevents worker overload under burst traffic.
+  # maxConcurrentRequests: -1 or "" disables rate limiting (passthrough).
+  # Set to a positive value to enable token-bucket limiting with a queue.
+  # When the limit is reached, excess requests are queued (up to queueSize);
+  # if the queue is full, 429 Too Many Requests is returned immediately.
+  maxConcurrentRequests: -1
+  queueSize: 100
+  queueTimeoutSecs: 60
+  rateLimitTokensPerSecond: ""
 
 # ---------------------------------------------------------------------------
 # llm-d Router — EPP (Endpoint Picker) + Envoy sidecar

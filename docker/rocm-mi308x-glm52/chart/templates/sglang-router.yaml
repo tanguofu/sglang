@@ -74,6 +74,22 @@ spec:
             - --balance-rel-threshold
             - {{ .Values.router.balanceRelThreshold | quote }}
             {{- end }}
+            {{- if .Values.router.maxConcurrentRequests }}
+            - --max-concurrent-requests
+            - {{ .Values.router.maxConcurrentRequests | quote }}
+            {{- end }}
+            {{- if .Values.router.queueSize }}
+            - --queue-size
+            - {{ .Values.router.queueSize | quote }}
+            {{- end }}
+            {{- if .Values.router.queueTimeoutSecs }}
+            - --queue-timeout-secs
+            - {{ .Values.router.queueTimeoutSecs | quote }}
+            {{- end }}
+            {{- if .Values.router.rateLimitTokensPerSecond }}
+            - --rate-limit-tokens-per-second
+            - {{ .Values.router.rateLimitTokensPerSecond | quote }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.router.port }}

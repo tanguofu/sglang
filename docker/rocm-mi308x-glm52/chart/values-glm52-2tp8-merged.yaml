@@ -150,6 +150,14 @@ router:
   cacheThreshold: 0.2
   balanceAbsThreshold: 1
   balanceRelThreshold: 1.2
+  # Concurrency protection (stress-tested 2026-07-25):
+  #   128 concurrent = sweet spot (p95 <15s, 300+ t/s aggregate)
+  #   Beyond 128: queue up to 64 more (max 120s wait)
+  #   Beyond 192: return 429 immediately (fast fail, client can retry)
+  maxConcurrentRequests: 128
+  queueSize: 64
+  queueTimeoutSecs: 120
+  rateLimitTokensPerSecond: 128
   # pd-router image with /v1/messages route + tool_choice fix + ThinkingConfig
   # adaptive variant (patched openai-protocol crate via [patch.crates-io]).
   image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router
