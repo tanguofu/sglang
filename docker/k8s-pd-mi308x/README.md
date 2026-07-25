@@ -46,23 +46,51 @@ Branch `308x-pd-v0516` is based on upstream SGLang **v0.5.16** (tag `fdebc938f`,
 | `5a0d1cff7` | host staging fallback (conn.py), /v1/responses routing (pd_router.rs), vendored openai-protocol |
 | `8dcae59eb` | Batch 1 deployment configs (this directory) |
 
-### v0.5.16 new fixes relevant to this deployment
+### v0.5.16 new fixes (vs old base bbb5702a3)
 
-| PR | Description | Impact |
-|----|-------------|--------|
-| #31075 | Fix optimistic prefill inflight-queue hangs on parked/aborted reqs | Resolves KV transfer queue blocking at high conc |
-| #30951 | Improve optimistic prefill (rename `--retries` → `--attempts`) | Better overlap of transfer with prefill |
+These fixes are NEW in v0.5.16 relative to the previous base (`bbb5702a3`, Jul 14). Verified via `git merge-base --is-ancestor`:
 
-### Already in base (origin/main @ bbb5702a3)
+**GLM-5.2 / MTP:**
+| PR | Description |
+|----|-------------|
+| #30839 | GLM-5.2 MTP IndexShare stability across PD + CUDA graph replay |
+| #30992 | GLM-5.2 MTP index sharing with prefill CP |
+| #28416 | [GLM5] FlashInfer TRT-LLM MoE direct write (MoE perf) |
+| #30506 | [AMD] Disable DSA fused top-k v2 on ROCm for GLM-5.2 / DSv3.2 |
+| #31577 | GLM5.2 Cookbook LayerSplit docs |
 
-These GLM-5.2 / ROCm fixes were already in the previous base and carry forward:
+**AMD / ROCm / gfx942:**
+| PR | Description |
+|----|-------------|
+| #26852 | [AMD] Reuse fused FP8 KV cache write on aiter prefill/decode |
+| #29508 | [AMD] Fix quickreduce acc error in cudagraph mode |
+| #31688 | [AMD] Fix ROCm fused KV and KDA paths |
+| #31675 | [AMD] Fix DeepSeek MLA prefill shape mismatch on HIP eager fallback |
+| #31368 | [AMD][PD] Fix early-send cached-prefix KV racing prefill forward on mori |
+| #30940 | [AMD] Gate TP4 oproj/qkv CK block-FP8 GEMM shapes to Triton |
 
-- #30839: GLM-5.2 MTP IndexShare stability across PD + CUDA graph replay
-- #29421: DSA Cache Layer Split under Prefill CP (requires `--enable-prefill-cp --cp-strategy interleave`)
-- #26852: Reuse fused FP8 KV cache write on ROCm aiter paths
-- #29508: Fix quickreduce acc error in cudagraph mode
-- #31688: Fix ROCm fused KV and KDA paths
-- #30992: GLM-5.2 MTP index sharing with prefill CP
+**Speculative decoding (EAGLE/MTP):**
+| PR | Description |
+|----|-------------|
+| #30947/#30948 | [EAGLE] Fuse topk=1 draft postprocess + TP vocab-parallel embedding |
+| #31614 | Fix multi_layer_eagle rotate_input_ids kernel registration |
+| #31620 | Replace torch.multinomial with native torch ops in rejection sampling |
+| #32254 | Fix inkling multi-layer MTP draft extend cuda graph |
+
+**PD / Disaggregation:**
+| PR | Description |
+|----|-------------|
+| #31306 | [PD] Fix send_multipart blocking after prefill failure |
+| #31584 | Fix KV Manager Disaggregation Heartbeat Checker |
+
+### Already in old base (unchanged)
+
+- `optimistic_prefill_attempts` server arg (PR #30951 rename) — already in `bbb5702a3`
+- Optimistic prefill inflight-queue hang fix (PR #31075) — already in `bbb5702a3`
+
+### Fork-only custom patches (NOT in upstream)
+
+- #29421: DSA Cache Layer Split under Prefill CP (`8e54517f0` on fork only) — requires `--enable-prefill-cp --cp-strategy interleave --enable-dsa-cache-layer-split`; NOT yet enabled in deployment
 
 ## Image Build
 

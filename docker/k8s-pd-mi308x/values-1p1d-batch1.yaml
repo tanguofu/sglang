@@ -4,10 +4,10 @@ service:
 bootstrapPort: "8998"
 decodeExtraArgs: --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32
   --cuda-graph-max-bs-decode 32 --speculative-algorithm NEXTN --speculative-num-steps
-  2 --speculative-num-draft-tokens 4 --speculative-eagle-topk 1 --max-running-requests
+  3 --speculative-num-draft-tokens 4 --speculative-eagle-topk 1 --max-running-requests
   32 --mem-fraction-static 0.85 --attention-backend dsa --dsa-prefill-backend tilelang
-  --dsa-decode-backend tilelang --schedule-conservativeness 0.5 --enable-mixed-chunk
-  --enable-hierarchical-cache --hicache-ratio 2.0 --disaggregation-mode decode
+  --dsa-decode-backend tilelang --schedule-conservativeness 0.5 --num-continuous-decode-steps
+  2 --optimistic-prefill-attempts 1 --disaggregation-mode decode
 decodeIP: 21.151.225.132
 decodeNode: node-21.151.225.132
 ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
