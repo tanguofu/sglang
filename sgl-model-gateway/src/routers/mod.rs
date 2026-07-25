@@ -126,6 +126,20 @@ pub trait RouterTrait: Send + Sync + Debug {
             .into_response()
     }
 
+    /// Route an Anthropic Messages request (/v1/messages)
+    async fn route_messages(
+        &self,
+        _headers: Option<&HeaderMap>,
+        _body: &crate::protocols::messages::CreateMessageRequest,
+        _model_id: Option<&str>,
+    ) -> Response {
+        (
+            StatusCode::NOT_IMPLEMENTED,
+            "Messages endpoint not implemented",
+        )
+            .into_response()
+    }
+
     /// Retrieve a stored/background response by id
     async fn get_response(
         &self,
