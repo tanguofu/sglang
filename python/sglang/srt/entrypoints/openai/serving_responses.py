@@ -752,7 +752,6 @@ class OpenAIServingResponses(OpenAIServingChat):
             parser = FunctionCallParser(
                 chat_tools,
                 self.tool_call_parser,
-                tokenizer=self.tokenizer_manager.tokenizer,
             )
             should_try_native = (
                 not is_required or parser.detector.supports_structural_tag()
@@ -1882,7 +1881,6 @@ class OpenAIServingResponses(OpenAIServingChat):
                 probe = FunctionCallParser(
                     chat_tools,
                     self.tool_call_parser,
-                    tokenizer=self.tokenizer_manager.tokenizer,
                 )
                 native_supports_structural_tag = (
                     probe.detector.supports_structural_tag()
@@ -1893,7 +1891,6 @@ class OpenAIServingResponses(OpenAIServingChat):
                 tool_parser = FunctionCallParser(
                     chat_tools,
                     self.tool_call_parser,
-                    tokenizer=self.tokenizer_manager.tokenizer,
                 )
         reasoning_parser_obj: Optional[ReasoningParser] = None
         if self.reasoning_parser:
