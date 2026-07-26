@@ -95,6 +95,12 @@ spec:
                 --hicache-mem-layout {{ .Values.sglang.hicacheMemLayout }} \
                 --hicache-write-policy {{ .Values.sglang.hicacheWritePolicy }} \
                 {{- end }}
+                {{- if .Values.sglang.disableCustomAllreduce }}
+                --disable-custom-all-reduce \
+                {{- end }}
+                {{- if .Values.sglang.preWarmNccl }}
+                --pre-warm-nccl \
+                {{- end }}
                 --enable-metrics --skip-server-warmup \
                 --watchdog-timeout {{ .Values.sglang.watchdogTimeout }} --log-level {{ .Values.sglang.logLevel }}
           env:
@@ -147,6 +153,13 @@ spec:
               value: "1"
             - name: SGLANG_USE_AITER
               value: "1"
+            - name: SGLANG_OPT_USE_AITER_INDEXER
+              value: "1"
+            # FlyDSL FP8 MQA logits kernel variant — mfma_r4_w4 improves prefill
+            # indexer performance 14-29% vs default (mfma_r2_w4) with no
+            # precision change (same kernel, BLOCK_KV=128, MFMA instruction).
+            - name: FLYDSL_FP8_MQA_LOGITS_VARIANT
+              value: "mfma_r4_w4"
             - name: SGLANG_USE_ROCM700A
               value: "1"
             # Enable user-triggered GPU coredump so we can capture real GPU

@@ -17,11 +17,11 @@
 # Environment variables are pre-set via ENV.
 # The entrypoint (start_server.sh) only needs MODEL_PATH, API_KEY, PORT.
 
-FROM lmsysorg/sglang-rocm:v0.5.14-rocm720-mi30x-20260708
+FROM lmsysorg/sglang-rocm:v0.5.15.post1-rocm720-mi30x-20260718
 
 LABEL maintainer="guofutan"
 LABEL description="GLM-5.2-FP8 SGLang worker for AMD MI308X (gfx942) with 0708-opt patches"
-LABEL sglang-base-image="v0.5.14-rocm720-mi30x-20260708"
+LABEL sglang-base-image="v0.5.15.post1-rocm720-mi30x-20260718"
 LABEL gpu-arch="gfx942"
 LABEL branch="308x-glm52-opt"
 

@@ -31,10 +31,16 @@
 #               Memory budget: ~39 GB free VRAM/rank, est. +10-18 GB usage.
 
 # ---------------------------------------------------------------------------
-# Image — xgmi-opt-0716d build (XGMI P2P + ROCm 7.2.4 + sglang 0.5.14)
+# Image — breakable (amd64, built via docker buildx)
+# Enables prefill CUDA graph with EAGLE by bypassing the tc_piecewise
+# disable in model_runner.py:2716. 6 patches baked into image:
+#   dsa_indexer.py: FP8->bf16, aiter tuple extract, FIX(breakable-target-verify)
+#   dsa/utils.py: is_cuda() or is_hip() on is_graph_dsa_split_op_surface
+#   radix_attention.py: MHA companion swap disabled
+# Expected: prefill speed 3x+ improvement (eager ~700-1400 tok/s -> CG ~2000+ tok/s)
 # ---------------------------------------------------------------------------
 image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
-tag: xgmi-opt-0716d
+tag: breakable-v0.5.15
 
 # ---------------------------------------------------------------------------
 # Worker placement — replicas=2, no nodeName, scheduler places via taints
@@ -65,41 +71,44 @@ sglang:
   ppSize: 1
   contextLength: "524288"            # 512K (chart default is 1M, reduced for stability)
   numaNode: "0 0 0 0 1 1 1 1"
-  memFractionStatic: 0.75            # OOM fix: was 0.88, left ~2.5GB/rank activation room
+  memFractionStatic: 0.88            # breakable: aligned with 1tp8 (was 0.75 OOM fix)
   kvCacheDtype: fp8_e4m3
-  chunkedPrefillSize: 16384          # OOM fix: was 32768, smaller chunks = less peak activation
+  chunkedPrefillSize: 32768          # breakable: aligned with 1tp8 (was 16384 OOM fix)
   # Concurrency improvement (2026-07-21, conservative):
   #   prefillMaxRequests 4→8 (still well below the original 32 that caused OOM;
   #     with chunkedPrefillSize=16384, 8 concurrent prefills peak ~16 GB/rank activation)
   #   maxRunningRequests 32→48 (decode is much lighter than prefill; CUDA graph
   #     captures up to bs=32, beyond that falls back to eager — 48 leaves headroom)
-  prefillMaxRequests: 8
-  maxRunningRequests: 48
+  prefillMaxRequests: 32              # breakable: aligned with 1tp8 (was 8 OOM fix)
+  maxRunningRequests: 32             # breakable: aligned with 1tp8 (was 48)
   maxPrefillTokens: 32768
-  scheduleConservativeness: 1.0      # OOM fix: was 0.5, more conservative scheduling
+  scheduleConservativeness: 0.5      # breakable: aligned with 1tp8 (was 1.0 OOM fix)
   # CUDA graph decode batch sizes — add 20, 24, 32 to cover higher decode concurrency.
   # Capturing more graphs costs ~1-2 GB VRAM (one-time, at startup) but eliminates
   # eager-mode overhead for bs in [17, 32]. Beyond 32, eager mode kicks in (still
   # correct, just slower).
   cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16 20 24 32"
   cudaGraphMaxBsDecode: 32
-  cudaGraphBsPrefill: "4 8 16 32"
+  cudaGraphBsPrefill: "1 2 3 4 8 16 32"  # breakable: added bs=1,2,3 for single-request long prefill
   cudaGraphBackendPrefill: breakable
   speculativeAlgorithm: NEXTN
   speculativeNumSteps: 3
   speculativeNumDraftTokens: 4
   speculativeEagleTopk: 1
   enableHierarchicalCache: true
-  hicacheRatio: 4                    # HiCache: was 1→8 → 4 (NUMA 1 OOM on .152 at ratio=8)
+  hicacheRatio: 2.0                  # breakable: aligned with 1tp8 (was 4 NUMA fix)
   hicacheIoBackend: direct
   hicacheMemLayout: page_first_direct
-  hicacheWritePolicy: write_back     # HiCache fix: was write_through, fixes host load-back=0
+  hicacheWritePolicy: write_through_selective  # breakable: aligned with 1tp8 (was write_back)
   enableAiterAllreduceFusion: true
+  # Mandatory for EAGLE on AMD (PR #29313): aiter custom all-reduce deadlocks
+  # at c>=16 during EAGLE target-verify; fall back to RCCL.
+  disableCustomAllreduce: true
   enableMixedChunk: true
   enableFusedQkNormRope: true
   enableMetrics: true
   skipServerWarmup: true
-  watchdogTimeout: 1200              # fail faster on stuck detokenizer (chart default 3600)
+  watchdogTimeout: 3600              # breakable: aligned with 1tp8 (was 1200)
   logLevel: info
   toolCallParser: glm47
   reasoningParser: glm45
@@ -187,10 +196,10 @@ livenessProbe:
   failureThreshold: 5
 
 # ---------------------------------------------------------------------------
-# EAGLE PR #31478 patch — broadcast greedy EAGLE verify across TP ranks
+# EAGLE PR #31478 patch — baked into breakable image, runtime patch disabled
 # ---------------------------------------------------------------------------
 eaglePatch:
-  enabled: true
+  enabled: false
 
 # ---------------------------------------------------------------------------
 # Aiter tuned GEMM config — pre-tuned bf16 GEMM shapes for GLM-5.2 on gfx942

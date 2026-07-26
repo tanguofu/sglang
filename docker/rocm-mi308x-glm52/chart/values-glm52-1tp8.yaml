@@ -7,15 +7,16 @@
 # Domain: glm52-1tp8.jmpti.woa.com
 
 # ---------------------------------------------------------------------------
-# Image — fix-eagle-coredump-v3 (sglang 48ae829f6e, +380 commits)
-# Fixes NCCL deadlock from xgmi-opt-0716d hacks:
-#   Hack 1: eagle_utils.py PR #31478 runtime patch added NCCL broadcasts in
-#           greedy verify → collective mismatch → 600s timeout deadlock
-#   Hack 2: common.py force_cpu_device=False → GPU tensor + Gloo unstable on ROCm
-# This image has PR #31478 baked in at build time and force_cpu_device=True.
+# Image — breakable (amd64, built via docker buildx)
+# Enables prefill CUDA graph with EAGLE by bypassing the tc_piecewise
+# disable in model_runner.py:2716. 6 patches baked into image:
+#   dsa_indexer.py: FP8->bf16, aiter tuple extract, FIX(breakable-target-verify)
+#   dsa/utils.py: is_cuda() or is_hip() on is_graph_dsa_split_op_surface
+#   radix_attention.py: MHA companion swap disabled
+# Expected: prefill speed 5-10x improvement (eager ~700-1400 tok/s -> CG ~5000-8000+ tok/s)
 # ---------------------------------------------------------------------------
 image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
-tag: fix-eagle-coredump-v3
+tag: breakable-v0.5.15
 
 # ---------------------------------------------------------------------------
 # Deployment
@@ -56,24 +57,31 @@ sglang:
   # Reduced from 1M to 512K to save KV cache memory
   contextLength: "524288"
   numaNode: "0 0 0 0 1 1 1 1"
-  # 0.80 (was 0.88 wiki v17 — fix-eagle-coredump-v3 + tc_piecewise OOMs at 0.85)
-  memFractionStatic: 0.80
+  # 0.88 (wiki v17 recommended — increased from 0.80)
+  memFractionStatic: 0.88
   kvCacheDtype: fp8_e4m3
-  # Wiki v17: 32768 (was 16384 in OOM-fix override)
-  chunkedPrefillSize: 32768
+  # Optimization: 32768→16384, smaller chunks reduce memory pressure and
+  # allow better interleaving of prefill/decode under concurrency
+  chunkedPrefillSize: 16384
   # Wiki v17: 32 (was 48 in override)
   maxRunningRequests: 32
-  # Wiki v17: 32 (was 8 in OOM-fix override)
-  prefillMaxRequests: 32
+  # Optimization: 32→16, smaller prefill batch improves concurrent TTFT
+  prefillMaxRequests: 16
   maxPrefillTokens: 32768
-  # Wiki v17: 0.5 (was 1.0 in OOM-fix override)
-  scheduleConservativeness: 0.5
+  # Optimization: 0.5→0.7, reduce retraction overhead under concurrency
+  scheduleConservativeness: 0.7
   cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16"
   cudaGraphMaxBsDecode: 16
-  # Wiki v17: "4 8 16 32" — token counts for prefill CUDA graph capture
-  cudaGraphBsPrefill: "4 8 16 32"
-  # tc_piecewise (was breakable) — fixes NCCL deadlock with fix-eagle-coredump-v3
-  cudaGraphBackendPrefill: tc_piecewise
+  # Wiki v17: "1 2 3 4 8 16 32" — added bs=1,2,3 for single-request long prefill
+  # Without bs=1 CUDA graph, long single-prompts (e.g. ~7000 tok) run in
+  # eager mode at ~66-126 tok/s vs ~8000+ tok/s with CUDA graph.
+  cudaGraphBsPrefill: "1 2 3 4 8 16 32"
+  # breakable — enables prefill CUDA graph with EAGLE by bypassing the
+  # tc_piecewise disable in model_runner.py:2716. Patches applied:
+  #   dsa_indexer.py: FP8->bf16, aiter tuple extract, FIX(breakable-target-verify)
+  #   dsa/utils.py: is_cuda() or is_hip() on is_graph_dsa_split_op_surface
+  #   radix_attention.py: MHA companion swap disabled
+  cudaGraphBackendPrefill: breakable
   speculativeAlgorithm: NEXTN
   speculativeNumSteps: 3
   speculativeNumDraftTokens: 4
@@ -85,6 +93,12 @@ sglang:
   # User choice: write_through_selective (wiki recommended write_through)
   hicacheWritePolicy: write_through_selective
   enableAiterAllreduceFusion: true
+  # Mandatory for EAGLE on AMD (PR #29313): aiter custom all-reduce deadlocks
+  # at c>=16 during EAGLE target-verify; fall back to RCCL.
+  disableCustomAllreduce: true
+  # NOTE: preWarmNccl=true causes RCCL "invalidated stream" crash with breakable CG
+  # on gfx942. Disabled until breakable CG capture is compatible with RCCL pre-warm.
+  preWarmNccl: false
   enableMixedChunk: true
   enableFusedQkNormRope: true
   enableMetrics: true

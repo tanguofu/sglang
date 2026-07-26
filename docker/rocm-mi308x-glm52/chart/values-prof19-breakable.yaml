@@ -1,0 +1,106 @@
+# SGLang GLM-5.2 single-node TP8 — Breakable CUDA Graph test on prof19
+# Node: node-21.234.170.19
+#
+# Testing:
+#   - cudaGraphBackendPrefill: breakable (enables prefill CG with EAGLE)
+#   - cudaGraphBsPrefill: includes bs=1 (single-request prefills)
+#   - FlyDSL mfma_r4_w4 variant
+#   - Deterministic argmax patch
+
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+tag: breakable
+
+replicas: 1
+nodeName: node-21.234.170.19
+
+resources:
+  requests:
+    cpu: 320
+    memory: 1900Gi
+    amd.com/gpu: 8
+  limits:
+    amd.com/gpu: 8
+
+tolerations:
+  - effect: NoSchedule
+    key: dedicated
+    operator: Equal
+    value: glm52-prod
+  - effect: NoSchedule
+    key: node.cvm.com/ptl-unsupported
+    operator: Equal
+    value: ""
+
+sglang:
+  tpSize: 8
+  ppSize: 1
+  contextLength: "524288"
+  numaNode: "0 0 0 0 1 1 1 1"
+  memFractionStatic: 0.88
+  kvCacheDtype: fp8_e4m3
+  chunkedPrefillSize: 32768
+  maxRunningRequests: 32
+  prefillMaxRequests: 32
+  maxPrefillTokens: 32768
+  scheduleConservativeness: 0.5
+  cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16"
+  cudaGraphMaxBsDecode: 16
+  # Breakable backend — enables prefill CUDA graph even with EAGLE
+  # (model_runner.py:2716 exemption for breakable)
+  cudaGraphBsPrefill: "1 2 3 4 8 16 32"
+  cudaGraphMaxBsPrefill: 32
+  cudaGraphBackendPrefill: breakable
+  speculativeAlgorithm: NEXTN
+  speculativeNumSteps: 3
+  speculativeNumDraftTokens: 4
+  speculativeEagleTopk: 1
+  enableHierarchicalCache: true
+  hicacheRatio: 2.0
+  hicacheIoBackend: direct
+  hicacheMemLayout: page_first_direct
+  hicacheWritePolicy: write_through_selective
+  enableAiterAllreduceFusion: true
+  enableMixedChunk: true
+  enableFusedQkNormRope: true
+  enableMetrics: true
+  skipServerWarmup: true
+  watchdogTimeout: 3600
+  logLevel: info
+  toolCallParser: glm47
+  reasoningParser: glm45
+
+rocmQuickReduceQuantization: "NONE"
+
+router:
+  enabled: false
+
+llmDRouter:
+  enabled: false
+
+gateway:
+  enabled: false
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 10
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 2400
+  periodSeconds: 60
+  timeoutSeconds: 10
+  failureThreshold: 5
+
+eaglePatch:
+  enabled: false
+
+aitersTunedGemm:
+  enabled: true
+  configMapName: aiters-tuned-gemm
