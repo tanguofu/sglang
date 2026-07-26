@@ -21,12 +21,20 @@ spec:
       labels:
         {{- include "sglang.labels" . | nindent 8 }}
         app: sglang-router
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
+      {{- $secrets := default list .Values.imagePullSecrets }}
       {{- if .Values.imagePullSecret }}
+      {{- $secrets = append $secrets (dict "name" .Values.imagePullSecret) }}
+      {{- end }}
+      {{- if $secrets }}
       imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
+        {{- toYaml $secrets | nindent 8 }}
       {{- end }}
       {{- if .Values.router.nodeName }}
       nodeName: {{ .Values.router.nodeName | quote }}
@@ -102,6 +110,7 @@ metadata:
     app: sglang-router
 spec:
   type: ClusterIP
+  clusterIP: None
   selector:
     {{- include "sglang.serviceSelectorLabels" . | nindent 4 }}
     app: sglang-router

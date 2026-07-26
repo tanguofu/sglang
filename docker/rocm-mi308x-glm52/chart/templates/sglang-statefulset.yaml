@@ -9,6 +9,7 @@ metadata:
     {{- include "sglang.labels" . | nindent 4 }}
 spec:
   serviceName: {{ .Release.Name }}-sglang
+  podManagementPolicy: Parallel
   replicas: {{ .Values.replicas }}
   selector:
     matchLabels:
@@ -18,6 +19,10 @@ spec:
     metadata:
       labels:
         {{- include "sglang.labels" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       hostNetwork: {{ .Values.hostNetwork }}
       dnsPolicy: ClusterFirstWithHostNet
@@ -31,9 +36,13 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- $secrets := default list .Values.imagePullSecrets }}
       {{- if .Values.imagePullSecret }}
+      {{- $secrets = append $secrets (dict "name" .Values.imagePullSecret) }}
+      {{- end }}
+      {{- if $secrets }}
       imagePullSecrets:
-        - name: {{ .Values.imagePullSecret }}
+        {{- toYaml $secrets | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: 300
       containers:
@@ -124,7 +133,7 @@ spec:
             - name: PYTORCH_ROCM_ARCH
               value: "gfx942"
             - name: ROCM_QUICK_REDUCE_QUANTIZATION
-              value: "INT8"
+              value: {{ .Values.rocmQuickReduceQuantization | default "NONE" | quote }}
             - name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN
               value: "1"
             - name: SGLANG_DISABLE_CUDNN_CHECK

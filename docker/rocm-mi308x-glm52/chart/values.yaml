@@ -13,7 +13,15 @@
 image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
 tag: latest
 pullPolicy: IfNotPresent
+# imagePullSecret — legacy single-secret field (still supported for backward compat).
+# When set, it is appended to imagePullSecrets below.
 imagePullSecret: tencent-registry
+# imagePullSecrets — list of Kubernetes dockerconfigjson Secrets used for pulling
+# the worker and router images from mirrors.tencent.com. Each entry is an object
+# with a `name` key, matching the Pod spec imagePullSecrets format.
+# Example: [{name: tencent-registry}, {name: tencent-mirror-secret}]
+# Defaults to empty; the chart appends imagePullSecret (above) automatically.
+imagePullSecrets: []
 
 # ---------------------------------------------------------------------------
 # Deployment
@@ -22,6 +30,13 @@ namespace: kube-system
 replicas: 1
 hostNetwork: true
 port: 30000
+
+# ---------------------------------------------------------------------------
+# Pod annotations — applied to both worker StatefulSet and router Deployment
+# pods. Use this to inject TKE/EKS network or DNS annotations, e.g.
+#   eks.tke.cloud.tencent.com/cluster-ip-switch: cluster
+# ---------------------------------------------------------------------------
+podAnnotations: {}
 
 # ---------------------------------------------------------------------------
 # Node selection
