@@ -378,6 +378,14 @@ class AnthropicMessagesRequest(BaseModel):
     # when targeting non-Anthropic backends, so the schema must accept them.
     output_config: Optional[AnthropicOutputConfig] = None
     betas: Optional[list[str]] = None
+    # PD disaggregation — gateway injects these so the decode worker can
+    # pull KV from the prefill worker. Mirrors ChatCompletionRequest.
+    # Without explicit fields, Pydantic v2 default extra="ignore" would
+    # silently drop them.
+    bootstrap_host: Optional[Union[list[str], str]] = None
+    bootstrap_port: Optional[Union[list[Optional[int]], int]] = None
+    bootstrap_room: Optional[Union[list[int], int]] = None
+    disagg_prefill_dp_rank: Optional[int] = None
 
     @field_validator("model")
     @classmethod

@@ -1478,6 +1478,57 @@ class TestAnthropicServing(unittest.TestCase):
             f"expected a warning mentioning the unmapped finish_reason: {log.output}",
         )
 
+    # ------------------------------------------------------------------
+    # PD disaggregation bootstrap field passthrough
+    # ------------------------------------------------------------------
+
+    def test_convert_preserves_bootstrap_fields(self):
+        """Bootstrap fields injected by sgl-model-gateway PDRouter must
+        survive the Anthropic→ChatCompletion conversion so the decode
+        worker can pull KV from the prefill worker."""
+        request = self._anthropic_request(
+            stream=False,
+            bootstrap_host="prefill-node",
+            bootstrap_port=8998,
+            bootstrap_room=12345,
+            disagg_prefill_dp_rank=2,
+        )
+        chat_request = self._serving()._convert_to_chat_completion_request(request)
+        self.assertEqual(chat_request.bootstrap_host, "prefill-node")
+        self.assertEqual(chat_request.bootstrap_port, 8998)
+        self.assertEqual(chat_request.bootstrap_room, 12345)
+        self.assertEqual(chat_request.disagg_prefill_dp_rank, 2)
+
+    def test_convert_without_bootstrap_fields(self):
+        """When no bootstrap fields are present (non-PD or prefill worker),
+        conversion should still succeed with None values."""
+        request = self._anthropic_request(stream=False)
+        chat_request = self._serving()._convert_to_chat_completion_request(request)
+        self.assertIsNone(chat_request.bootstrap_host)
+        self.assertIsNone(chat_request.bootstrap_port)
+        self.assertIsNone(chat_request.bootstrap_room)
+        self.assertIsNone(chat_request.disagg_prefill_dp_rank)
+
+    def test_bootstrap_fields_not_dropped_by_pydantic(self):
+        """Pydantic v2 default extra='ignore' would silently drop unknown
+        fields. The explicit bootstrap field declarations on
+        AnthropicMessagesRequest must prevent this so gateway-injected
+        bootstrap data survives deserialization."""
+        raw = {
+            "model": "test-model",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hello"}],
+            "bootstrap_host": "prefill-host",
+            "bootstrap_port": 9000,
+            "bootstrap_room": 999,
+            "disagg_prefill_dp_rank": 1,
+        }
+        request = AnthropicMessagesRequest.model_validate(raw)
+        self.assertEqual(request.bootstrap_host, "prefill-host")
+        self.assertEqual(request.bootstrap_port, 9000)
+        self.assertEqual(request.bootstrap_room, 999)
+        self.assertEqual(request.disagg_prefill_dp_rank, 1)
+
 
 class TestDetectInlineSystemSupport(unittest.TestCase):
     """Chat-template detection for mid-conversation system messages (#28883)."""
