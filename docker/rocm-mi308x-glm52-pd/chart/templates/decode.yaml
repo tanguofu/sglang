@@ -82,7 +82,7 @@ spec:
         --host 0.0.0.0 --port 30000 \
         --context-length 524288 \
         --tool-call-parser glm47 --reasoning-parser glm45 \
-        --mem-fraction-static 0.90 \
+        --mem-fraction-static 0.85 \
         --enable-aiter-allreduce-fusion --enable-fused-qk-norm-rope \
         --schedule-conservativeness 0.5 --kv-cache-dtype fp8_e4m3 \
         --attention-backend dsa \
