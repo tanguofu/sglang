@@ -20,28 +20,41 @@ spec:
     args:
     - |
       set -euo pipefail
-      cp /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so
-      cp /data/mooncake-patched/conn.py /sgl-workspace/sglang/python/sglang/srt/disaggregation/mooncake/conn.py
-      echo "=== GLM-5.2 PREFILL (MI308X) ==="
+      # Copy verified GDR engine.so (respects MC_DISABLE_HIP_TRANSPORT=1, supports HIP dmabuf).
+      # Do NOT patch conn.py — the container's original conn.py works correctly;
+      # patching causes req_has_disagg_prefill_dp_rank TypeError.
+      if [ -f /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so ]; then
+        cp /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so \
+           /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so
+        echo "Copied verified GDR engine.so from /data/mooncake-patched/"
+      else
+        echo "ERROR: /data/mooncake-patched/engine.so not found!" >&2
+        exit 1
+      fi
+      echo "=== GLM-5.2 PREFILL (MI308X, GDR via HIP dmabuf) ==="
       exec python3 -m sglang.launch_server \
         --model-path {{ .Values.modelPath }} \
         --model-impl sglang --served-model-name {{ .Values.modelName }} \
+        {{- if .Values.apiKey }}
         --api-key {{ .Values.apiKey }} \
+        {{- end }}
         --tp-size 8 --pp-size 1 --trust-remote-code \
         --host 0.0.0.0 --port 30000 \
         --context-length 1048576 \
         --tool-call-parser glm47 --reasoning-parser glm45 \
-        --mem-fraction-static 0.90 --enable-aiter-allreduce-fusion \
+        --mem-fraction-static 0.85 \
+        --attention-backend dsa --dsa-prefill-backend tilelang --dsa-decode-backend tilelang \
+        --enable-aiter-allreduce-fusion \
         --chunked-prefill-size 32768 --enable-fused-qk-norm-rope \
-        --schedule-conservativeness 0.5 \
-        --prefill-max-requests 64 --max-prefill-tokens 32768 \
-        --kv-cache-dtype fp8_e4m3 --cuda-graph-backend-prefill breakable \
-        --cuda-graph-bs-prefill 4 8 16 32 --max-running-requests 128 \
+        --schedule-conservativeness 1.0 \
+        --prefill-max-requests 32 --max-prefill-tokens 32768 \
+        --kv-cache-dtype fp8_e4m3 --disable-prefill-cuda-graph --disable-decode-cuda-graph \
+        --max-running-requests 32 \
         --disaggregation-mode prefill --disaggregation-transfer-backend mooncake \
         --disaggregation-ib-device '{{ .Values.ibDevice }}' \
         --disaggregation-bootstrap-port {{ .Values.bootstrapPort }} \
         --num-reserved-decode-tokens 1024 \
-        --disable-overlap-schedule --enable-metrics --skip-server-warmup \
+        --enable-metrics --skip-server-warmup \
         --watchdog-timeout 3600 --log-level info
     securityContext:
       privileged: true

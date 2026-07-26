@@ -2,11 +2,17 @@
 # Deploy: helm install glm52-pd ./chart -n kube-system -f chart/values.yaml
 
 # --- Images (built from Dockerfile + Dockerfile.router, pushed to mirrors) ---
-workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:pd-resp-msg-v6
+# Worker: fix-eagle-coredump-v3 (SGLang 0.5.15.post1, Jul 18) — proven working with
+# DSA + EAGLE + cuda graphs on MI308X. pd-resp-msg-v6 has Triton 3.4.0 which can't
+# compile DSA paged-MQA logits kernel (fp8→f16 rtne conversion unsupported).
+# Router: pd-resp-msg-v1 supports /v1/responses + /v1/messages for codex CLI.
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:fix-eagle-coredump-v3
 routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:pd-resp-msg-v1
 
 # --- API ---
-apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
+# Internal PD communication must be unauthenticated (router -> prefill/decode).
+# External auth is enforced at the ingress/gateway layer, not inside the cluster.
+apiKey: ""
 modelName: glm-5.2
 modelPath: /data/model/glm52-fp8
 
@@ -30,8 +36,6 @@ workerEnv:
   - name: MC_GID_INDEX
     value: "3"
   - name: MC_DISABLE_HIP_TRANSPORT
-    value: "1"
-  - name: SGLANG_PD_HOST_STAGING
     value: "1"
   - name: HIP_VISIBLE_DEVICES
     value: "0,1,2,3,4,5,6,7"
@@ -80,30 +84,34 @@ workerEnv:
   # NOTE: HSA_NO_SCRATCH_RECLAIM removed — that's an Ascend NPU var, not ROCm
 
 # --- Prefill launch args (beyond common) ---
+# NOTE: template hardcodes these — values here are for reference only.
 prefillExtraArgs: >-
-  --cuda-graph-backend-prefill breakable
-  --cuda-graph-bs-prefill 4 8 16 32
-  --max-running-requests 128
-  --prefill-max-requests 64 --max-prefill-tokens 32768
-  --mem-fraction-static 0.90
+  --disable-prefill-cuda-graph
+  --max-running-requests 32
+  --prefill-max-requests 32 --max-prefill-tokens 32768
+  --mem-fraction-static 0.85
+  --attention-backend dsa --dsa-prefill-backend tilelang --dsa-decode-backend tilelang
+  --schedule-conservativeness 1.0
   --disaggregation-mode prefill
 
 # --- Decode launch args (beyond common) ---
+# NOTE: template hardcodes these — values here are for reference only.
 decodeExtraArgs: >-
   --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16
   --cuda-graph-max-bs-decode 16
   --speculative-algorithm NEXTN
-  --speculative-num-steps 2 --speculative-num-draft-tokens 4
+  --speculative-num-steps 3 --speculative-num-draft-tokens 4
   --speculative-eagle-topk 1
   --max-running-requests 128
-  --mem-fraction-static 0.90
+  --mem-fraction-static 0.85
+  --attention-backend dsa --dsa-prefill-backend tilelang --dsa-decode-backend tilelang
+  --schedule-conservativeness 1.0
   --disaggregation-mode decode
 
 # --- Common worker launch args ---
 workerCommonArgs: >-
   --model-path /data/model/glm52-fp8
   --model-impl sglang --served-model-name glm-5.2
-  --api-key sk-46faecc9d0bc4dcd9db6a15c73ae91c8
   --tp-size 8 --pp-size 1 --trust-remote-code
   --host 0.0.0.0 --port 30000
   --context-length 1048576
@@ -111,10 +119,9 @@ workerCommonArgs: >-
   --enable-aiter-allreduce-fusion
   --chunked-prefill-size 32768
   --enable-fused-qk-norm-rope
-  --schedule-conservativeness 0.5
+  --schedule-conservativeness 1.0
   --kv-cache-dtype fp8_e4m3
   --disaggregation-transfer-backend mooncake
   --num-reserved-decode-tokens 1024
-  --disable-overlap-schedule
   --enable-metrics --skip-server-warmup
   --watchdog-timeout 3600 --log-level info
