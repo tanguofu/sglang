@@ -1,0 +1,113 @@
+# SGLang GLM-5.2 single-node TP8 deployment — 1 node × 8 GPU, no router
+# Usage:
+#   helm install sglang-glm52-1tp8 .../chart/ -f values-glm52-1tp8.yaml
+#
+# Topology:
+#   - sglang-glm52-1tp8 on node-21.234.170.32 (worker + gateway, no router)
+#
+# Differences from values-glm52-2tp8.yaml:
+#   - replicas: 1 (single node)
+#   - router: disabled (no load balancing needed for 1 worker)
+#   - HTTPRoute: chart auto-targets sglang Service directly (router disabled)
+#   - hicacheRatio: 4→2 (reduce CPU memory footprint, avoid SystemOOM)
+#   - resources: memory 2100Gi→1900Gi, cpu 360→320 (leave ~350GB for system)
+#   - tolerations: dedicated=glm52-prod + node.cvm.com/ptl-unsupported (node .32)
+#
+# History:
+#   2026-07-22: Initial single-node deployment. hicache-ratio=2 to avoid the
+#               SystemOOM that hit 2tp8 pod-0 on node .152 (95% mem allocated,
+#               system processes killed by OOM). memory request 1900Gi leaves
+#               ~350GB headroom for node agents.
+
+# ---------------------------------------------------------------------------
+# Image — same as 2tp8 (XGMI P2P + ROCm 7.2.4 + sglang 0.5.14)
+# ---------------------------------------------------------------------------
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+tag: xgmi-opt-0716d
+
+# ---------------------------------------------------------------------------
+# Worker placement — pin to node-21.234.170.32
+# ---------------------------------------------------------------------------
+nodeName: node-21.234.170.32
+replicas: 1
+
+# ---------------------------------------------------------------------------
+# Tolerations — node .32 has dedicated=glm52-prod + node.cvm.com/ptl-unsupported
+# ---------------------------------------------------------------------------
+tolerations:
+  - key: dedicated
+    operator: Equal
+    value: glm52-prod
+    effect: NoSchedule
+  - key: node.cvm.com/ptl-unsupported
+    operator: Equal
+    value: ""
+    effect: NoSchedule
+
+# ---------------------------------------------------------------------------
+# Resources — reduced from chart default to avoid SystemOOM
+# Node has ~2.25 TB RAM; 1900Gi request leaves ~350 GB for system agents.
+# ---------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 320
+    memory: 1900Gi
+    amd.com/gpu: 8
+  limits:
+    amd.com/gpu: 8
+
+# ---------------------------------------------------------------------------
+# SGLang server parameters
+# ---------------------------------------------------------------------------
+sglang:
+  contextLength: "524288"
+  memFractionStatic: 0.80
+  chunkedPrefillSize: 16384
+  prefillMaxRequests: 8
+  maxRunningRequests: 32
+  maxPrefillTokens: 32768
+  scheduleConservativeness: 1.0
+  hicacheRatio: 2                   # reduced from 4 (2tp8) to lower CPU mem footprint
+  hicacheWritePolicy: write_back
+  watchdogTimeout: 1200
+  # Prefill cuda graphs disabled — DSA assertion + OOM on this node.
+  # The DSA split-op dispatch doesn't work with in-graph prefill on gfx942.
+  cudaGraphBackendPrefill: ""
+  cudaGraphBsPrefill: ""
+
+# ---------------------------------------------------------------------------
+# Router — DISABLED (single worker, no load balancing needed)
+# ---------------------------------------------------------------------------
+router:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# llm-d Router — DISABLED
+# ---------------------------------------------------------------------------
+llmDRouter:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Envoy Gateway — 1tp8 hostname on the shared eg-tke Gateway
+# HTTPRoute auto-targets sglang Service (port 30000) when both routers disabled.
+# Requires Gateway listener "https-glm52-1tp8" on eg-tke (patched separately).
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-1tp8.jmpti.woa.com
+  httpsSectionName: https-glm52-1tp8
+  lbAddress: 21.162.215.14
+
+# ---------------------------------------------------------------------------
+# Health checks — extended liveness initialDelay (CUDA graph capture ~20min)
+# ---------------------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 2400
+  periodSeconds: 60
+  timeoutSeconds: 10
+  failureThreshold: 5

@@ -83,9 +83,13 @@ spec:
                 --speculative-num-steps {{ .Values.sglang.speculativeNumSteps }} --speculative-num-draft-tokens {{ .Values.sglang.speculativeNumDraftTokens }} \
                 --speculative-eagle-topk {{ .Values.sglang.speculativeEagleTopk }} \
                 {{- end }}
+                {{- if .Values.sglang.cudaGraphBackendPrefill }}
                 --cuda-graph-backend-prefill {{ .Values.sglang.cudaGraphBackendPrefill }} \
+                {{- end }}
                 --max-running-requests {{ .Values.sglang.maxRunningRequests }} \
+                {{- if .Values.sglang.cudaGraphBsPrefill }}
                 --cuda-graph-bs-prefill {{ .Values.sglang.cudaGraphBsPrefill }} \
+                {{- end }}
                 {{- if .Values.sglang.enableHierarchicalCache }}
                 --enable-hierarchical-cache \
                 --hicache-ratio {{ .Values.sglang.hicacheRatio }} \
@@ -307,6 +311,7 @@ spec:
           configMap:
             name: {{ .Values.aitersTunedGemm.configMapName }}
             defaultMode: 0644
+            optional: true
         {{- end }}
         {{- if .Values.llmDRouter.enabled }}
         - name: epp-config
