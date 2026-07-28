@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple
 
 import torch
 
+from sglang.kernels.ops.speculative.topk1 import draft_topk1_postprocess
 from sglang.srt.environ import envs
 from sglang.srt.hardware_backend.npu.graph_runner.eagle_draft_extend_npu_graph_runner import (
     EAGLEDraftExtendNpuGraphRunner,
@@ -664,11 +665,17 @@ class EagleDraftWorker(EagleDraftWorkerBase):
                 )
                 topk_p, topk_index = fast_sample(probs, num_samples=1)
                 draft_probs_list.append(probs)
-            elif self.topk == 1 and not _is_hip:
-                topk_index = torch.argmax(
-                    logits_output.next_token_logits, dim=-1, keepdim=True
+                _positions_advanced = False
+            elif self.topk == 1:
+                # Use deterministic Triton split-reduction argmax on ALL platforms.
+                # draft_topk1_postprocess fuses argmax + position advance into one
+                # kernel launch, providing better parallelism for large vocab and
+                # deterministic float32 reduction on both CUDA and ROCm.
+                topk_p, topk_index = draft_topk1_postprocess(
+                    logits_output.next_token_logits,
+                    forward_batch.positions,
                 )
-                topk_p = torch.ones_like(topk_index, dtype=torch.float32)
+                _positions_advanced = True
             else:
                 probs = renorm_draft_probs(
                     logits_output.next_token_logits,
@@ -676,6 +683,7 @@ class EagleDraftWorker(EagleDraftWorkerBase):
                     self.server_args.speculative_use_rejection_sampling,
                 )
                 topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
+                _positions_advanced = False
             maybe_detect_oob(
                 topk_index,
                 0,
@@ -685,7 +693,8 @@ class EagleDraftWorker(EagleDraftWorkerBase):
             if self.hot_token_id is not None:
                 topk_index = self.hot_token_id[topk_index]
             hidden_states = logits_output.hidden_states
-            forward_batch.positions.add_(1)
+            if not _positions_advanced:
+                forward_batch.positions.add_(1)
 
         if self.index_share_for_mtp_iteration:
             spec_info.mtp_topk_indices = None
@@ -801,6 +810,12 @@ class EagleDraftWorker(EagleDraftWorkerBase):
         )
         if use_rejection_sampling:
             topk_p, topk_index = fast_sample(probs, num_samples=1)
+        elif self.topk == 1:
+            # Deterministic argmax for topk=1 (matches draft_forward and
+            # _draft_extend_for_decode). Cast to float32 for stable tie-break.
+            _logits_f32 = logits_output.next_token_logits.to(torch.float32)
+            topk_index = torch.argmax(_logits_f32, dim=-1, keepdim=True)
+            topk_p = torch.ones_like(topk_index, dtype=torch.float32)
         else:
             topk_p, topk_index = fast_topk(probs, self.topk, dim=-1)
         return EagleDraftInput(
@@ -912,12 +927,11 @@ class EagleDraftWorker(EagleDraftWorkerBase):
             )
             ret_topk_p, ret_topk_index = fast_sample(probs, num_samples=1)
             ret_draft_probs = probs
-        elif self.topk == 1 and not _is_hip:
-            # Gated to CUDA: see #26358 — ROCm's argmax tie-break corrupts
-            # MTP draft selection on FP8 logits.
-            ret_topk_index = torch.argmax(
-                draft_logits_output.next_token_logits, dim=-1, keepdim=True
-            )
+        elif self.topk == 1:
+            # Use deterministic torch.argmax on both CUDA and ROCm.
+            # Cast to float32 for stable tie-breaking on FP8 logits.
+            _logits_f32 = draft_logits_output.next_token_logits.to(torch.float32)
+            ret_topk_index = torch.argmax(_logits_f32, dim=-1, keepdim=True)
             ret_topk_p = torch.ones_like(ret_topk_index, dtype=torch.float32)
             ret_draft_probs = None
         else:
