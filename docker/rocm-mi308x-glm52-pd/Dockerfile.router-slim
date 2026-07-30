@@ -1,0 +1,53 @@
+# Slim router image for EKS/eklet nodes.
+#
+# The full Dockerfile.router builds on the 77 GB ROCm base image, which EKS
+# nodes cannot hold (FreeDiskSpaceFailed pulling 78 GB). The router is a pure
+# Rust HTTP load balancer — it needs no ROCm/GPU runtime — so this image builds
+# the wheel from source on a plain Rust base, then copies it into a slim Python
+# runtime. Result: ~1 GB vs 78 GB.
+#
+# The wheel is built FROM SOURCE here (not a prebuilt wheel) so it always
+# includes the latest router source — notably the regular Router's
+# route_messages override (commit 1040941524). A prebuilt wheel predating that
+# commit has no /v1/messages route and axum returns 404.
+#
+# Build (from repo root):
+#   docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile.router-slim \
+#     -t mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:pd-resp-msg-v2-slim .
+
+# ---- Stage 1: build the wheel from source ----
+FROM rust:1.90-slim AS builder
+
+# Build deps: Python + dev headers (pyo3 abi3 extension) + C/C++ toolchain
+# and perl (vendored OpenSSL runs `perl Configure` + `make`, and cc-rs needs
+# the `cc`/`c++` symlinks that build-essential provides).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-dev python3-pip python3-venv \
+        build-essential perl pkg-config \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --break-system-packages maturin
+
+WORKDIR /build
+COPY sgl-model-gateway/ /build/sgl-model-gateway/
+
+RUN cd /build/sgl-model-gateway/bindings/python && \
+    maturin build --release --out /wheels --features vendored-openssl && \
+    ls -la /wheels
+
+# ---- Stage 2: slim Python runtime ----
+FROM python:3.11-slim
+
+LABEL maintainer="guofutan"
+LABEL description="SGLang PD Router (slim) — /v1/responses + /v1/messages, no ROCm base"
+
+# Python deps declared in the wheel METADATA (Requires-Dist).
+RUN pip install --no-cache-dir setproctitle aiohttp orjson uvicorn fastapi
+
+# Freshly built wheel from stage 1 (Rust extension, vendored OpenSSL). Copy the
+# whole dir to preserve the PEP 427 filename — pip rejects renamed wheels.
+COPY --from=builder /wheels/ /tmp/wheels/
+RUN pip install --no-cache-dir --no-deps /tmp/wheels/sglang_router-*.whl \
+    && python3 -c "import sglang_router; print('sglang_router OK')" \
+    && rm -rf /tmp/wheels
+
+CMD ["python3", "-m", "sglang_router.launch_router"]

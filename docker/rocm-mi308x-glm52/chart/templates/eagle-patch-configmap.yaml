@@ -86,4 +86,348 @@ data:
         with open(rr_path, "w") as f:
             f.write(new_content)
         print("request_receiver.py: OK reverted device_group -> cpu_group")
+
+    # --- Patch 3: eagle_worker_v2.py deterministic argmax on ROCm (topk=1) ---
+    # The `and not _is_hip` gate forces ROCm to use fast_topk (sgl_kernel) which
+    # is non-deterministic. At 80K+ context with FP8 KV cache, close logits cause
+    # tie-breaking divergence → wrong draft tokens → repetition loops.
+    # Fix: remove the gate, cast logits to float32 before argmax for stable
+    # tie-breaking. Patches BOTH draft_forward (step loop) and target_verify.
+    ew_path = "/sgl-workspace/sglang/python/sglang/srt/speculative/eagle_worker_v2.py"
+    with open(ew_path) as f:
+        content = f.read()
+
+    # Site 1: draft_forward per-step (line ~667)
+    old_s1 = (
+        "            elif self.topk == 1 and not _is_hip:\n"
+        "                topk_index = torch.argmax(\n"
+        "                    logits_output.next_token_logits, dim=-1, keepdim=True\n"
+        "                )\n"
+        "                topk_p = torch.ones_like(topk_index, dtype=torch.float32)"
+    )
+    new_s1 = (
+        "            elif self.topk == 1:\n"
+        "                # Use deterministic torch.argmax on both CUDA and ROCm.\n"
+        "                # Cast to float32 for stable tie-breaking on FP8 logits.\n"
+        "                _logits_f32 = logits_output.next_token_logits.to(torch.float32)\n"
+        "                topk_index = torch.argmax(_logits_f32, dim=-1, keepdim=True)\n"
+        "                topk_p = torch.ones_like(topk_index, dtype=torch.float32)"
+    )
+    # Site 2: target_verify post-processing (line ~916)
+    old_s2 = (
+        "        elif self.topk == 1 and not _is_hip:\n"
+        "            # Gated to CUDA: see #26358 — ROCm's argmax tie-break corrupts\n"
+        "            # MTP draft selection on FP8 logits.\n"
+        "            ret_topk_index = torch.argmax(\n"
+        "                draft_logits_output.next_token_logits, dim=-1, keepdim=True\n"
+        "            )\n"
+        "            ret_topk_p = torch.ones_like(ret_topk_index, dtype=torch.float32)\n"
+        "            ret_draft_probs = None"
+    )
+    new_s2 = (
+        "        elif self.topk == 1:\n"
+        "            # Use deterministic torch.argmax on both CUDA and ROCm.\n"
+        "            # Cast to float32 for stable tie-breaking on FP8 logits.\n"
+        "            _logits_f32 = draft_logits_output.next_token_logits.to(torch.float32)\n"
+        "            ret_topk_index = torch.argmax(_logits_f32, dim=-1, keepdim=True)\n"
+        "            ret_topk_p = torch.ones_like(ret_topk_index, dtype=torch.float32)\n"
+        "            ret_draft_probs = None"
+    )
+
+    s1_done = "elif self.topk == 1:" in content and "_logits_f32 = logits_output" in content
+    s2_done = "elif self.topk == 1:" in content and "_logits_f32 = draft_logits_output" in content
+    if old_s1 in content:
+        content = content.replace(old_s1, new_s1, 1)
+        print("eagle_worker_v2.py: site1 (draft_forward): applied")
+    elif s1_done:
+        print("eagle_worker_v2.py: site1 (draft_forward): SKIP (already patched)")
+    else:
+        print("eagle_worker_v2.py: site1 (draft_forward): ERROR anchor not found")
+
+    if old_s2 in content:
+        content = content.replace(old_s2, new_s2, 1)
+        print("eagle_worker_v2.py: site2 (target_verify): applied")
+    elif s2_done:
+        print("eagle_worker_v2.py: site2 (target_verify): SKIP (already patched)")
+    else:
+        print("eagle_worker_v2.py: site2 (target_verify): ERROR anchor not found")
+
+    with open(ew_path, "w") as f:
+        f.write(content)
+
+    # --- Patch 4: DSA topk broadcast with eager_on_graph (HIP/ROCm fix) ---
+    # The definitive fix for 120K+ context repetition on HIP/ROCm.
+    # Root cause: FP8 MQA logits divergence across TP ranks causes different
+    # KV page selection (topk) → attention output divergence → repetition loops.
+    # Fix: Broadcast rank 0's topk to all TP ranks via SGLANG_DSA_TOPK_BROADCAST=1.
+    # The broadcast uses @eager_on_graph to break the breakable CUDA graph at
+    # the broadcast point, running Gloo (CPU) broadcast eagerly outside stream
+    # capture. On HIP/ROCm, NCCL watchdog throws hipErrorCapturedEvent even
+    # between graph segments, so we use Gloo (CPU) instead of NCCL.
+    # MUST be combined with --cuda-graph-backend-decode breakable.
+    di_path = "/sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_indexer.py"
+    with open(di_path) as f:
+        content = f.read()
+
+    if "_eager_broadcast_topk_indices" in content:
+        print("dsa_indexer.py: SKIP (already patched with eager_on_graph broadcast)")
+    else:
+        old = (
+            "def _broadcast_indexer_topk_from_rank0(\n"
+            "    topk_indices: Optional[torch.Tensor],\n"
+            ") -> Optional[torch.Tensor]:\n"
+            "    # Sync only the finalized indexer output. Internal topk_transform calls can\n"
+            "    # be chunked differently across ranks, which would make collectives diverge.\n"
+            "    if topk_indices is None or not envs.SGLANG_DSA_TOPK_BROADCAST.get():\n"
+            "        return topk_indices\n"
+            "\n"
+            "    if is_in_tc_piecewise_cuda_graph():\n"
+            "        broadcast_indexer_topk_from_rank0_(topk_indices)\n"
+            "    else:\n"
+            "        _broadcast_indexer_topk_from_rank0_impl(topk_indices)\n"
+            "    return topk_indices"
+        )
+        new = (
+            "@eager_on_graph(True)\n"
+            "def _eager_broadcast_topk_indices(topk_indices: torch.Tensor) -> None:\n"
+            "    # When inside a breakable CUDA graph, the @eager_on_graph decorator breaks\n"
+            "    # the graph at this point and runs the broadcast eagerly (outside stream\n"
+            "    # capture). This is required on HIP/ROCm where NCCL collectives cannot run\n"
+            "    # during CUDA graph stream capture.\n"
+            "    #\n"
+            "    # On HIP/ROCm, we use Gloo (CPU) broadcast instead of NCCL because the NCCL\n"
+            "    # watchdog thread can throw hipErrorCapturedEvent even when the broadcast\n"
+            "    # runs between two graph capture segments (the watchdog checks events\n"
+            "    # asynchronously and the stream may have re-entered capture by then).\n"
+            "    # Gloo broadcast is CPU-only and avoids NCCL entirely.\n"
+            "    group = get_attn_tp_group()\n"
+            "    if group.world_size == 1:\n"
+            "        return\n"
+            "\n"
+            "    if _is_hip:\n"
+            "        # CPU/Gloo broadcast: safe because @eager_on_graph broke the graph,\n"
+            "        # so we're outside stream capture and CPU tensor transfer works.\n"
+            "        cpu_tensor = topk_indices.cpu()\n"
+            "        torch.distributed.broadcast(\n"
+            "            cpu_tensor, src=group.ranks[0], group=group.cpu_group\n"
+            "        )\n"
+            "        topk_indices.copy_(cpu_tensor.to(topk_indices.device))\n"
+            "    else:\n"
+            "        _broadcast_indexer_topk_from_rank0_impl(topk_indices)\n"
+            "\n"
+            "\n"
+            "def _broadcast_indexer_topk_from_rank0(\n"
+            "    topk_indices: Optional[torch.Tensor],\n"
+            ") -> Optional[torch.Tensor]:\n"
+            "    # Sync only the finalized indexer output. Internal topk_transform calls can\n"
+            "    # be chunked differently across ranks, which would make collectives diverge.\n"
+            "    if topk_indices is None or not envs.SGLANG_DSA_TOPK_BROADCAST.get():\n"
+            "        return topk_indices\n"
+            "\n"
+            "    if is_in_tc_piecewise_cuda_graph():\n"
+            "        broadcast_indexer_topk_from_rank0_(topk_indices)\n"
+            "    else:\n"
+            "        # Use the eager_on_graph wrapper which breaks the CUDA graph when\n"
+            "        # inside a breakable capture context, running the broadcast eagerly\n"
+            "        # outside stream capture. On HIP/ROCm, this is essential because\n"
+            "        # NCCL collectives cannot run during stream capture.\n"
+            "        _eager_broadcast_topk_indices(topk_indices)\n"
+            "    return topk_indices"
+        )
+        if old not in content:
+            print("dsa_indexer.py: ERROR anchor not found for Patch 4")
+        else:
+            with open(di_path, "w") as f:
+                f.write(content.replace(old, new, 1))
+            print("dsa_indexer.py: OK applied Patch 4 (eager_on_graph broadcast)")
+
+    # --- Patch 5: breakable_cuda_graph_backend.py dataclass output support ---
+    # The breakable CUDA graph backend's _slice_output and _copy_output_to_buffer
+    # don't support dataclass outputs like LogitsProcessorOutput. This is needed
+    # for --cuda-graph-backend-decode breakable, since decode returns
+    # LogitsProcessorOutput (not a plain tensor like prefill).
+    bcg_path = "/sgl-workspace/sglang/python/sglang/srt/model_executor/runner_backend/breakable_cuda_graph_backend.py"
+    with open(bcg_path) as f:
+        content = f.read()
+
+    if "hasattr(output, \"__dict__\")" in content:
+        print("breakable_cuda_graph_backend.py: SKIP (already patched with dataclass support)")
+    else:
+        old_slice = (
+            "        if isinstance(output, list):\n"
+            "            return [self._slice_output(item, num_tokens) for item in output]\n"
+            "        raise TypeError(f\"Unsupported BCG output type: {type(output)}\")"
+        )
+        new_slice = (
+            "        if isinstance(output, list):\n"
+            "            return [self._slice_output(item, num_tokens) for item in output]\n"
+            "        if hasattr(output, \"__dict__\"):\n"
+            "            import copy\n"
+            "\n"
+            "            result = copy.copy(output)\n"
+            "            for key, val in output.__dict__.items():\n"
+            "                if torch.is_tensor(val) and val.shape and val.shape[0] >= num_tokens:\n"
+            "                    setattr(result, key, val[:num_tokens])\n"
+            "            return result\n"
+            "        raise TypeError(f\"Unsupported BCG output type: {type(output)}\")"
+        )
+        old_copy = (
+            "            for item, buffer in zip(output, output_buffer):\n"
+            "                self._copy_output_to_buffer(item, buffer, num_tokens)\n"
+            "            return\n"
+            "        raise TypeError(\n"
+            "            \"Unsupported BCG output buffer pair: \"\n"
+            "            f\"{type(output)} vs {type(output_buffer)}\"\n"
+            "        )"
+        )
+        new_copy = (
+            "            for item, buffer in zip(output, output_buffer):\n"
+            "                self._copy_output_to_buffer(item, buffer, num_tokens)\n"
+            "            return\n"
+            "        if hasattr(output, \"__dict__\") and hasattr(output_buffer, \"__dict__\"):\n"
+            "            for key, val in output.__dict__.items():\n"
+            "                buf_val = getattr(output_buffer, key, None)\n"
+            "                if torch.is_tensor(val) and torch.is_tensor(buf_val):\n"
+            "                    buf_val[:num_tokens].copy_(val[:num_tokens])\n"
+            "            return\n"
+            "        raise TypeError(\n"
+            "            \"Unsupported BCG output buffer pair: \"\n"
+            "            f\"{type(output)} vs {type(output_buffer)}\"\n"
+            "        )"
+        )
+
+        if old_slice not in content:
+            print("breakable_cuda_graph_backend.py: ERROR _slice_output anchor not found")
+        elif old_copy not in content:
+            print("breakable_cuda_graph_backend.py: ERROR _copy_output_to_buffer anchor not found")
+        else:
+            content = content.replace(old_slice, new_slice, 1)
+            content = content.replace(old_copy, new_copy, 1)
+            with open(bcg_path, "w") as f:
+                f.write(content)
+            print("breakable_cuda_graph_backend.py: OK applied Patch 5 (dataclass output support)")
+
+    # --- Patch 6: dsa_indexer.py half_device_sm_count on HIP ---
+    # half_device_sm_count is only set when _is_cuda, but _get_q_k_bf16 uses it
+    # unconditionally when enable_dual_stream=True. With breakable decode backend,
+    # target verify enables dual stream, causing AttributeError on HIP/ROCm.
+    # Fix: set dummy values on HIP (deep_gemm not used on HIP, aiter is used).
+    with open(di_path) as f:
+        content = f.read()
+
+    if "HIP/ROCm: deep_gemm is not used" in content:
+        print("dsa_indexer.py Patch 6: SKIP (already patched)")
+    else:
+        old = (
+            "        else:\n"
+            "            self.logits_with_pp_recv = False\n"
+            "\n"
+            "        self.wq_b = ReplicatedLinear("
+        )
+        new = (
+            "        else:\n"
+            "            # HIP/ROCm: deep_gemm is not used (aiter is used instead), but\n"
+            "            # _get_q_k_bf16 references half_device_sm_count when\n"
+            "            # enable_dual_stream=True. Set dummy values to avoid AttributeError.\n"
+            "            self.sm_count = 0\n"
+            "            self.half_device_sm_count = 0\n"
+            "            self.logits_with_pp_recv = False\n"
+            "\n"
+            "            self.wq_b = ReplicatedLinear("
+        )
+        if old not in content:
+            print("dsa_indexer.py Patch 6: ERROR anchor not found")
+        else:
+            with open(di_path, "w") as f:
+                f.write(content.replace(old, new, 1))
+            print("dsa_indexer.py Patch 6: OK applied (half_device_sm_count on HIP)")
+
+    # --- Patch 7: breakable_cuda_graph_backend.py infer actual num_tokens ---
+    # shape_key.size is bs (batch size), but for EAGLE verify the output has
+    # bs * num_tokens_per_bs rows. The breakable backend was slicing output to
+    # shape_key.size (=bs), truncating the logits to 1/3 of the expected size.
+    # This caused RuntimeError: shape '[1, 3]' is invalid for input of size 1
+    # in eagle_utils.py eagle_sample reshape.
+    # Fix: infer actual token count from the output tensor's first dimension.
+    with open(bcg_path) as f:
+        content = f.read()
+
+    if "_infer_num_tokens" in content:
+        print("breakable_cuda_graph_backend.py Patch 7: SKIP (already patched)")
+    else:
+        old = (
+            "        size = shape_key.size\n"
+            "        with BreakableCUDAGraphCapture(\n"
+            "            cuda_graph=graph,\n"
+            "            pool=self._pool,\n"
+            "            stream=self._capture_stream,\n"
+            "        ):\n"
+            "            out = captured_fn()\n"
+            "            if self._shared_output_buffer is not None:\n"
+            "                self._copy_output_to_buffer(out, self._shared_output_buffer, size)\n"
+            "\n"
+            "        if self._shared_output_buffer is None:\n"
+            "            self._shared_output_buffer = out\n"
+            "            stored = self._slice_output(out, size)\n"
+            "        else:\n"
+            "            stored = self._slice_output(self._shared_output_buffer, size)\n"
+            "\n"
+            "        self._graphs[shape_key] = graph\n"
+            "        self._outputs[shape_key] = stored\n"
+            "\n"
+            "    def _slice_output"
+        )
+        new = (
+            "        size = shape_key.size\n"
+            "        with BreakableCUDAGraphCapture(\n"
+            "            cuda_graph=graph,\n"
+            "            pool=self._pool,\n"
+            "            stream=self._capture_stream,\n"
+            "        ):\n"
+            "            out = captured_fn()\n"
+            "            # Infer actual token count: shape_key.size is bs, but for\n"
+            "            # EAGLE verify the output has bs * num_tokens_per_bs rows.\n"
+            "            actual_size = self._infer_num_tokens(out)\n"
+            "            if actual_size == 0:\n"
+            "                actual_size = size\n"
+            "            if self._shared_output_buffer is not None:\n"
+            "                self._copy_output_to_buffer(out, self._shared_output_buffer, actual_size)\n"
+            "\n"
+            "        if self._shared_output_buffer is None:\n"
+            "            self._shared_output_buffer = out\n"
+            "            stored = self._slice_output(out, actual_size)\n"
+            "        else:\n"
+            "            stored = self._slice_output(self._shared_output_buffer, actual_size)\n"
+            "\n"
+            "        self._graphs[shape_key] = graph\n"
+            "        self._outputs[shape_key] = stored\n"
+            "\n"
+            "    @staticmethod\n"
+            "    def _infer_num_tokens(output):\n"
+            "        \"\"\"Infer the actual number of tokens from the output's first tensor dim.\"\"\"\n"
+            "        if output is None:\n"
+            "            return 0\n"
+            "        if torch.is_tensor(output):\n"
+            "            return output.shape[0] if output.shape else 0\n"
+            "        if isinstance(output, PPProxyTensors):\n"
+            "            for v in output.tensors.values():\n"
+            "                if torch.is_tensor(v) and v.shape:\n"
+            "                    return v.shape[0]\n"
+            "            return 0\n"
+            "        if isinstance(output, (tuple, list)) and len(output) > 0:\n"
+            "            return BreakableCudaGraphBackend._infer_num_tokens(output[0])\n"
+            "        if hasattr(output, \"__dict__\"):\n"
+            "            for val in vars(output).values():\n"
+            "                if torch.is_tensor(val) and val.shape:\n"
+            "                    return val.shape[0]\n"
+            "        return 0\n"
+            "\n"
+            "    def _slice_output"
+        )
+        if old not in content:
+            print("breakable_cuda_graph_backend.py Patch 7: ERROR anchor not found")
+        else:
+            with open(bcg_path, "w") as f:
+                f.write(content.replace(old, new, 1))
+            print("breakable_cuda_graph_backend.py Patch 7: OK applied (infer num_tokens)")
 {{- end }}

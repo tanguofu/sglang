@@ -229,6 +229,34 @@ def _broadcast_indexer_topk_from_rank0_impl(topk_indices: torch.Tensor) -> None:
         group.broadcast(topk_indices, src=0)
 
 
+@eager_on_graph(True)
+def _eager_broadcast_topk_indices(topk_indices: torch.Tensor) -> None:
+    # When inside a breakable CUDA graph, the @eager_on_graph decorator breaks
+    # the graph at this point and runs the broadcast eagerly (outside stream
+    # capture). This is required on HIP/ROCm where NCCL collectives cannot run
+    # during CUDA graph stream capture.
+    #
+    # On HIP/ROCm, we use Gloo (CPU) broadcast instead of NCCL because the NCCL
+    # watchdog thread can throw hipErrorCapturedEvent even when the broadcast
+    # runs between two graph capture segments (the watchdog checks events
+    # asynchronously and the stream may have re-entered capture by then).
+    # Gloo broadcast is CPU-only and avoids NCCL entirely.
+    group = get_attn_tp_group()
+    if group.world_size == 1:
+        return
+
+    if _is_hip:
+        # CPU/Gloo broadcast: safe because @eager_on_graph broke the graph,
+        # so we're outside stream capture and CPU tensor transfer works.
+        cpu_tensor = topk_indices.cpu()
+        torch.distributed.broadcast(
+            cpu_tensor, src=group.ranks[0], group=group.cpu_group
+        )
+        topk_indices.copy_(cpu_tensor.to(topk_indices.device))
+    else:
+        _broadcast_indexer_topk_from_rank0_impl(topk_indices)
+
+
 def _broadcast_indexer_topk_from_rank0(
     topk_indices: Optional[torch.Tensor],
 ) -> Optional[torch.Tensor]:
@@ -240,7 +268,11 @@ def _broadcast_indexer_topk_from_rank0(
     if is_in_tc_piecewise_cuda_graph():
         broadcast_indexer_topk_from_rank0_(topk_indices)
     else:
-        _broadcast_indexer_topk_from_rank0_impl(topk_indices)
+        # Use the eager_on_graph wrapper which breaks the CUDA graph when
+        # inside a breakable capture context, running the broadcast eagerly
+        # outside stream capture. On HIP/ROCm, this is essential because
+        # NCCL collectives cannot run during stream capture.
+        _eager_broadcast_topk_indices(topk_indices)
     return topk_indices
 
 
@@ -380,6 +412,11 @@ class Indexer(MultiPlatformOp):
             pp_size = get_global_server_args().pp_size
             self.logits_with_pp_recv = pp_size > 1 and not get_pp_group().is_last_rank
         else:
+            # HIP/ROCm: deep_gemm is not used (aiter is used instead), but
+            # _get_q_k_bf16 references half_device_sm_count when
+            # enable_dual_stream=True. Set dummy values to avoid AttributeError.
+            self.sm_count = 0
+            self.half_device_sm_count = 0
             self.logits_with_pp_recv = False
 
         self.wq_b = ReplicatedLinear(
@@ -1136,7 +1173,14 @@ class Indexer(MultiPlatformOp):
 
         bytes_per_row = k_offset * self._MQA_LOGITS_BYTES_PER_ELEM
         max_rows = max(1, int(logits_budget_bytes // max(bytes_per_row, 1)))
-        max_rows = min(max_rows, q_offset)
+        # Guard against i32 index overflow in the FlyDSL/Triton MQA logits
+        # kernel: the kernel indexes logits with i32, so
+        # max_rows * k_offset * 4 must stay < 2^31.  Without this clamp,
+        # long-context prefill (k_offset > ~180k) wraps the i32 index and
+        # produces deterministic garbled output (repetitive tokens).
+        INT32_MAX = 2147483647
+        i32_safe_rows = INT32_MAX // max(bytes_per_row, 1)
+        max_rows = min(max_rows, i32_safe_rows, q_offset)
 
         global_topk_offset = metadata.attn_metadata.topk_indices_offset
         cu_seqlens_q_full = None

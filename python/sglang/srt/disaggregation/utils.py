@@ -795,3 +795,69 @@ def is_aborted(req: Req) -> bool:
     return isinstance(req.to_finish, FINISH_ABORT) or isinstance(
         req.finished_reason, FINISH_ABORT
     )
+
+
+def compute_mamba_state_slice_blocks(
+    src_dim: int,
+    dst_dim: int,
+    src_attn_tp_size: int,
+    dst_attn_tp_size: int,
+    dst_tp_rank_in_group: int,
+    local_tp_rank_in_group: int,
+    conv_shard_groups: Optional[List[int]] = None,
+) -> List[Tuple[int, int, int]]:
+    """Blocks to copy one mamba state item across differing attn-TP sizes.
+
+    Returns ``(src_dim_start, dst_dim_start, num_dims)`` triples in units of the
+    sliceable (3rd) dimension. Single-axis states (temporal_state, or when
+    ``conv_shard_groups`` is None) return one contiguous block -- byte-identical to
+    the legacy behavior.
+
+    GDN conv_state is ``cat([query | key | value])`` where each sub-block (full
+    dims == ``conv_shard_groups``, e.g. ``[key_dim, key_dim, value_dim]``) is
+    head-sharded INDEPENDENTLY across attn-TP. In the SCATTER direction
+    (1 prefill rank -> several decode ranks) a single contiguous slice straddles
+    the q/k/v boundaries and delivers wrong channels. The AGGREGATION direction
+    (several prefill ranks -> 1 decode rank) has the symmetric problem: a single
+    contiguous write interleaves the sub-blocks by writer. Both directions emit one
+    block per sub-block for conv_state; temporal_state and non-GDN states (when
+    ``conv_shard_groups`` is None) keep the single contiguous slice.
+    """
+    use_subdims = (
+        conv_shard_groups is not None
+        and sum(conv_shard_groups) == src_dim * src_attn_tp_size
+    )
+
+    if src_attn_tp_size > dst_attn_tp_size:
+        # Aggregation: several prefill ranks each write their shard into one decode slot.
+        writers_per_decode = src_attn_tp_size // dst_attn_tp_size
+        local_writer_idx = local_tp_rank_in_group % writers_per_decode
+        if not use_subdims:
+            return [(0, local_writer_idx * src_dim, src_dim)]
+        blocks: List[Tuple[int, int, int]] = []
+        src_off = 0
+        dst_off = 0
+        for full_sd in conv_shard_groups:
+            src_sub = full_sd // src_attn_tp_size
+            dst_sub = full_sd // dst_attn_tp_size
+            blocks.append((src_off, dst_off + local_writer_idx * src_sub, src_sub))
+            src_off += src_sub
+            dst_off += dst_sub
+        return blocks
+
+    # Scatter: 1 prefill rank feeds several decode ranks.
+    if not use_subdims:
+        src_dim_start = (dst_tp_rank_in_group * dst_dim) % src_dim
+        return [(src_dim_start, 0, dst_dim)]
+
+    blocks: List[Tuple[int, int, int]] = []
+    src_off = 0
+    dst_off = 0
+    for full_sd in conv_shard_groups:
+        src_sub = full_sd // src_attn_tp_size
+        dst_sub = full_sd // dst_attn_tp_size
+        src_start = src_off + (dst_tp_rank_in_group * dst_sub) % src_sub
+        blocks.append((src_start, dst_off, dst_sub))
+        src_off += src_sub
+        dst_off += dst_sub
+    return blocks

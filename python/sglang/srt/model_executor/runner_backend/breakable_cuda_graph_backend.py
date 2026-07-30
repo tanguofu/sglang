@@ -128,17 +128,42 @@ class BreakableCudaGraphBackend(DedupedCudaGraphMixin, BaseCudaGraphBackend):
             stream=self._capture_stream,
         ):
             out = captured_fn()
+            # Infer actual token count from the output: shape_key.size is bs,
+            # but for EAGLE verify the output has bs * num_tokens_per_bs rows.
+            actual_size = self._infer_num_tokens(out)
+            if actual_size == 0:
+                actual_size = size
             if self._shared_output_buffer is not None:
-                self._copy_output_to_buffer(out, self._shared_output_buffer, size)
+                self._copy_output_to_buffer(out, self._shared_output_buffer, actual_size)
 
         if self._shared_output_buffer is None:
             self._shared_output_buffer = out
-            stored = self._slice_output(out, size)
+            stored = self._slice_output(out, actual_size)
         else:
-            stored = self._slice_output(self._shared_output_buffer, size)
+            stored = self._slice_output(self._shared_output_buffer, actual_size)
 
         self._graphs[shape_key] = graph
         self._outputs[shape_key] = stored
+
+    @staticmethod
+    def _infer_num_tokens(output: Any) -> int:
+        """Infer the actual number of tokens from the output's first tensor dim."""
+        if output is None:
+            return 0
+        if torch.is_tensor(output):
+            return output.shape[0] if output.shape else 0
+        if isinstance(output, PPProxyTensors):
+            for v in output.tensors.values():
+                if torch.is_tensor(v) and v.shape:
+                    return v.shape[0]
+            return 0
+        if isinstance(output, (tuple, list)) and len(output) > 0:
+            return BreakableCudaGraphBackend._infer_num_tokens(output[0])
+        if hasattr(output, "__dict__"):
+            for val in vars(output).values():
+                if torch.is_tensor(val) and val.shape:
+                    return val.shape[0]
+        return 0
 
     def _slice_output(self, output: Any, num_tokens: int) -> Any:
         if output is None:
@@ -151,6 +176,14 @@ class BreakableCudaGraphBackend(DedupedCudaGraphMixin, BaseCudaGraphBackend):
             return tuple(self._slice_output(item, num_tokens) for item in output)
         if isinstance(output, list):
             return [self._slice_output(item, num_tokens) for item in output]
+        if hasattr(output, "__dict__"):
+            import copy
+
+            result = copy.copy(output)
+            for key, val in output.__dict__.items():
+                if torch.is_tensor(val) and val.shape and val.shape[0] >= num_tokens:
+                    setattr(result, key, val[:num_tokens])
+            return result
         raise TypeError(f"Unsupported BCG output type: {type(output)}")
 
     def _copy_output_to_buffer(
@@ -189,6 +222,12 @@ class BreakableCudaGraphBackend(DedupedCudaGraphMixin, BaseCudaGraphBackend):
                 )
             for item, buffer in zip(output, output_buffer):
                 self._copy_output_to_buffer(item, buffer, num_tokens)
+            return
+        if hasattr(output, "__dict__") and hasattr(output_buffer, "__dict__"):
+            for key, val in output.__dict__.items():
+                buf_val = getattr(output_buffer, key, None)
+                if torch.is_tensor(val) and torch.is_tensor(buf_val):
+                    buf_val[:num_tokens].copy_(val[:num_tokens])
             return
         raise TypeError(
             "Unsupported BCG output buffer pair: "

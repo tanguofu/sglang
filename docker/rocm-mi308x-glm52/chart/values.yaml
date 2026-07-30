@@ -219,3 +219,14 @@ eaglePatch:
 aitersTunedGemm:
   enabled: true
   configMapName: aiters-tuned-gemm
+
+# aiterConfigImage — bake the tuned bf16_tuned_gemm.csv into a tiny image and
+# inject via initContainer (replaces the aitersTunedGemm ConfigMap). The ConfigMap
+# exceeds the 256 KiB apply-annotation limit and is owned by another release;
+# the image is version-controlled and survives helm upgrades. When enabled, this
+# takes precedence over aitersTunedGemm. See aiters-config/README.md.
+aiterConfigImage:
+  enabled: false
+  repository: mirrors.tencent.com/ti-platform/sglang-glm52-308x-aiter-config
+  tag: n160-v1
+  pullPolicy: IfNotPresent

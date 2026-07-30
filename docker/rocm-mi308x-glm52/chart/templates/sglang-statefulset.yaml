@@ -36,6 +36,28 @@ spec:
         - name: {{ .Values.imagePullSecret }}
       {{- end }}
       terminationGracePeriodSeconds: 300
+      {{- if .Values.aiterConfigImage.enabled }}
+      initContainers:
+        # Bakes the tuned bf16_tuned_gemm.csv (incl. N=160 K=6144 shapes) into
+        # a tiny image and copies it onto a shared emptyDir volume. Replaces the
+        # ConfigMap mount, which (a) exceeds the 256 KiB apply-annotation limit
+        # and (b) is owned by another helm release and gets overwritten on its
+        # upgrade. See aiters-config/README.md.
+        - name: aiter-config-init
+          image: "{{ .Values.aiterConfigImage.repository }}:{{ .Values.aiterConfigImage.tag }}"
+          imagePullPolicy: {{ .Values.aiterConfigImage.pullPolicy | default "IfNotPresent" }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              echo "[aiter-config-init] copying tuned bf16_tuned_gemm.csv to shared volume"
+              cp /aiter-configs/bf16_tuned_gemm.csv /config/bf16_tuned_gemm.csv
+              echo "[aiter-config-init] gfx942 rows: $(grep -c '^gfx942' /config/bf16_tuned_gemm.csv)"
+              echo "[aiter-config-init] N=160 rows: $(grep -c '^gfx942.*,160,' /config/bf16_tuned_gemm.csv)"
+          volumeMounts:
+            - name: aiter-config
+              mountPath: /config
+      {{- end }}
       containers:
         - name: sglang
           image: {{ include "sglang.image" . }}
@@ -86,6 +108,9 @@ spec:
                 --speculative-eagle-topk {{ .Values.sglang.speculativeEagleTopk }} \
                 {{- end }}
                 --cuda-graph-backend-prefill {{ .Values.sglang.cudaGraphBackendPrefill }} \
+                {{- if .Values.sglang.cudaGraphBackendDecode }}
+                --cuda-graph-backend-decode {{ .Values.sglang.cudaGraphBackendDecode }} \
+                {{- end }}
                 --max-running-requests {{ .Values.sglang.maxRunningRequests }} \
                 --cuda-graph-bs-prefill {{ .Values.sglang.cudaGraphBsPrefill }} \
                 {{- if .Values.sglang.enableHierarchicalCache }}
@@ -103,6 +128,9 @@ spec:
                 {{- end }}
                 --enable-metrics --skip-server-warmup \
                 --watchdog-timeout {{ .Values.sglang.watchdogTimeout }} --log-level {{ .Values.sglang.logLevel }}
+                {{- if .Values.sglang.dsaTopkBackend }}
+                --dsa-topk-backend {{ .Values.sglang.dsaTopkBackend }} --dsa-prefill-backend tilelang --dsa-decode-backend tilelang
+                {{- end }}
           env:
             - name: MODEL_PATH
               value: {{ .Values.model.path | quote }}
@@ -155,6 +183,21 @@ spec:
               value: "1"
             - name: SGLANG_OPT_USE_AITER_INDEXER
               value: "1"
+            {{- if eq .Values.sglang.dsaFuseTopk false }}
+            # Deterministic DSA topk: disable fused topk so torch.topk (deterministic)
+            # is used instead of sgl-kernel fast_topk_v2 (non-deterministic).
+            # Without this, TP ranks select different KV pages at long contexts.
+            - name: SGLANG_DSA_FUSE_TOPK
+              value: "0"
+            {{- end }}
+            {{- if .Values.sglang.dsaTopkBroadcast }}
+            # DSA topk broadcast: broadcast rank 0's topk selection to all TP ranks
+            # to eliminate FP8 MQA logits divergence at 120K+ context. Combined with
+            # --cuda-graph-backend-decode breakable and the eager_on_graph patch,
+            # the broadcast runs eagerly outside stream capture (HIP-compatible).
+            - name: SGLANG_DSA_TOPK_BROADCAST
+              value: "1"
+            {{- end }}
             # FlyDSL FP8 MQA logits kernel variant — mfma_r4_w4 improves prefill
             # indexer performance 14-29% vs default (mfma_r2_w4) with no
             # precision change (same kernel, BLOCK_KV=128, MFMA instruction).
@@ -200,7 +243,11 @@ spec:
               subPath: apply_eagle_patch.py
               readOnly: true
             {{- end }}
-            {{- if .Values.aitersTunedGemm.enabled }}
+            {{- if .Values.aiterConfigImage.enabled }}
+            - name: aiter-config
+              mountPath: /etc/aiter-configs
+              readOnly: true
+            {{- else if .Values.aitersTunedGemm.enabled }}
             - name: aiters-tuned-gemm
               mountPath: /etc/aiter-configs
               readOnly: true
@@ -317,7 +364,12 @@ spec:
             name: {{ .Release.Name }}-eagle-patch
             defaultMode: 0755
         {{- end }}
-        {{- if .Values.aitersTunedGemm.enabled }}
+        {{- if .Values.aiterConfigImage.enabled }}
+        - name: aiter-config
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        {{- else if .Values.aitersTunedGemm.enabled }}
         - name: aiters-tuned-gemm
           configMap:
             name: {{ .Values.aitersTunedGemm.configMapName }}

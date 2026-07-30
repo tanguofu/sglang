@@ -91,6 +91,10 @@ sglang:
   cudaGraphMaxBsDecode: 32
   cudaGraphBsPrefill: "1 2 3 4 8 16 32"  # breakable: added bs=1,2,3 for single-request long prefill
   cudaGraphBackendPrefill: breakable
+  # Use breakable CUDA graph for decode so eager_on_graph can break the graph
+  # at the DSA topk broadcast point. Required for SGLANG_DSA_TOPK_BROADCAST on
+  # HIP/ROCm where NCCL collectives cannot run during stream capture.
+  cudaGraphBackendDecode: breakable
   speculativeAlgorithm: NEXTN
   speculativeNumSteps: 3
   speculativeNumDraftTokens: 4
@@ -112,6 +116,17 @@ sglang:
   logLevel: info
   toolCallParser: glm47
   reasoningParser: glm45
+  # DSA topk backend — deterministic torch.topk instead of non-deterministic
+  # sgl-kernel fast_topk_v2. Without this, DSA indexer selects different KV
+  # pages across TP ranks at long contexts (>120K), causing attention output
+  # divergence and repetition loops. Requires SGLANG_DSA_FUSE_TOPK=false.
+  dsaTopkBackend: torch
+  dsaFuseTopk: false
+  # DSA topk broadcast — broadcast rank 0's topk to all TP ranks to eliminate
+  # FP8 MQA logits divergence at 120K+ context. Uses eager_on_graph to break
+  # the breakable CUDA graph at the broadcast point, running NCCL broadcast
+  # eagerly outside stream capture (HIP/ROCm compatible).
+  dsaTopkBroadcast: true
 
 # ---------------------------------------------------------------------------
 # Zero precision loss — ROCM_QUICK_REDUCE_QUANTIZATION
@@ -196,10 +211,10 @@ livenessProbe:
   failureThreshold: 5
 
 # ---------------------------------------------------------------------------
-# EAGLE PR #31478 patch — baked into breakable image, runtime patch disabled
+# EAGLE PR #31478 patch + deterministic argmax patch (runtime patching)
 # ---------------------------------------------------------------------------
 eaglePatch:
-  enabled: false
+  enabled: true
 
 # ---------------------------------------------------------------------------
 # Aiter tuned GEMM config — pre-tuned bf16 GEMM shapes for GLM-5.2 on gfx942

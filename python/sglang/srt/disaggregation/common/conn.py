@@ -75,6 +75,9 @@ class PrefillServerInfo:
     page_size: Optional[int]
     kv_cache_dtype: Optional[str]
     follow_bootstrap_room: bool
+    # Added for compat with newer prefill pods (v0.5.16+)
+    enable_dsa_cache_layer_split: bool = False
+    prefill_http_port: Optional[int] = None
 
     # Pre-computed rank mapping (set by try_ensure_parallel_info on decode side)
     target_tp_rank: Optional[int] = None
@@ -94,6 +97,10 @@ class PrefillServerInfo:
             str(self.kv_cache_dtype) if self.kv_cache_dtype is not None else None
         )
         self.follow_bootstrap_room = bool(self.follow_bootstrap_room)
+        self.enable_dsa_cache_layer_split = bool(self.enable_dsa_cache_layer_split)
+        self.prefill_http_port = (
+            int(self.prefill_http_port) if self.prefill_http_port is not None else None
+        )
 
 
 @dataclasses.dataclass
