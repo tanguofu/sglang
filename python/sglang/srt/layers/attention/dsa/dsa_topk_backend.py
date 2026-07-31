@@ -6,6 +6,9 @@ from typing import Callable, Dict, List, Optional, Tuple
 import torch
 
 from sglang.srt.environ import envs
+from sglang.srt.utils import is_hip
+
+_is_hip = is_hip()
 
 _FLASHINFER_TIE_BREAK_VALUES = {
     "small": 1,
@@ -35,7 +38,8 @@ class DSATopKBackend(Enum):
         return self == DSATopKBackend.FLASHINFER
 
     def should_use_topk_v2(self) -> bool:
-        return self.is_sgl_kernel() and envs.SGLANG_OPT_USE_TOPK_V2.get()
+        # The v2 JIT kernel uses CUDA cooperative groups and has no HIP build yet.
+        return self.is_sgl_kernel() and envs.SGLANG_OPT_USE_TOPK_V2.get() and not _is_hip
 
     def topk_func(
         self,
@@ -102,6 +106,7 @@ class DSATopKBackend(Enum):
         # exactly this case (see dsa_drop_wide_page_table), so once the shape
         # matches we commit to v2 and never silently fall back to the legacy
         # page_size=1 path from here.
+        # The v2 JIT kernel uses CUDA cooperative groups and has no HIP build yet.
         if (
             self.should_use_topk_v2()
             and topk_transform_method == TopkTransformMethod.PAGED
