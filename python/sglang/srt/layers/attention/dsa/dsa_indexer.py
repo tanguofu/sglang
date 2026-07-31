@@ -1142,10 +1142,9 @@ class Indexer(MultiPlatformOp):
             assert page_size == 64, "only support page size 64"
 
         assert len(weights.shape) == 3
-        assert (
-            forward_batch.seq_lens_cpu is not None
-            and forward_batch.extend_seq_lens_cpu is not None
-        )
+        assert forward_batch.seq_lens_cpu is not None
+        if not forward_batch.forward_mode.is_target_verify():
+            assert forward_batch.extend_seq_lens_cpu is not None
         weights = weights.squeeze(-1)
 
         if _is_hip and not _use_aiter_preshuffle:
@@ -1153,10 +1152,9 @@ class Indexer(MultiPlatformOp):
         else:
             block_tables = metadata.get_page_table_64()
 
-        assert (
-            forward_batch.seq_lens_cpu is not None
-            and forward_batch.extend_seq_lens_cpu is not None
-        )
+        assert forward_batch.seq_lens_cpu is not None
+        if not forward_batch.forward_mode.is_target_verify():
+            assert forward_batch.extend_seq_lens_cpu is not None
 
         batch_size = len(block_tables)
         token_nums, _, _ = q_fp8.shape
