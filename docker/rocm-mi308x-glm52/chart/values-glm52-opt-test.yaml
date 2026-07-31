@@ -1,0 +1,113 @@
+# SGLang GLM-5.2 optimal parameter test — node 19 (21.234.170.19)
+# Compare against 1tp8 on node 32 (21.234.170.32) with current params.
+#
+# Key changes from 1tp8 baseline:
+#   - eaglePatch: false → true (fix decode coredump)
+#   - disableCustomAllreduce: removed (use custom allreduce, save ~11GB VRAM)
+#   - cudaGraphMaxBsDecode: 16 → 32 (cover bs 17-32 decode)
+#   - cudaGraphBsDecode: add 20, 24, 32
+#   - maxRunningRequests: 32 → 48
+#   - hicacheRatio: 2 → 4 (2x host cache)
+#   - hicacheWritePolicy: write_through_selective → write_back (fix load-back=0)
+#   - watchdogTimeout: 3600 → 1200 (faster recovery)
+#   - memFractionStatic: 0.88 → 0.85 (balance KV cache vs safety)
+#   - prefillMaxRequests: 16 → 8 (limit concurrent prefill)
+#   - scheduleConservativeness: 0.7 → 0.7 (keep same)
+#   - chunkedPrefillSize: 16384 → 16384 (keep same, already safe)
+
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+tag: breakable-v0.5.15
+
+nodeName: node-21.234.170.19
+replicas: 1
+hostNetwork: true
+port: 30000
+
+tolerations:
+  - effect: NoSchedule
+    key: dedicated
+    operator: Equal
+    value: glm52-prod
+  - effect: NoSchedule
+    key: node.cvm.com/ptl-unsupported
+    operator: Equal
+    value: ""
+
+resources:
+  requests:
+    cpu: 320
+    memory: 1900Gi
+    amd.com/gpu: 8
+  limits:
+    amd.com/gpu: 8
+
+sglang:
+  tpSize: 8
+  ppSize: 1
+  contextLength: "524288"
+  numaNode: "0 0 0 0 1 1 1 1"
+  memFractionStatic: 0.85
+  kvCacheDtype: fp8_e4m3
+  chunkedPrefillSize: 16384
+  maxPrefillTokens: 32768
+  prefillMaxRequests: 8
+  scheduleConservativeness: 0.7
+  maxRunningRequests: 48
+  cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16 20 24 32"
+  cudaGraphMaxBsDecode: 32
+  cudaGraphBsPrefill: "4 8 16 32"
+  cudaGraphBackendPrefill: breakable
+  speculativeAlgorithm: NEXTN
+  speculativeNumSteps: 3
+  speculativeNumDraftTokens: 4
+  speculativeEagleTopk: 1
+  enableHierarchicalCache: true
+  hicacheRatio: 2  # reduced from 4 — write_through_selective+ratio=4 caused startup hang
+  hicacheIoBackend: direct
+  hicacheMemLayout: page_first_direct
+  hicacheWritePolicy: write_through_selective
+  enableAiterAllreduceFusion: true
+  enableMixedChunk: true
+  enableFusedQkNormRope: true
+  enableMetrics: true
+  skipServerWarmup: true
+  watchdogTimeout: 1200
+  logLevel: info
+  toolCallParser: glm47
+  reasoningParser: glm45
+
+eaglePatch:
+  enabled: true
+
+aitersTunedGemm:
+  enabled: true
+  configMapName: aiters-tuned-gemm
+
+rocmQuickReduceQuantization: "NONE"
+
+router:
+  enabled: false
+
+llmDRouter:
+  enabled: false
+
+gateway:
+  enabled: false
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 10
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 2400
+  periodSeconds: 60
+  timeoutSeconds: 10
+  failureThreshold: 5

@@ -1,0 +1,118 @@
+# 2tp8 optimized values — based on current deployed values + benchmark-verified changes
+# Changes marked with # CHANGED:
+aitersTunedGemm:
+  configMapName: aiters-tuned-gemm
+  enabled: false              # CHANGED: true → false (replaced by aiterConfigImage)
+aiterConfigImage:             # CHANGED: NEW — bake tuned CSV (incl. N=160) into image
+  enabled: true
+  repository: mirrors.tencent.com/ti-platform/sglang-glm52-308x-aiter-config
+  tag: n160-v1
+  pullPolicy: IfNotPresent
+eaglePatch:
+  enabled: true              # CHANGED: false → true (fix decode coredump with custom allreduce)
+responsesFix:
+  enabled: true              # Preserve existing /v1/responses patch ConfigMap
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-2tp8.jmpti.woa.com
+  httpsSectionName: https-glm52-2tp8
+  lbAddress: 21.162.215.14
+hostNetwork: true
+image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+imagePullSecret: ""
+imagePullSecrets:
+- name: tencent-registry
+- name: tencent-mirror-secret
+livenessProbe:
+  failureThreshold: 5
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 2400
+  periodSeconds: 60
+  timeoutSeconds: 10
+llmDRouter:
+  enabled: false
+namespace: kube-system
+nodeName: ""
+nodeSelector:
+  accelerator: amd-gpu
+  sglang-model: ready
+podAnnotations:
+  eks.tke.cloud.tencent.com/cluster-ip-switch: cluster
+port: 30000
+readinessProbe:
+  failureThreshold: 10
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  timeoutSeconds: 10
+replicas: 2
+rocmQuickReduceQuantization: NONE
+router:
+  balanceAbsThreshold: 1
+  balanceRelThreshold: 1.2
+  cacheThreshold: 0.1            # CODEX: 0.2 → 0.1 (codex 相似 prefix 多，更激进匹配)
+  enabled: true
+  image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router
+  maxConcurrentRequests: 256     # CODEX: 128 → 256 (codex 高并发 session)
+  nodeName: node-21.151.225.144
+  policy: cache_aware
+  port: 30080
+  queueSize: 128                 # CODEX: 64 → 128 (突发流量缓冲)
+  queueTimeoutSecs: 60           # CODEX: 120 → 60 (快速失败，codex 用户对延迟敏感)
+  rateLimitTokensPerSecond: 256  # CODEX: 128 → 256 (避免 rate limit 卡住并发)
+  tag: pd-resp-msg-v1
+  tolerations:
+  - effect: NoSchedule
+    key: dedicated
+    operator: Equal
+    value: sglang-1pd-A-group
+  workerUrls:
+  - http://21.151.225.152:30000
+  - http://21.151.225.172:30000
+sglang:
+  chunkedPrefillSize: 16384    # CHANGED: 32768 → 16384 (lower OOM risk)
+  contextLength: "524288"
+  cudaGraphBackendPrefill: breakable
+  cudaGraphBsDecode: 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32 48  # CODEX: added 48 (cover bs 33-48 decode)
+  cudaGraphBsPrefill: 4 8 16 32  # CHANGED: removed 1,2,3 (save VRAM)
+  cudaGraphMaxBsDecode: 48       # CODEX: 32 → 48 (cover higher decode concurrency)
+  enableAiterAllreduceFusion: true
+  enableCacheReport: true          # Preserve existing cache report for router
+  enableFusedQkNormRope: true
+  enableHierarchicalCache: true
+  enableMetrics: true
+  enableMixedChunk: true
+  hicacheIoBackend: direct
+  hicacheMemLayout: page_first_direct
+  hicacheRatio: 4                # CHANGED: 2 → 4 (2x host cache)
+  hicacheWritePolicy: write_back # CHANGED: write_through_selective → write_back (fix load-back=0)
+  kvCacheDtype: fp8_e4m3
+  logLevel: info
+  maxPrefillTokens: 32768
+  maxRunningRequests: 64         # CODEX: 48 → 64 (codex 高并发 decode 轻量)
+  memFractionStatic: 0.75        # FIX: 0.85 → 0.75 (恢复 OOM fix 安全垫, 0.88→0.75 是历史 OOM fix)
+  numaNode: 0 0 0 0 1 1 1 1
+  ppSize: 1
+  prefillMaxRequests: 8          # CHANGED: 32 → 8 (limit concurrent prefill)
+  reasoningParser: glm45
+  scheduleConservativeness: 1.0  # FIX: 0.7 → 1.0 (恢复 OOM fix 保守调度)
+  skipServerWarmup: true
+  speculativeAlgorithm: NEXTN
+  speculativeEagleTopk: 1
+  speculativeNumDraftTokens: 4
+  speculativeNumSteps: 2         # FIX: 3 → 2 (rev10 验证 10/10, benchmark steps=2 优于 3)
+  toolCallParser: glm47
+  tpSize: 8
+  watchdogTimeout: 1200          # CHANGED: 3600 → 1200 (faster recovery)
+tag: breakable
+tolerations:
+- effect: NoSchedule
+  key: dedicated
+  operator: Equal
+  value: sglang-2tp8
