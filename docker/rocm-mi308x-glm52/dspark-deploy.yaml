@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: sglang-dspark-308x
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: sglang-dspark-308x
+spec:
+  serviceName: sglang-dspark-308x
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sglang-dspark-308x
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sglang-dspark-308x
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: node-21.151.225.172
+      tolerations:
+      - key: dedicated
+        operator: Equal
+        value: sglang-1pd-B-group
+        effect: NoSchedule
+      hostNetwork: true
+      hostPID: false
+      containers:
+      - name: sglang
+        image: mirrors.tencent.com/ti-platform/sglang-glm52-dspark-308x:latest
+        imagePullPolicy: Always
+        command: ["/start_server.sh"]
+        env:
+        - name: MODEL_PATH
+          value: /data/model/glm52-fp8
+        - name: DRAFT_MODEL_PATH
+          value: /data/model/glm52-dspark-redhat
+        - name: PORT
+          value: "30000"
+        - name: HIP_VISIBLE_DEVICES
+          value: "0,1,2,3,4,5,6,7"
+        - name: NCCL_DEBUG
+          value: WARN
+        - name: HSA_ENABLE_SDMA
+          value: "0"
+        - name: HIP_FORCE_DEV_KERNARG
+          value: "1"
+        - name: NCCL_CUMEM_ENABLE
+          value: "0"
+        - name: NCCL_MIN_NCHANNELS
+          value: "112"
+        - name: PYTORCH_ROCM_ARCH
+          value: gfx942
+        - name: SGLANG_USE_AITER
+          value: "1"
+        - name: SGLANG_ROCM_FUSED_DECODE_MLA
+          value: "1"
+        - name: SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM
+          value: "1"
+        - name: SGLANG_DSA_HIP_DISABLE_PRESHUFFLE
+          value: "1"
+        - name: SGLANG_MOE_PADDING
+          value: "1"
+        - name: SGLANG_SET_CPU_AFFINITY
+          value: "1"
+        ports:
+        - containerPort: 30000
+        resources:
+          limits:
+            amd.com/gpu: 8
+            memory: 900Gi
+          requests:
+            amd.com/gpu: 8
+            memory: 900Gi
+        volumeMounts:
+        - name: shm
+          mountPath: /dev/shm
+        - name: data
+          mountPath: /data
+        - name: dev-kfd
+          mountPath: /dev/kfd
+        - name: dev-dri
+          mountPath: /dev/dri
+        - name: dev-infiniband
+          mountPath: /dev/infiniband
+        securityContext:
+          privileged: true
+          capabilities:
+            add: ["SYS_PTRACE"]
+          seccompProfile:
+            type: Unconfined
+      volumes:
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi
+      - name: data
+        hostPath:
+          path: /data
+          type: Directory
+      - name: dev-kfd
+        hostPath:
+          path: /dev/kfd
+          type: CharDevice
+      - name: dev-dri
+        hostPath:
+          path: /dev/dri
+          type: Directory
+      - name: dev-infiniband
+        hostPath:
+          path: /dev/infiniband
+          type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-dspark-308x
+  namespace: kube-system
+spec:
+  selector:
+    app.kubernetes.io/name: sglang-dspark-308x
+  ports:
+  - port: 30000
+    targetPort: 30000
+  clusterIP: None
