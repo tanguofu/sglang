@@ -227,9 +227,28 @@ class DSV4AttnMetadata:
 
     def init_compression_metadata(self, unified_swa_pages: int = 0):
         assert self.page_table.dim() == 2
-        assert (
-            self.raw_out_loc.shape == self.seq_lens_casual.shape
-        ), f"{self.raw_out_loc.shape=}, {self.seq_lens_casual.shape=}"
+        # PATCH(dsv4-308x): relaxed shape check. DSpark's verify path binds
+        # out_cache_loc to [bs, block_size] (one slot per draft token) while
+        # seq_lens_casual follows the target's `speculative_num_draft_tokens`
+        # (== block_size+1 = gamma+1 because DSpark's verify step counts the
+        # +1 bonus token position). Upstream's #30964 introduced
+        # `target_verify_num_draft_tokens = speculative_num_draft_tokens - 1`
+        # for the DSpark draft worker but the TARGET worker still uses raw
+        # `speculative_num_draft_tokens` (gamma+1) since `is_dspark_draft` is
+        # False there. So a wider seq_lens_casual vs narrower out_loc still
+        # shows up on the target path. The underlying Triton kernel is
+        # per-batch (one program per (b, token_idx)) and writes c4/c128 /
+        # sparse indices sized from out_cache_loc, so we slice to align before
+        # the kernel call.
+        if self.raw_out_loc.shape[0] != self.seq_lens_casual.shape[0]:
+            tail_len = min(self.raw_out_loc.shape[0], self.seq_lens_casual.shape[0])
+            seq_lens_casual = self.seq_lens_casual[:tail_len].contiguous()
+            positions_casual = self.positions_casual[:tail_len].contiguous()
+            raw_out_loc = self.raw_out_loc[:tail_len].contiguous()
+        else:
+            seq_lens_casual = self.seq_lens_casual
+            positions_casual = self.positions_casual
+            raw_out_loc = self.raw_out_loc
 
         (
             self.c4_out_loc,
@@ -242,9 +261,9 @@ class DSV4AttnMetadata:
             self.c128_topk_lengths_clamp1,
             self.c128_page_indices,
         ) = _init_compression_metadata_triton(
-            self.seq_lens_casual,
-            self.positions_casual,
-            self.raw_out_loc,
+            seq_lens_casual,
+            positions_casual,
+            raw_out_loc,
             self.page_table,
             self.page_size,
             compute_page_indices=True,

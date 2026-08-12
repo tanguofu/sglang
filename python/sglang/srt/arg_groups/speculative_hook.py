@@ -655,8 +655,19 @@ def _handle_eagle_family(server_args: ServerArgs) -> None:
             "(speculative_use_rejection_sampling=True)."
         )
 
+    # PATCH(dsv4-308x): DSPARK/DFLASH manage their own num_draft_tokens via
+    # block_size validation and keep num_steps=1 as a buffer-accounting convention
+    # rather than a "+bonus" magic number. Skipping the topk==1 adjust avoids
+    # clobbering block_size with num_steps+1=2, which was the upstream cause
+    # of the V4 backend shape mismatch (raw_out_loc=[bs*block_size] vs
+    # seq_lens_casual=[bs*2]) and the follow-on Triton OOB / GPU coredump on
+    # MI308X. The AMD DSpark support (#30964) added target_verify_num_draft_tokens
+    # on the V4 backend but did NOT touch this global adjustment, so DSpark
+    # block_size still gets clobbered here without this guard.
     if (
         server_args.speculative_eagle_topk == 1
+        and server_args.speculative_algorithm
+        not in ("DSPARK", "DFLASH")
         and server_args.speculative_num_draft_tokens
         != server_args.speculative_num_steps + 1
     ):
