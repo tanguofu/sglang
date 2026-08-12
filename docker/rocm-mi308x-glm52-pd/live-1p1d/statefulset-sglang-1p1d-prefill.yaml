@@ -1,0 +1,380 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  annotations: {}
+  labels:
+    app.kubernetes.io/component: prefill
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sglang-1p1d
+    pd-role: prefill
+  name: sglang-1p1d-prefill
+  namespace: kube-system
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  podManagementPolicy: OrderedReady
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: prefill
+      app.kubernetes.io/name: sglang-1p1d
+  serviceName: sglang-1p1d-prefill
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: '2026-07-29T17:48:41+08:00'
+      creationTimestamp: null
+      labels:
+        app.kubernetes.io/component: prefill
+        app.kubernetes.io/name: sglang-1p1d
+        pd-role: prefill
+    spec:
+      containers:
+      - args:
+        - "set -euo pipefail\n# Copy verified GDR engine.so (respects MC_DISABLE_HIP_TRANSPORT=1,\
+          \ supports HIP dmabuf).\nif [ -f /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so\
+          \ ]; then\n  cp /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so\
+          \ \\\n     /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so\n\
+          \  echo \"Copied verified GDR engine.so from /data/mooncake-patched/\"\n\
+          else\n  echo \"ERROR: /data/mooncake-patched/engine.so not found!\" >&2\n\
+          \  exit 1\nfi\n# Apply conn.py fix (GQA replication, hipSetDevice, compute_mamba_state_slice_blocks).\n\
+          # MUST match prefill's conn.py version to avoid segfaults in _handle_aux_data.\n\
+          if [ -f /data/mooncake-patched/conn_v0516_fixed.py ]; then\n  cp /data/mooncake-patched/conn_v0516_fixed.py\
+          \ \\\n     /sgl-workspace/sglang/python/sglang/srt/disaggregation/mooncake/conn.py\n\
+          \  echo \"Applied conn.py fix (GQA replication + hipSetDevice + mamba state)\
+          \ from /data/mooncake-patched/\"\nelse\n  echo \"WARNING: /data/mooncake-patched/conn_v0516_fixed.py\
+          \ not found!\" >&2\nfi\n# Install compatible bnxt_re driver (235.2.86.0)\
+          \ for kernel ABI v8.\n# The inbox rdma-core 39.0 libbnxt_re only supports\
+          \ ABI v1, causing RDMA fallback to TCP.\nif [ -f /data/mooncake-patched/libbnxt_re-235.2.86.0.so\
+          \ ]; then\n  cp /data/mooncake-patched/libbnxt_re-235.2.86.0.so \\\n   \
+          \  /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so\n  ldconfig\n\
+          \  echo \"Installed bnxt_re 235.2.86.0 driver (kernel ABI v8 compatible)\"\
+          \nelse\n  echo \"WARNING: libbnxt_re-235.2.86.0.so not found! RDMA will\
+          \ fall back to TCP\" >&2\nfi\n# Apply patched protocol.py and serving_responses.py\
+          \ for PD disaggregation bootstrap support.\nif [ -f /data/mooncake-patched/protocol_v0516_patched.py\
+          \ ]; then\n  cp /data/mooncake-patched/protocol_v0516_patched.py \\\n  \
+          \   /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/protocol.py\n\
+          \  echo \"Applied patched protocol.py (ResponsesRequest bootstrap fields)\
+          \ from /data/mooncake-patched/\"\nelse\n  echo \"WARNING: /data/mooncake-patched/protocol_v0516_patched.py\
+          \ not found!\" >&2\nfi\nif [ -f /data/mooncake-patched/serving_responses_v0516_patched.py\
+          \ ]; then\n  cp /data/mooncake-patched/serving_responses_v0516_patched.py\
+          \ \\\n     /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_responses.py\n\
+          \  echo \"Applied patched serving_responses.py (bootstrap field forwarding)\
+          \ from /data/mooncake-patched/\"\nelse\n  echo \"WARNING: /data/mooncake-patched/serving_responses_v0516_patched.py\
+          \ not found!\" >&2\nfi\necho \"=== GLM-5.2 PREFILL (MI308X, GDR via HIP\
+          \ dmabuf) ===\"\n          # Install tuned aiter GEMM configs from initContainer\n\
+          \          # Copy as a model_configs file (NOT replacing the source CSV)\
+          \ to avoid\n          # truncating existing model_configs during aiter's\
+          \ merge process.\n          if [ -s /shared/mi308x_gfx942_bf16_tuned_gemm.csv\
+          \ ]; then\n            cp /shared/mi308x_gfx942_bf16_tuned_gemm.csv    \
+          \            /sgl-workspace/aiter/aiter/configs/model_configs/mi308x_gfx942_bf16_tuned_gemm.csv\n\
+          \            echo \"Installed tuned GEMM configs to model_configs/mi308x_gfx942_bf16_tuned_gemm.csv\"\
+          \n          else\n            echo \"No tuned GEMM configs from initContainer\
+          \ — using image defaults\"\n          fi\n                    # EAGLE deterministic\
+          \ argmax fix baked into image (v0516-deterministic)\n          # Patch server_args.py\
+          \ to allow DSA with --enable-deterministic-inference\n          # server_args.py\
+          \ patch removed (not needed without --enable-deterministic-inference)\n\
+          \          \n\n# === i32 overflow fix for DSA MQA logits kernel ===\nif\
+          \ [ -f /data/mooncake-patched/dsa_indexer_i32fix.py ]; then\n  cp /data/mooncake-patched/dsa_indexer_i32fix.py\
+          \ \\\n     /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_indexer.py\n\
+          \  echo \"Applied i32 overflow fix to dsa_indexer.py from /data/mooncake-patched/\"\
+          \nelse\n  echo \"WARNING: dsa_indexer_i32fix.py not found! i32 overflow\
+          \ fix not applied\" >&2\nfi\nif [ -f /data/mooncake-patched/patch_scheduler_health.py\
+          \ ]; then\n  python3 /data/mooncake-patched/patch_scheduler_health.py\n\
+          else\n  echo \"WARNING: patch_scheduler_health.py not found, health check\
+          \ patch skipped\" >&2\nfi\nexec python3 -m sglang.launch_server \\\n  --model-path\
+          \ /data/model/glm52-fp8 \\\n  --model-impl sglang --served-model-name glm-5.2\
+          \ \\\n  --tp-size 8 --pp-size 1 --trust-remote-code \\\n  --host 0.0.0.0\
+          \ --port 30000 \\\n  --context-length 1048576 \\\n  --tool-call-parser glm47\
+          \ --reasoning-parser glm45 \\\n  --mem-fraction-static 0.90 \\\n  --attention-backend\
+          \ dsa \\\n  --dsa-prefill-backend tilelang \\\n  --dsa-decode-backend tilelang\
+          \ \\\n  --enable-aiter-allreduce-fusion \\\n  --chunked-prefill-size 8192\
+          \ \\\n  --enable-fused-qk-norm-rope \\\n  --schedule-conservativeness 1.0\
+          \ \\\n  --prefill-max-requests 32 \\\n  --max-prefill-tokens 8192 \\\n \
+          \ --hicache-ratio 4 \\\n  --kv-cache-dtype fp8_e4m3 \\\n  --disable-decode-cuda-graph\
+          \ \\\n  --max-running-requests 32 \\\n  --disaggregation-mode prefill \\\
+          \n  --disaggregation-transfer-backend mooncake \\\n  --disaggregation-ib-device\
+          \ '{\"0\":\"bnxt_re_bond0\",\"1\":\"bnxt_re_bond1\",\"2\":\"bnxt_re_bond2\"\
+          ,\"3\":\"bnxt_re_bond3\",\"4\":\"bnxt_re_bond4\",\"5\":\"bnxt_re_bond5\"\
+          ,\"6\":\"bnxt_re_bond6\",\"7\":\"bnxt_re_bond7\"}' \\\n  --disaggregation-bootstrap-port\
+          \ 8998 \\\n  --num-reserved-decode-tokens 1024 \\\n  --enable-metrics \\\
+          \n  --watchdog-timeout 7200 \\\n  --log-level info"
+        command:
+        - /bin/bash
+        - -c
+        env:
+        - name: SGLANG_HEALTH_CHECK_TIMEOUT
+          value: '60'
+        - name: SGLANG_HOST_IP
+          value: 21.151.225.144
+        - name: MOONCAKE_PROTOCOL
+          value: rdma
+        - name: MC_GID_INDEX
+          value: '3'
+        - name: HIP_VISIBLE_DEVICES
+          value: 0,1,2,3,4,5,6,7
+        - name: NCCL_DEBUG
+          value: WARN
+        - name: NCCL_IB_GID_INDEX
+          value: '3'
+        - name: HSA_ENABLE_SDMA
+          value: '0'
+        - name: HIP_FORCE_DEV_KERNARG
+          value: '1'
+        - name: NCCL_CUMEM_ENABLE
+          value: '0'
+        - name: NCCL_MIN_NCHANNELS
+          value: '112'
+        - name: NCCL_NVLS_ENABLE
+          value: '0'
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: expandable_segments:True
+        - name: PYTORCH_ROCM_ARCH
+          value: gfx942
+        - name: ROCM_QUICK_REDUCE_QUANTIZATION
+          value: INT8
+        - name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN
+          value: '1'
+        - name: SGLANG_DISABLE_CUDNN_CHECK
+          value: '1'
+        - name: SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM
+          value: '1'
+        - name: SGLANG_INT4_WEIGHT
+          value: '0'
+        - name: SGLANG_MOE_PADDING
+          value: '1'
+        - name: SGLANG_ROCM_DISABLE_LINEARQUANT
+          value: '0'
+        - name: SGLANG_ROCM_FUSED_DECODE_MLA
+          value: '1'
+        - name: SGLANG_SET_CPU_AFFINITY
+          value: '1'
+        - name: SGLANG_USE_AITER
+          value: '1'
+        - name: SGLANG_USE_ROCM700A
+          value: '1'
+        - name: SGLANG_OPT_USE_TOPK_V2
+          value: '0'
+        - name: SGLANG_MOONCAKE_SEND_AUX_TCP
+          value: '1'
+        - name: SGLANG_DSA_HIP_DISABLE_PRESHUFFLE
+          value: '1'
+        - name: MC_DISABLE_HIP_TRANSPORT
+          value: '1'
+        - name: SGLANG_PD_HOST_STAGING
+          value: '0'
+        image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0516-deterministic-v4
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 40
+          httpGet:
+            path: /health
+            port: 30000
+            scheme: HTTP
+          initialDelaySeconds: 900
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 60
+        name: sglang
+        ports:
+        - containerPort: 30000
+          name: http
+          protocol: TCP
+        - containerPort: 8998
+          name: bootstrap
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 40
+          httpGet:
+            path: /health
+            port: 30000
+            scheme: HTTP
+          initialDelaySeconds: 900
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 60
+        resources: {}
+        securityContext:
+          allowPrivilegeEscalation: true
+          privileged: true
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: Unconfined
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /dev/shm
+          name: shm
+        - mountPath: /data
+          name: data
+        - mountPath: /dev/kfd
+          name: dev-kfd
+        - mountPath: /dev/dri
+          name: dev-dri
+        - mountPath: /dev/infiniband
+          name: dev-infiniband
+        - mountPath: /shared
+          name: shared-init
+      dnsPolicy: ClusterFirstWithHostNet
+      hostIPC: true
+      hostNetwork: true
+      hostPID: true
+      imagePullSecrets:
+      - name: tencent-registry
+      initContainers:
+      - args:
+        - "set -euo pipefail\n\necho \"========== Environment Pre-Flight Check ==========\"\
+          \necho \"Timestamp: $(date -u '+%Y-%m-%dT%H:%M:%SZ')\"\necho \"Hostname:\
+          \  $(hostname)\"\necho \"\"\n\n# 1. GPU Detection\necho \"--- GPU Detection\
+          \ ---\"\nGPU_COUNT=$(rocminfo 2>/dev/null | grep -c \"^  Name:.*gfx\" ||\
+          \ true)\necho \"GPU count: ${GPU_COUNT}\"\nif [ \"${GPU_COUNT}\" -lt 1 ];\
+          \ then\n  echo \"FATAL: No GPU detected via rocminfo\" >&2\n  exit 1\nfi\n\
+          rocminfo 2>/dev/null | grep -E \"Marketing Name:|Name:.*gfx|Compute Unit:\"\
+          \ | head -12\necho \"\"\n\n# 2. Driver Version\necho \"--- Driver Version\
+          \ ---\"\nrocm-smi --showdriverversion 2>&1 | grep -i \"driver version\"\
+          \ || echo \"(unable to query driver version)\"\necho \"\"\n\n# 3. Firmware\
+          \ Version (GPU 0 only)\necho \"--- Firmware Version (GPU 0) ---\"\nrocm-smi\
+          \ --showfwinfo 2>&1 | grep \"GPU\\[0\\]\" | head -10 || echo \"(unable to\
+          \ query firmware info)\"\necho \"\"\n\n# 4. VRAM Occupancy\necho \"--- VRAM\
+          \ Occupancy ---\"\nrocm-smi --showmeminfo vram 2>&1 | grep -E \"GPU\\[|VRAM\
+          \ Total\" | head -20\nVRAM_USED=$(rocm-smi --showmeminfo vram 2>&1 | grep\
+          \ \"GPU\\[0\\].*Used\" | awk '{print $NF}' || true)\nVRAM_TOTAL=$(rocm-smi\
+          \ --showmeminfo vram 2>&1 | grep \"GPU\\[0\\].*Total Memory\" | awk '{print\
+          \ $NF}' || true)\nif [ -n \"${VRAM_USED}\" ] && [ -n \"${VRAM_TOTAL}\" ]\
+          \ && [ \"${VRAM_TOTAL}\" -gt 0 ] 2>/dev/null; then\n  VRAM_PCT=$((VRAM_USED\
+          \ * 100 / VRAM_TOTAL))\n  echo \"GPU[0] VRAM usage: ${VRAM_PCT}% (${VRAM_USED}\
+          \ / ${VRAM_TOTAL} bytes)\"\n  if [ \"${VRAM_PCT}\" -gt 50 ]; then\n    echo\
+          \ \"WARNING: VRAM occupancy ${VRAM_PCT}% > 50% before sglang start — possible\
+          \ stale process\" >&2\n  fi\nelse\n  echo \"(unable to parse VRAM usage)\"\
+          \nfi\necho \"\"\n\n# 5. Host Memory\necho \"--- Host Memory ---\"\nfree\
+          \ -h | head -3\nMEM_AVAIL_KB=$(grep MemAvailable /proc/meminfo | awk '{print\
+          \ $2}')\nMEM_TOTAL_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')\n\
+          if [ \"${MEM_TOTAL_KB}\" -gt 0 ] 2>/dev/null; then\n  MEM_PCT=$(( (MEM_TOTAL_KB\
+          \ - MEM_AVAIL_KB) * 100 / MEM_TOTAL_KB ))\n  echo \"Host memory usage: ${MEM_PCT}%\
+          \ (${MEM_AVAIL_KB} KB available / ${MEM_TOTAL_KB} KB total)\"\n  if [ \"\
+          ${MEM_PCT}\" -gt 80 ]; then\n    echo \"WARNING: Host memory usage ${MEM_PCT}%\
+          \ > 80%\" >&2\n  fi\nelse\n  echo \"(unable to parse host memory)\"\nfi\n\
+          echo \"\"\n\n# 6. IB Device Status\necho \"--- IB Device Status ---\"\n\
+          ibv_devinfo 2>&1 | grep -E \"hca_id|transport|fw_ver|state|link_layer\"\
+          \ | head -40 || echo \"(ibv_devinfo not available)\"\nIB_ACTIVE=$(ibv_devinfo\
+          \ 2>&1 | grep -c \"PORT_ACTIVE\" || true)\necho \"Active IB ports: ${IB_ACTIVE}\"\
+          \nif [ \"${IB_ACTIVE}\" -lt 1 ]; then\n  echo \"WARNING: No active IB ports\
+          \ detected — PD transfer will fall back to TCP\" >&2\nfi\necho \"\"\n\n\
+          # 7. Model File Check\necho \"--- Model File Check ---\"\nMODEL_PATH=\"\
+          /data/model/glm52-fp8\"\nif [ ! -d \"${MODEL_PATH}\" ]; then\n  echo \"\
+          FATAL: Model directory ${MODEL_PATH} not found\" >&2\n  exit 1\nfi\nif [\
+          \ ! -f \"${MODEL_PATH}/config.json\" ]; then\n  echo \"FATAL: ${MODEL_PATH}/config.json\
+          \ missing\" >&2\n  exit 1\nfi\necho \"Model path: ${MODEL_PATH}\"\nls -la\
+          \ \"${MODEL_PATH}/config.json\"\nls \"${MODEL_PATH}/\"*.safetensors 2>/dev/null\
+          \ | head -5 || echo \"(no .safetensors files found)\"\nMODEL_SIZE=$(du -sh\
+          \ \"${MODEL_PATH}\" 2>/dev/null | awk '{print $1}')\necho \"Model size:\
+          \ ${MODEL_SIZE}\"\necho \"\"\n\n# 8. GEMM CSV: extract ONLY newly-tuned\
+          \ gfx942 K=6144 entries to a model_configs file\n# IMPORTANT:\n# - Do NOT\
+          \ replace the image's source CSV — that causes aiter's merge process to\n\
+          #   truncate all model_configs/*.csv files to 0 rows.\n# - Do NOT include\
+          \ ALL gfx942 entries — many already exist in other model_configs\n#   (glm5,\
+          \ dsv3, etc.) and duplicates cause RuntimeError on import.\n# - ONLY include\
+          \ the shapes we actually tuned: gfx942 with K=6144 (N=256 and N=32).\n#\
+          \   These were missing from all existing configs and caused \"not found\
+          \ tuned config\"\n#   warnings at runtime.\necho \"--- aiter GEMM CSV ---\"\
+          \nSRC_CSV=\"/data/aiter_configs/bf16_tuned_gemm.csv\"\nOUT_CSV=\"/shared/mi308x_gfx942_bf16_tuned_gemm.csv\"\
+          \nif [ -f \"${SRC_CSV}\" ]; then\n  # Extract ONLY genuinely new gfx942\
+          \ K=6144 entries that don't already exist\n  # in the image's model_configs\
+          \ files. The aiter merge process raises\n  # RuntimeError on duplicate shape\
+          \ keys, so we must filter them out here.\n  python3 << 'PYEOF'\nimport csv,\
+          \ glob, os, sys\n\nsrc = \"/data/aiter_configs/bf16_tuned_gemm.csv\"\nout\
+          \ = \"/shared/mi308x_gfx942_bf16_tuned_gemm.csv\"\nconfigs_dir = \"/sgl-workspace/aiter/aiter/configs/model_configs\"\
+          \n\n# Collect existing shape keys (first 10 fields) from all model_configs\
+          \ CSVs\nexisting_keys = set()\nfor f in glob.glob(os.path.join(configs_dir,\
+          \ \"*.csv\")):\n    try:\n        with open(f, newline='') as fh:\n    \
+          \        reader = csv.reader(fh)\n            next(reader, None)\n     \
+          \       for row in reader:\n                if len(row) >= 10:\n       \
+          \             existing_keys.add(tuple(row[:10]))\n    except Exception:\n\
+          \        pass\n\ncount = 0\ntotal = 0\nwith open(src, newline='') as fin,\
+          \ open(out, 'w', newline='') as fout:\n    reader = csv.reader(fin)\n  \
+          \  writer = csv.writer(fout)\n    try:\n        header = next(reader)\n\
+          \        writer.writerow(header)\n    except StopIteration:\n        sys.exit(0)\n\
+          \    for row in reader:\n        if len(row) >= 10 and row[0] == \"gfx942\"\
+          \ and row[4] == \"6144\":\n            total += 1\n            if tuple(row[:10])\
+          \ not in existing_keys:\n                writer.writerow(row)\n        \
+          \        count += 1\n\nprint(f\"Extracted {count} new gfx942 K=6144 entries\
+          \ (of {total} total, {total - count} duplicates filtered)\")\nPYEOF\n  TOTAL_ROWS=$(wc\
+          \ -l < \"${OUT_CSV}\")\n  echo \"Wrote ${TOTAL_ROWS} lines (including header)\
+          \ to ${OUT_CSV}\"\nelse\n  echo \"WARNING: ${SRC_CSV} not found — will use\
+          \ image default configs\" >&2\n  touch \"${OUT_CSV}\"  # empty sentinel\
+          \ so main container knows\nfi\necho \"\"\n\n# 9. Mooncake patched files\
+          \ check\necho \"--- Mooncake Patched Files ---\"\nMC_DIR=\"/data/mooncake-patched\"\
+          \nif [ -d \"${MC_DIR}\" ]; then\n  ls -la \"${MC_DIR}/\" | head -10\nelse\n\
+          \  echo \"WARNING: ${MC_DIR} not found — main container will fail\" >&2\n\
+          fi\necho \"\"\n\necho \"========== Pre-Flight Check Complete ==========\"\
+          \n"
+        command:
+        - /bin/bash
+        - -c
+        image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0516-batch1
+        imagePullPolicy: Always
+        name: env-check-aiter-init
+        resources:
+          limits:
+            amd.com/gpu: '8'
+          requests:
+            cpu: '4'
+            memory: 8Gi
+        securityContext:
+          allowPrivilegeEscalation: true
+          privileged: true
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: Unconfined
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /data
+          name: data
+        - mountPath: /shared
+          name: shared-init
+        - mountPath: /dev/kfd
+          name: dev-kfd
+        - mountPath: /dev/dri
+          name: dev-dri
+        - mountPath: /dev/infiniband
+          name: dev-infiniband
+      nodeName: node-21.151.225.144
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - operator: Exists
+      volumes:
+      - emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi
+        name: shm
+      - hostPath:
+          path: /data
+          type: Directory
+        name: data
+      - hostPath:
+          path: /dev/kfd
+          type: CharDevice
+        name: dev-kfd
+      - hostPath:
+          path: /dev/dri
+          type: Directory
+        name: dev-dri
+      - hostPath:
+          path: /dev/infiniband
+          type: Directory
+        name: dev-infiniband
+      - emptyDir:
+          medium: Memory
+          sizeLimit: 16Mi
+        name: shared-init
+  updateStrategy:
+    rollingUpdate:
+      partition: 0
+    type: RollingUpdate
+
