@@ -84,18 +84,20 @@ spec:
           \ fix not applied\" >&2\nfi\nif [ -f /data/mooncake-patched/patch_scheduler_health.py\
           \ ]; then\n  python3 /data/mooncake-patched/patch_scheduler_health.py\n\
           else\n  echo \"WARNING: patch_scheduler_health.py not found, health check\
-          \ patch skipped\" >&2\nfi\nexec python3 -m sglang.launch_server \\\n  --model-path\
-          \ /data/model/glm52-fp8 \\\n  --model-impl sglang --served-model-name glm-5.2\
-          \ \\\n  --tp-size 8 --pp-size 1 --trust-remote-code \\\n  --host 0.0.0.0\
-          \ --port 30000 \\\n  --context-length 1048576 \\\n  --tool-call-parser glm47\
-          \ --reasoning-parser glm45 \\\n  --mem-fraction-static 0.90 \\\n  --attention-backend\
-          \ dsa \\\n  --dsa-prefill-backend tilelang \\\n  --dsa-decode-backend tilelang\
-          \ \\\n  --enable-aiter-allreduce-fusion \\\n  --chunked-prefill-size 8192\
-          \ \\\n  --enable-fused-qk-norm-rope \\\n  --schedule-conservativeness 1.0\
-          \ \\\n  --prefill-max-requests 32 \\\n  --max-prefill-tokens 8192 \\\n \
-          \ --hicache-ratio 4 \\\n  --kv-cache-dtype fp8_e4m3 \\\n  --disable-decode-cuda-graph\
-          \ \\\n  --max-running-requests 32 \\\n  --disaggregation-mode prefill \\\
-          \n  --disaggregation-transfer-backend mooncake \\\n  --disaggregation-ib-device\
+          \ patch skipped\" >&2\nfi\n# Abort notifications must not block the scheduler\
+          \ on a busy peer (zmq HWM deadlock).\npython3 /data/mooncake-patched/patch_abort_noblock.py\n\
+          exec python3 -m sglang.launch_server \\\n  --model-path /data/model/glm52-fp8\
+          \ \\\n  --model-impl sglang --served-model-name glm-5.2 \\\n  --tp-size\
+          \ 8 --pp-size 1 --trust-remote-code \\\n  --host 0.0.0.0 --port 30000 \\\
+          \n  --context-length 1048576 \\\n  --tool-call-parser glm47 --reasoning-parser\
+          \ glm45 \\\n  --mem-fraction-static 0.90 \\\n  --attention-backend dsa \\\
+          \n  --dsa-prefill-backend tilelang \\\n  --dsa-decode-backend tilelang \\\
+          \n  --enable-aiter-allreduce-fusion \\\n  --chunked-prefill-size 8192 \\\
+          \n  --enable-fused-qk-norm-rope \\\n  --schedule-conservativeness 1.0 \\\
+          \n  --prefill-max-requests 32 \\\n  --max-prefill-tokens 16384 \\\n  --hicache-ratio\
+          \ 4 \\\n  --kv-cache-dtype fp8_e4m3 \\\n  --disable-decode-cuda-graph \\\
+          \n  --max-running-requests 32 \\\n  --disaggregation-mode prefill \\\n \
+          \ --disaggregation-transfer-backend mooncake \\\n  --disaggregation-ib-device\
           \ '{\"0\":\"bnxt_re_bond0\",\"1\":\"bnxt_re_bond1\",\"2\":\"bnxt_re_bond2\"\
           ,\"3\":\"bnxt_re_bond3\",\"4\":\"bnxt_re_bond4\",\"5\":\"bnxt_re_bond5\"\
           ,\"6\":\"bnxt_re_bond6\",\"7\":\"bnxt_re_bond7\"}' \\\n  --disaggregation-bootstrap-port\

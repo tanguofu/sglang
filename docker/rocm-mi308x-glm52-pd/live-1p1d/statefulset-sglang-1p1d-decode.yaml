@@ -86,27 +86,28 @@ spec:
           else\n  echo \"WARNING: patch_scheduler_health.py not found, health check\
           \ patch skipped\" >&2\nfi\n# Keep the overlap event dependency stream-ordered\
           \ on AMD; avoid host-side HIP event synchronization stalls.\npython3 /data/mooncake-patched/patch_overlap_hip_wait.py\n\
-          python3 /data/mooncake-patched/patch_decode_pd_health_flush.py\nexec python3\
-          \ -m sglang.launch_server \\\n  --model-path /data/model/glm52-fp8 \\\n\
-          \  --model-impl sglang --served-model-name glm-5.2 \\\n  --tp-size 8 --pp-size\
-          \ 1 --trust-remote-code \\\n  --host 0.0.0.0 --port 30000 \\\n  --context-length\
-          \ 1048576 \\\n  --tool-call-parser glm47 --reasoning-parser glm45 \\\n \
-          \ --mem-fraction-static 0.92 \\\n  --attention-backend dsa \\\n  --dsa-prefill-backend\
-          \ tilelang \\\n  --dsa-decode-backend tilelang \\\n  --cuda-graph-bs-decode\
-          \ 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32 \\\n  --cuda-graph-max-bs-decode 32\
-          \ \\\n  --enable-aiter-allreduce-fusion \\\n  --enable-fused-qk-norm-rope\
-          \ \\\n  --schedule-conservativeness 0.5 \\\n  --hicache-ratio 4 \\\n  --kv-cache-dtype\
-          \ fp8_e4m3 \\\n  --speculative-algorithm NEXTN \\\n  --speculative-num-steps\
-          \ 2 \\\n  --speculative-num-draft-tokens 3 \\\n  --speculative-eagle-topk\
-          \ 1 \\\n  --max-running-requests 32 \\\n  --num-continuous-decode-steps\
-          \ 2 \\\n  --num-reserved-decode-tokens 1024 \\\n  --enable-metrics \\\n\
-          \  --skip-server-warmup \\\n  --watchdog-timeout 300 \\\n  --load-balance-method\
-          \ follow_bootstrap_room \\\n  --disaggregation-mode decode \\\n  --disaggregation-transfer-backend\
-          \ mooncake \\\n  --disaggregation-ib-device '{\"0\":\"bnxt_re_bond0\",\"\
-          1\":\"bnxt_re_bond1\",\"2\":\"bnxt_re_bond2\",\"3\":\"bnxt_re_bond3\",\"\
-          4\":\"bnxt_re_bond4\",\"5\":\"bnxt_re_bond5\",\"6\":\"bnxt_re_bond6\",\"\
-          7\":\"bnxt_re_bond7\"}' \\\n  --disaggregation-bootstrap-port 8998 \\\n\
-          \  --log-level info\n"
+          python3 /data/mooncake-patched/patch_decode_pd_health_flush.py\n# Abort\
+          \ notifications must not block the scheduler on a busy peer (zmq HWM deadlock).\n\
+          python3 /data/mooncake-patched/patch_abort_noblock.py\nexec python3 -m sglang.launch_server\
+          \ \\\n  --model-path /data/model/glm52-fp8 \\\n  --model-impl sglang --served-model-name\
+          \ glm-5.2 \\\n  --tp-size 8 --pp-size 1 --trust-remote-code \\\n  --host\
+          \ 0.0.0.0 --port 30000 \\\n  --context-length 1048576 \\\n  --tool-call-parser\
+          \ glm47 --reasoning-parser glm45 \\\n  --mem-fraction-static 0.92 \\\n \
+          \ --attention-backend dsa \\\n  --dsa-prefill-backend tilelang \\\n  --dsa-decode-backend\
+          \ tilelang \\\n  --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24\
+          \ 32 \\\n  --cuda-graph-max-bs-decode 32 \\\n  --enable-aiter-allreduce-fusion\
+          \ \\\n  --enable-fused-qk-norm-rope \\\n  --schedule-conservativeness 0.5\
+          \ \\\n  --hicache-ratio 4 \\\n  --kv-cache-dtype fp8_e4m3 \\\n  --speculative-algorithm\
+          \ NEXTN \\\n  --speculative-num-steps 2 \\\n  --speculative-num-draft-tokens\
+          \ 3 \\\n  --speculative-eagle-topk 1 \\\n  --max-running-requests 32 \\\n\
+          \  --num-continuous-decode-steps 2 \\\n  --num-reserved-decode-tokens 1024\
+          \ \\\n  --enable-metrics \\\n  --skip-server-warmup \\\n  --watchdog-timeout\
+          \ 300 \\\n  --load-balance-method follow_bootstrap_room \\\n  --disaggregation-mode\
+          \ decode \\\n  --disaggregation-transfer-backend mooncake \\\n  --disaggregation-ib-device\
+          \ '{\"0\":\"bnxt_re_bond0\",\"1\":\"bnxt_re_bond1\",\"2\":\"bnxt_re_bond2\"\
+          ,\"3\":\"bnxt_re_bond3\",\"4\":\"bnxt_re_bond4\",\"5\":\"bnxt_re_bond5\"\
+          ,\"6\":\"bnxt_re_bond6\",\"7\":\"bnxt_re_bond7\"}' \\\n  --disaggregation-bootstrap-port\
+          \ 8998 \\\n  --log-level info\n"
         command:
         - /bin/bash
         - -c
