@@ -381,9 +381,20 @@ class Fp8Config(QuantizationConfig):
             fp8_method = Fp8MoEMethod(self)
 
             if self.is_fp4_experts and self.dequant_fp4_to_fp8:
-                assert (
-                    get_moe_runner_backend().is_auto()
-                ), f"{get_moe_runner_backend()} is not compatible with SGLANG_DSV4_FP4_DEQUANT=1"
+                # PATCH(dsv4-308x): upstream blocks triton Marlin etc. here, but
+                # the Triton MoE kernel at
+                # python/sglang/kernels/ops/moe/fused_moe_triton_kernels.py:758-783
+                # natively supports per-block fp8 (QuantType.per_128x128) via
+                # per_token_group_quant_fp8, which is what we have after the
+                # top-of-fp8.py:1432 dequant. On AMD MI308X the aiter ck2stages
+                # path that 'auto' picks hits a memory access fault at small M
+                # (target verify M = speculative_num_draft_tokens = 6 or 8,
+                # below block_m=16) — switching to triton avoids that UB at
+                # the cost of giving up the gfx942 tuned CSV heuristic.
+                assert get_moe_runner_backend().is_auto() or get_moe_runner_backend().is_triton(), (
+                    f"{get_moe_runner_backend()} is not compatible with "
+                    "SGLANG_DSV4_FP4_DEQUANT=1 on AMD MI308X"
+                )
                 return fp8_method
 
             if self.is_fp4_experts and get_moe_runner_backend().is_marlin():
