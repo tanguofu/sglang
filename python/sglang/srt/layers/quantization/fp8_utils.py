@@ -251,7 +251,20 @@ def normalize_e4m3fn_to_e4m3fnuz(
     weight_scale: torch.Tensor,
     input_scale: Optional[torch.Tensor] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-    assert weight.dtype == torch.float8_e4m3fn
+    # PATCH(dsv4-308x): DSV4 weights get auto-detected as is_fp4_expert=True and
+    # load as int8-packed FP4. The dequant at fp8.py:1640 would produce e4m3fn,
+    # but the normalize_e4m3fn_to_e4m3fnuz block at fp8.py:1590 runs BEFORE the
+    # dequant and asserts on a stale int8 tensor. We can't reorder without
+    # touching the upstream branch, so accept int8 (FP4-packed) and skip the
+    # nan-scrub + bit reinterpret — those bits only matter for e4m3fn→e4m3fnuz
+    # conversion, which is a no-op for FP4 weights that go through the
+    # downstream dequant path instead.
+    if weight.dtype == torch.float8_e4m3fnuz:
+        return weight, weight_scale, input_scale
+    assert weight.dtype in (torch.float8_e4m3fn, torch.int8), (
+        f"weight dtype must be float8_e4m3fn, float8_e4m3fnuz, or int8, "
+        f"got {weight.dtype}"
+    )
     # The bits pattern 10000000(-128) represents zero in e4m3fn
     # but NaN in e4m3fnuz. So here we set it to 0.
     # https://onnx.ai/onnx/technical/float8.html
