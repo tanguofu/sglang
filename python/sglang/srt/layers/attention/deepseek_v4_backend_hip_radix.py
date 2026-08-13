@@ -227,28 +227,29 @@ class DSV4AttnMetadata:
 
     def init_compression_metadata(self, unified_swa_pages: int = 0):
         assert self.page_table.dim() == 2
-        # PATCH(dsv4-308x): relaxed shape check. DSpark's verify path binds
-        # out_cache_loc to [bs, block_size] (one slot per draft token) while
-        # seq_lens_casual follows the target's `speculative_num_draft_tokens`
-        # (== block_size+1 = gamma+1 because DSpark's verify step counts the
-        # +1 bonus token position). Upstream's #30964 introduced
-        # `target_verify_num_draft_tokens = speculative_num_draft_tokens - 1`
-        # for the DSpark draft worker but the TARGET worker still uses raw
-        # `speculative_num_draft_tokens` (gamma+1) since `is_dspark_draft` is
-        # False there. So a wider seq_lens_casual vs narrower out_loc still
-        # shows up on the target path. The underlying Triton kernel is
-        # per-batch (one program per (b, token_idx)) and writes c4/c128 /
-        # sparse indices sized from out_cache_loc, so we slice to align before
-        # the kernel call.
-        if self.raw_out_loc.shape[0] != self.seq_lens_casual.shape[0]:
-            tail_len = min(self.raw_out_loc.shape[0], self.seq_lens_casual.shape[0])
-            seq_lens_casual = self.seq_lens_casual[:tail_len].contiguous()
-            positions_casual = self.positions_casual[:tail_len].contiguous()
-            raw_out_loc = self.raw_out_loc[:tail_len].contiguous()
-        else:
-            seq_lens_casual = self.seq_lens_casual
-            positions_casual = self.positions_casual
-            raw_out_loc = self.raw_out_loc
+        # PATCH(dsv4-308x): DSpark's verify path binds out_cache_loc to
+        # [bs, block_size] (5 slots per request) while seq_lens_casual
+        # follows the target's `speculative_num_draft_tokens` = 6 (gamma+1,
+        # counts the bonus position). The upstream strict equality assert
+        # fires on cold start; allow num_write_tokens < bs instead.
+        # _init_compression_metadata_triton natively handles the gap: it
+        # reads seq_lens[batch_id] for batch_id in [0, bs) and gates writes
+        # to c4_out_loc / c128_out_loc with `is_write_token = batch_id <
+        # num_write_tokens`, so the bonus position's metadata flows into
+        # the c4_seq_lens_raw / c128_seq_lens_raw / sparse_page_indices
+        # buffers that downstream V4 attention reads via [:T]. Slicing
+        # them away (the previous patch) caused the bonus KV-slot to be
+        # silently dropped, surfacing as a GPU memory access fault at
+        # long sequences.
+        num_write_tokens = self.raw_out_loc.shape[0]
+        bs = self.seq_lens_casual.shape[0]
+        assert num_write_tokens <= bs, (
+            f"raw_out_loc.shape[0]={num_write_tokens} must be <= "
+            f"seq_lens_casual.shape[0]={bs}"
+        )
+        seq_lens_casual = self.seq_lens_casual
+        positions_casual = self.positions_casual
+        raw_out_loc = self.raw_out_loc
 
         (
             self.c4_out_loc,
