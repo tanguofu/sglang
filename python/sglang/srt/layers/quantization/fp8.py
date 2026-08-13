@@ -1430,6 +1430,39 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             self._ensure_cutlass_buffers_initialized(layer)
 
     def process_weights_after_loading_block_quant(self, layer: Module) -> None:
+        # PATCH(dsv4-308x): DSV4 FP4 → FP8 dequant must run BEFORE the
+        # `if _is_fp8_fnuz / elif _use_aiter / ... else` dispatch chain below.
+        # Upstream buries the dequant block inside the `else:` branch which
+        # is unreachable on ROCm (`_is_fp8_fnuz=True` short-circuits to the
+        # fnuz normalize path), so on MI308X the dequant silently never runs
+        # and FP4-packed int8 weights hit `assert input_scale is None` in
+        # triton_w8a8_block_fp8_linear at fp8_utils.py:1189.
+        if self.is_fp4_expert and self.dequant_fp4_to_fp8:
+            for weight_param, scale_param in [
+                (layer.w13_weight, layer.w13_weight_scale_inv),
+                (layer.w2_weight, layer.w2_weight_scale_inv),
+            ]:
+                num_experts = weight_param.shape[0]
+                new_weights = []
+                new_scales = []
+                for e in range(num_experts):
+                    w, s = cast_e2m1fn_to_e4m3fn(
+                        weight_param.data[e], scale_param.data[e]
+                    )
+                    new_weights.append(w)
+                    new_scales.append(s)
+                weight_param.data = torch.stack(new_weights)
+                scale_param.data = torch.stack(new_scales).float()
+                scale_param.format_ue8m0 = False
+            # After dequant the weights are FP8 e4m3fn (per_1x128), not FP4
+            # packed. Mark the layer as FP8 so downstream dispatch and the
+            # aiter prepare branch below both take the FP8 code path instead
+            # of poking the FP4 stored paths.
+            self.is_fp4_expert = False
+            layer.w13_input_scale = None
+            layer.w2_input_scale = None
+            logger.warning_once("Dequantized FP4 expert weights to FP8.")
+
         # AMD FP4 experts: use aiter's native MXFP4 MoE path
         # PATCH(dsv4-308x): skip aiter's FP4-native preparation when
         # SGLANG_DSV4_FP4_DEQUANT=1 is set — fall through to the dequant
@@ -1438,7 +1471,7 @@ class Fp8MoEMethod(FusedMoEMethodBase):
         # native path raises `Unsupported kernel config for moe heuristic
         # dispatch`. Dequanting to FP8 unblocks the F8 ck2stages mulWeightStage1
         # path which aiter handles correctly via aiter_w8a8_block_fp8_linear.
-        if _use_aiter and self.is_fp4_expert and not self.dequant_fp4_to_fp8:
+        if _use_aiter and self.is_fp4_expert:
             gu_intv = envs.SGLANG_USE_AITER_MOE_GU_ITLV.get()
             fp4_weight_dtype = _require_fp4_dtype()
 
@@ -1644,6 +1677,11 @@ class Fp8MoEMethod(FusedMoEMethodBase):
             # Check if MoE will actually use DeepGEMM runner
             will_use_deepgemm = self.is_deepgemm_moe_runner_backend_enabled()
 
+            # PATCH(dsv4-308x): the FP4 → FP8 dequant now runs at the top of
+            # `process_weights_after_loading_block_quant` so it covers the
+            # ROCm fnuz branch too. After dequant `is_fp4_expert=False`, so
+            # this block is a no-op; kept for the CUDA/DeepGEMM path which
+            # never reaches the top block.
             if self.is_fp4_expert and self.dequant_fp4_to_fp8:
                 for weight_param, scale_param in [
                     (layer.w13_weight, layer.w13_weight_scale_inv),
