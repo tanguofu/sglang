@@ -439,6 +439,12 @@ def _fused_gather_attn_dsv4_kernel(
             indices = tl.load(idx_ptrs, mask=mask_n, other=-1)
 
             is_invalid = indices == -1
+            # PATCH(dsv4-308x): defensive bounds check against stale positive
+            # indices from recycled c4-pool pages. The kernel relies on -1
+            # sentinels + topk-length masking, but a positive stale id can
+            # land outside KV_Cache.shape[0] and OOB-load. Tag as invalid so
+            # the subsequent KV load is masked out.
+            is_invalid = is_invalid | (indices >= num_blocks)
             if HAS_TOPK_LENGTH:
                 is_invalid = is_invalid | (offs_n >= topk_len)
 
@@ -1027,6 +1033,12 @@ def _fused_gather_attn_dsv4_dual_scope_kernel(
             indices = tl.load(idx_ptrs, mask=mask_n, other=-1)
 
             is_invalid = indices == -1
+            # PATCH(dsv4-308x): defensive bounds check against stale positive
+            # indices from recycled c4-pool pages. The kernel relies on -1
+            # sentinels + topk-length masking, but a positive stale id can
+            # land outside KV_Cache_Main.shape[0] and OOB-load. Tag as invalid
+            # so the subsequent KV load is masked out.
+            is_invalid = is_invalid | (indices >= num_blocks_main)
             if HAS_TOPK_LENGTH_MAIN:
                 is_invalid = is_invalid | (offs_n >= topk_len)
 
@@ -1105,6 +1117,12 @@ def _fused_gather_attn_dsv4_dual_scope_kernel(
             indices = tl.load(idx_ptrs, mask=mask_n, other=-1)
 
             is_invalid = indices == -1
+            # PATCH(dsv4-308x): defensive bounds check against stale positive
+            # indices from recycled c4-pool pages. The kernel relies on -1
+            # sentinels + topk-length masking, but a positive stale id can
+            # land outside KV_Cache_Extra.shape[0] and OOB-load. Tag as invalid
+            # so the subsequent KV load is masked out.
+            is_invalid = is_invalid | (indices >= num_blocks_extra)
             if HAS_TOPK_LENGTH_EXTRA:
                 is_invalid = is_invalid | (offs_n >= topk_len)
 
@@ -1422,6 +1440,12 @@ def _fused_gather_attn_dsv4_dual_scope_splitk_kernel(
             indices = tl.load(idx_ptrs, mask=mask_n, other=-1)
 
             is_invalid = indices == -1
+            # PATCH(dsv4-308x): defensive bounds check against stale positive
+            # indices from recycled c4-pool pages. The kernel relies on -1
+            # sentinels + topk-length masking, but a positive stale id can
+            # land outside KV_Cache_Main.shape[0] and OOB-load. Tag as invalid
+            # so the subsequent KV load is masked out.
+            is_invalid = is_invalid | (indices >= num_blocks_main)
             if HAS_TOPK_LENGTH_MAIN:
                 is_invalid = is_invalid | (offs_n >= topk_len)
 
@@ -1502,6 +1526,12 @@ def _fused_gather_attn_dsv4_dual_scope_splitk_kernel(
             indices = tl.load(idx_ptrs, mask=mask_n, other=-1)
 
             is_invalid = indices == -1
+            # PATCH(dsv4-308x): defensive bounds check against stale positive
+            # indices from recycled c4-pool pages. The kernel relies on -1
+            # sentinels + topk-length masking, but a positive stale id can
+            # land outside KV_Cache_Extra.shape[0] and OOB-load. Tag as invalid
+            # so the subsequent KV load is masked out.
+            is_invalid = is_invalid | (indices >= num_blocks_extra)
             if HAS_TOPK_LENGTH_EXTRA:
                 is_invalid = is_invalid | (offs_n_local >= topk_len)
 
@@ -2077,6 +2107,12 @@ def _fused_gather_attn_dsv4_splitk_kernel(
             indices = tl.load(idx_ptrs, mask=mask_n, other=-1)
 
             is_invalid = indices == -1
+            # PATCH(dsv4-308x): defensive bounds check against stale positive
+            # indices from recycled c4-pool pages. The kernel relies on -1
+            # sentinels + topk-length masking, but a positive stale id can
+            # land outside KV_Cache.shape[0] and OOB-load. Tag as invalid so
+            # the subsequent KV load is masked out.
+            is_invalid = is_invalid | (indices >= num_blocks)
             if HAS_TOPK_LENGTH:
                 is_invalid = is_invalid | (offs_n >= topk_len)
 
