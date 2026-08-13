@@ -452,6 +452,11 @@ def _fused_gather_attn_dsv4_kernel(
             indices_clamped = tl.maximum(indices, 0)
 
             block_idx = indices_clamped // block_size
+            # PATCH(dsv4-308x): clamp block_idx itself so the KV_Cache address
+            # is provably in-bounds. tl.load(mask=False, other=...) only gates
+            # the destination register, not the L2/TLB transaction on AMD
+            # gfx942 — an unclamped stale index still triggers a page fault.
+            block_idx = tl.minimum(block_idx, num_blocks - 1)
             offset_in_block = indices_clamped % block_size
 
             block_idx_64 = block_idx.to(tl.int64)
@@ -1046,6 +1051,12 @@ def _fused_gather_attn_dsv4_dual_scope_kernel(
             indices_clamped = tl.maximum(indices, 0)
 
             block_idx = indices_clamped // block_size_main
+            # PATCH(dsv4-308x): clamp block_idx itself so the KV_Cache_Main
+            # address is provably in-bounds. tl.load(mask=False, other=...)
+            # only gates the destination register, not the L2/TLB transaction
+            # on AMD gfx942 — an unclamped stale index still triggers a page
+            # fault even when the predicate is off.
+            block_idx = tl.minimum(block_idx, num_blocks_main - 1)
             offset_in_block = indices_clamped % block_size_main
 
             block_idx_64 = block_idx.to(tl.int64)
@@ -1130,6 +1141,12 @@ def _fused_gather_attn_dsv4_dual_scope_kernel(
             indices_clamped = tl.maximum(indices, 0)
 
             block_idx = indices_clamped // block_size_extra
+            # PATCH(dsv4-308x): clamp block_idx itself so the KV_Cache_Extra
+            # address is provably in-bounds. tl.load(mask=False, other=...)
+            # only gates the destination register, not the L2/TLB transaction
+            # on AMD gfx942 — an unclamped stale index still triggers a page
+            # fault even when the predicate is off.
+            block_idx = tl.minimum(block_idx, num_blocks_extra - 1)
             offset_in_block = indices_clamped % block_size_extra
 
             block_idx_64 = block_idx.to(tl.int64)
@@ -1453,6 +1470,12 @@ def _fused_gather_attn_dsv4_dual_scope_splitk_kernel(
             indices_clamped = tl.maximum(indices, 0)
 
             block_idx = indices_clamped // block_size_main
+            # PATCH(dsv4-308x): clamp block_idx itself so the KV_Cache_Main
+            # address is provably in-bounds. tl.load(mask=False, other=...)
+            # only gates the destination register, not the L2/TLB transaction
+            # on AMD gfx942 — an unclamped stale index still triggers a page
+            # fault even when the predicate is off.
+            block_idx = tl.minimum(block_idx, num_blocks_main - 1)
             offset_in_block = indices_clamped % block_size_main
 
             block_idx_64 = block_idx.to(tl.int64)
@@ -1539,6 +1562,12 @@ def _fused_gather_attn_dsv4_dual_scope_splitk_kernel(
             indices_clamped = tl.maximum(indices, 0)
 
             block_idx = indices_clamped // block_size_extra
+            # PATCH(dsv4-308x): clamp block_idx itself so the KV_Cache_Extra
+            # address is provably in-bounds. tl.load(mask=False, other=...)
+            # only gates the destination register, not the L2/TLB transaction
+            # on AMD gfx942 — an unclamped stale index still triggers a page
+            # fault even when the predicate is off.
+            block_idx = tl.minimum(block_idx, num_blocks_extra - 1)
             offset_in_block = indices_clamped % block_size_extra
 
             block_idx_64 = block_idx.to(tl.int64)
@@ -2120,6 +2149,11 @@ def _fused_gather_attn_dsv4_splitk_kernel(
             indices_clamped = tl.maximum(indices, 0)
 
             block_idx = indices_clamped // block_size
+            # PATCH(dsv4-308x): clamp block_idx itself so the KV_Cache address
+            # is provably in-bounds. tl.load(mask=False, other=...) only gates
+            # the destination register, not the L2/TLB transaction on AMD
+            # gfx942 — an unclamped stale index still triggers a page fault.
+            block_idx = tl.minimum(block_idx, num_blocks - 1)
             offset_in_block = indices_clamped % block_size
 
             block_idx_64 = block_idx.to(tl.int64)
