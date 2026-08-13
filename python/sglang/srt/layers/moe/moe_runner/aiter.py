@@ -149,6 +149,52 @@ class AiterRunnerCore(MoeRunnerCore):
                 )
             return AiterRunnerOutput(hidden_states=runner_input.hidden_states)
 
+        # PATCH(dsv4-308x): aiter ck2stages MoE has a known OOB on per_1x128
+        # e8m0 scales when M (= DSpark verify_num_draft_tokens) falls below
+        # block_m=16. CSV rows for the known DSpark M values live in
+        # files/dsv4_gfx942_tuned.csv; this Python block is the source-level
+        # safety net for any M not yet in the CSV. Pre-pad (0,8) to
+        # M_padded=8 with topk_weights=0 (so any expert activity post-scales
+        # to zero) and slice output back to M_real. Bypassed for
+        # doweight_stage1 (gate-weight path).
+        M_real = runner_input.hidden_states.shape[0]
+        M_padded = M_real
+        pad = 0
+        if 0 < M_real < 8 and not quant_info.doweight_stage1:
+            M_padded = 8
+            pad = M_padded - M_real
+            hidden_states = torch.cat(
+                [
+                    runner_input.hidden_states,
+                    runner_input.hidden_states.new_zeros(
+                        pad, *runner_input.hidden_states.shape[1:]
+                    ),
+                ],
+                dim=0,
+            )
+            topk_ids = torch.cat(
+                [
+                    runner_input.topk_ids,
+                    runner_input.topk_ids.new_full(
+                        (pad, *runner_input.topk_ids.shape[1:]), 0
+                    ),
+                ],
+                dim=0,
+            )
+            topk_weights = torch.cat(
+                [
+                    runner_input.topk_weights,
+                    runner_input.topk_weights.new_zeros(
+                        pad, *runner_input.topk_weights.shape[1:]
+                    ),
+                ],
+                dim=0,
+            )
+        else:
+            hidden_states = runner_input.hidden_states
+            topk_ids = runner_input.topk_ids
+            topk_weights = runner_input.topk_weights
+
         from aiter.fused_moe import fused_moe
 
         from sglang.srt.environ import envs
@@ -195,17 +241,28 @@ class AiterRunnerCore(MoeRunnerCore):
         if self.config.no_combine:
             extra["no_combine"] = True
 
+        # PATCH(dsv4-308x): when M is pre-padded, also zero-pad a1_scale along
+        # the M dim if it carries per-token dispatch scales. Skip scalar /
+        # None a1_scale (handled by fused_moe gracefully).
+        a1_scale_padded = a1_scale
+        if M_padded != M_real and isinstance(a1_scale, torch.Tensor):
+            if a1_scale.ndim >= 1 and a1_scale.shape[0] == M_real:
+                a1_scale_padded = torch.cat(
+                    [a1_scale, a1_scale.new_zeros(pad, *a1_scale.shape[1:])],
+                    dim=0,
+                )
+
         output = fused_moe(
-            hidden_states=runner_input.hidden_states,
+            hidden_states=hidden_states,
             w1=quant_info.w13_weight,
             w2=quant_info.w2_weight,
-            topk_weight=runner_input.topk_weights,
-            topk_ids=runner_input.topk_ids,
+            topk_weight=topk_weights,
+            topk_ids=topk_ids,
             quant_type=_aiter_quant_type(runner_input.quant_type),
             activation=_aiter_activation(self.config.activation),
             w1_scale=quant_info.w13_scale,
             w2_scale=quant_info.w2_scale,
-            a1_scale=a1_scale,
+            a1_scale=a1_scale_padded,
             a2_scale=quant_info.a2_scale,
             bias1=quant_info.b13,
             bias2=quant_info.b2,
@@ -215,6 +272,11 @@ class AiterRunnerCore(MoeRunnerCore):
             intermediate_pad=quant_info.intermediate_pad,
             **extra,
         )
+        # PATCH(dsv4-308x): slice output back to M_real (no-op when M was not
+        # padded). Leading dim is always M for both shapes (M,H) and
+        # (M,topk,H), so [:M_real] is correct.
+        if M_padded != M_real:
+            output = output[:M_real]
         return AiterRunnerOutput(hidden_states=output)
 
     @property
