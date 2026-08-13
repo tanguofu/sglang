@@ -1431,7 +1431,14 @@ class Fp8MoEMethod(FusedMoEMethodBase):
 
     def process_weights_after_loading_block_quant(self, layer: Module) -> None:
         # AMD FP4 experts: use aiter's native MXFP4 MoE path
-        if _use_aiter and self.is_fp4_expert:
+        # PATCH(dsv4-308x): skip aiter's FP4-native preparation when
+        # SGLANG_DSV4_FP4_DEQUANT=1 is set — fall through to the dequant
+        # path below. aiter's FP4 ck2stages heuristic dispatch requires
+        # `mul_routed_weight_stage=false` but DSV4 uses stage 1 (true), so the
+        # native path raises `Unsupported kernel config for moe heuristic
+        # dispatch`. Dequanting to FP8 unblocks the F8 ck2stages mulWeightStage1
+        # path which aiter handles correctly via aiter_w8a8_block_fp8_linear.
+        if _use_aiter and self.is_fp4_expert and not self.dequant_fp4_to_fp8:
             gu_intv = envs.SGLANG_USE_AITER_MOE_GU_ITLV.get()
             fp4_weight_dtype = _require_fp4_dtype()
 
