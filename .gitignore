@@ -280,3 +280,8 @@ artifacts/
 
 # Internal, non-published docs
 internal-docs/
+
+# Keep MI308X bake-in artifacts (global *.csv / *.so would drop them)
+!docker/rocm-mi308x-glm52/patches/*.csv
+!docker/rocm-mi308x-glm52-pd/patches/libbnxt_re/*.so
+!docker/rocm-mi308x-glm52-pd/kernel-tests/**

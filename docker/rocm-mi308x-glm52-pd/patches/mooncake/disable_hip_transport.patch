@@ -1,0 +1,21 @@
+# Patch for Mooncake transfer_engine_impl.cpp: MC_DISABLE_HIP_TRANSPORT env var
+--- a/mooncake-transfer-engine/src/transfer_engine_impl.cpp
++++ b/mooncake-transfer-engine/src/transfer_engine_impl.cpp
+@@ -403,6 +403,8 @@
+         // HIP transport handles intra-node GPU P2P via XGMI/IPC and can
+         // coexist with the cross-node transport (RDMA/TCP) selected above.
+         {
++            if (!std::getenv("MC_DISABLE_HIP_TRANSPORT") ||
++            std::string(std::getenv("MC_DISABLE_HIP_TRANSPORT")) != "1") {
+             Transport* hip_transport =
+                 multi_transports_->installTransport("hip", nullptr);
+             if (!hip_transport) {
+@@ -411,6 +413,9 @@
+             } else {
+                 LOG(INFO) << "HIP transport installed for intra-node GPU P2P";
+             }
++        } else {
++            LOG(INFO) << "HIP transport disabled by MC_DISABLE_HIP_TRANSPORT=1";
++        }
+         }
+ #endif

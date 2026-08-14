@@ -1,0 +1,68 @@
+# Shard B on B-group decode node. Parallel with job-152.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: glm52-kernel-test-172
+  namespace: kube-system
+  labels:
+    app: glm52-kernel-test
+    shard: b
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: glm52-kernel-test
+        shard: b
+    spec:
+      restartPolicy: Never
+      nodeName: node-21.151.225.172
+      imagePullSecrets:
+      - name: tencent-registry
+      tolerations:
+      - operator: Exists
+      containers:
+      - name: kernel-test
+        image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0517-fusedstore-fix-v1
+        imagePullPolicy: IfNotPresent
+        command: ["/bin/bash", "/kernel-tests/run_all.sh"]
+        env:
+        - name: KERNEL_TEST_SHARD
+          value: "b"
+        - name: HIP_VISIBLE_DEVICES
+          value: "0"
+        - name: SGLANG_USE_AITER
+          value: "1"
+        resources:
+          limits:
+            amd.com/gpu: "1"
+          requests:
+            cpu: "4"
+            memory: 16Gi
+            amd.com/gpu: "1"
+        securityContext:
+          privileged: true
+          allowPrivilegeEscalation: true
+          seccompProfile:
+            type: Unconfined
+        volumeMounts:
+        - name: tests
+          mountPath: /kernel-tests
+        - name: dev-kfd
+          mountPath: /dev/kfd
+        - name: dev-dri
+          mountPath: /dev/dri
+      volumes:
+      - name: tests
+        configMap:
+          name: glm52-kernel-tests
+          defaultMode: 0755
+      - name: dev-kfd
+        hostPath:
+          path: /dev/kfd
+          type: CharDevice
+      - name: dev-dri
+        hostPath:
+          path: /dev/dri
+          type: Directory

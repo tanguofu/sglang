@@ -1,0 +1,69 @@
+# SGLang PD Router on GZ node 144 (co-located with prefill)
+# Routes requests: prefill (144:30000) → decode (132:30000)
+# Image: sglang-glm52-308x-pd:rocm700-0716 (router uses the same image for sglang_router module)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pd-router-144
+  namespace: kube-system
+  labels:
+    app: pd-router
+    pd-role: router
+spec:
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeName: node-21.151.225.144
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 60
+  imagePullSecrets:
+    - name: tencent-registry
+  containers:
+    - name: router
+      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd:rocm700-0716
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -euo pipefail
+          echo "============================================"
+          echo " SGLang Router (PD Disaggregation) - A-group post1-0716"
+          echo "============================================"
+          echo " Prefill: http://21.151.225.144:30000"
+          echo " Decode:  http://21.151.225.132:30000"
+          echo " Port:    30002  (Prometheus: 19096)"
+          echo "============================================"
+          exec python3 -m sglang_router.launch_router \
+            --pd-disaggregation \
+            --prefill http://21.151.225.144:30000 \
+            --decode http://21.151.225.132:30000 \
+            --host 0.0.0.0 --port 30002 \
+            --prometheus-port 19096 \
+            --model-path /data/model/glm52-fp8
+      env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+      securityContext:
+        privileged: true
+      ports:
+        - name: http
+          containerPort: 30002
+          hostPort: 30002
+          protocol: TCP
+        - name: metrics
+          containerPort: 19096
+          hostPort: 19096
+          protocol: TCP
+      volumeMounts:
+        - name: data
+          mountPath: /data
+      resources:
+        requests:
+          cpu: "4"
+          memory: 4Gi
+        limits:
+          memory: 8Gi
+  volumes:
+    - name: data
+      hostPath:
+        path: /data
+        type: Directory
