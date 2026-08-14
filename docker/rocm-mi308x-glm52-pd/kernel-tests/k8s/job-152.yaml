@@ -18,6 +18,9 @@ spec:
         shard: a
     spec:
       restartPolicy: Never
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      hostIPC: true
       nodeName: node-21.151.225.152
       imagePullSecrets:
       - name: tencent-registry
