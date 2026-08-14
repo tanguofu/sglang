@@ -144,7 +144,24 @@ def _aiter_fp8_paged_mqa_logits(
     max_seq_len: int,
     clean_logits: bool = False,
 ) -> torch.Tensor:
-    """Wrapper adapting aiter's deepgemm_fp8_paged_mqa_logits to SGLang's interface."""
+    """Wrapper adapting aiter's deepgemm_fp8_paged_mqa_logits to SGLang's interface.
+
+    PATCH(dsv4-308x): aiter's _deepgemm_fp8_paged_mqa_logits_stage1_ragged_k
+    reads `kv_indices[context_start + context_idx + i]` (== our page_table)
+    and then computes `KV_buffer + context_kv_idx * stride_k_seq` WITHOUT
+    bounding `context_kv_idx` against `num_block`. Its `mask_kv` only
+    guards `context_idx + i < context_length`; on AMD gfx942 the L2/TLB
+    page-fault fires before the predicate, so a stale positive page id
+    from the recycled c4-indexer pool triggers a `Memory access fault by
+    GPU node-X ... Reason: Unknown.` (offending addresses vary per
+    rank/run — e.g. 0x7f5354393000, 0x7f74eff75000, sometimes 0x...8533000).
+    Same root cause family as the V4 attention dual-scope kernel that
+    already needs explicit `tl.minimum(block_idx, num_blocks - 1)`.  We
+    fix it host-side: clamp page_table into `[0, num_block - 1]` before
+    the aiter call.  Positions past `seq_lens[i]` are masked out by the
+    kernel, so the clamp value at the boundary is ignored.  num_block ==
+    kvcache_fp8.shape[0] (matches aiter's `kv_cache.view(-1, ...).shape[0]`).
+    """
     from aiter.ops.triton.attention.pa_mqa_logits import (
         deepgemm_fp8_paged_mqa_logits,
     )
@@ -154,6 +171,10 @@ def _aiter_fp8_paged_mqa_logits(
     total_tokens = batch_size * next_n
     _sl = seq_lens.squeeze(-1) if seq_lens.dim() == 2 else seq_lens
     kv_block_size = kvcache_fp8.shape[1]
+    num_block = kvcache_fp8.shape[0]
+    # Clamp to [0, num_block - 1]. _sl.to(int32) below; .to(int32) on
+    # clamp result keeps the contiguous int32 dtype aiter expects.
+    page_table_safe = page_table.clamp(min=0, max=num_block - 1).to(torch.int32)
     logits = torch.empty(
         total_tokens,
         max_seq_len,
@@ -166,7 +187,7 @@ def _aiter_fp8_paged_mqa_logits(
         weight,
         logits,
         _sl.to(torch.int32),
-        page_table.to(torch.int32),
+        page_table_safe,
         max_seq_len,
         KVBlockSize=kv_block_size,
         Preshuffle=aiter_can_use_preshuffle_paged_mqa(),
