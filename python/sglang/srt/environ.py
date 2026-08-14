@@ -1110,6 +1110,11 @@ class Envs:
     # Deprecated: DSV4 compressor V2 is always used.
     SGLANG_OPT_USE_COMPRESSOR_V2 = EnvBool(True)
     SGLANG_FP8_PAGED_MQA_LOGITS_TORCH = EnvBool(False)
+    # PATCH(dsv4-308x): force the dsv4 c4 indexer paged-MQA-logits backend
+    # independently of SGLANG_OPT_USE_AITER_INDEXER (which the
+    # deepseek_v4_server_args post-process unconditionally flips back to True
+    # on ROCm). Allowed: "auto", "aiter", "torch", "torch_sm120".
+    SGLANG_DSV4_INDEXER_BACKEND = EnvStr("auto")
     SGLANG_TOPK_TRANSFORM_512_TORCH = EnvBool(False)
     SGLANG_OPT_FLASHMLA_SPARSE_PREFILL = EnvBool(True)
 

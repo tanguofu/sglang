@@ -698,11 +698,33 @@ class C4IndexerBackendMixin:
 
         assert len(weights.shape) == 3
         weights = weights.squeeze(2)
+        # PATCH(dsv4-308x): SGLANG_DSV4_INDEXER_BACKEND force-overrides the
+        # default aiter path so we can A/B-test which indexer MQA backend is
+        # actually faulting at 0x...8533000 on DSpark target_verify.
+        # Allowed values: "auto" (existing dispatch), "aiter", "torch",
+        # "torch_sm120". Default "auto" preserves upstream.
+        _forced_backend = envs.SGLANG_DSV4_INDEXER_BACKEND.get()
+        if _forced_backend not in ("auto", "aiter", "torch", "torch_sm120"):
+            _forced_backend = "auto"
         if use_fp4_indexer:
-            weights = weights.float()
-            if envs.SGLANG_OPT_USE_TILELANG_INDEXER.get():
-                raise RuntimeError("DeepSeek V4 FP4 indexer requires DeepGEMM indexer.")
+            if _forced_backend != "auto":
+                raise RuntimeError(
+                    "SGLANG_DSV4_INDEXER_BACKEND override requires non-FP4 "
+                    f"indexer; got _forced_backend={_forced_backend!r}"
+                )
             from deep_gemm import fp8_fp4_paged_mqa_logits as fn
+        elif _forced_backend == "aiter":
+            fn = _aiter_fp8_paged_mqa_logits
+        elif _forced_backend == "torch":
+            fn = fp8_paged_mqa_logits_torch
+        elif _forced_backend == "torch_sm120":
+            if not is_sm120_supported():
+                raise RuntimeError(
+                    "SGLANG_DSV4_INDEXER_BACKEND=torch_sm120 requires SM120 "
+                    "(is_sm120_supported returned False on gfx942); use "
+                    'SGLANG_DSV4_INDEXER_BACKEND="torch" instead.'
+                )
+            fn = fp8_paged_mqa_logits_torch_sm120
         elif envs.SGLANG_OPT_USE_TILELANG_INDEXER.get():
             from sglang.kernels.ops.attention.dsa.tilelang_kernel import (
                 tilelang_fp8_paged_mqa_logits as fn,
@@ -771,6 +793,24 @@ class C4IndexerBackendMixin:
             c4_indexer_kv_cache = c4_indexer_kv_cache.view(
                 c4_indexer_kv_cache.shape[0], 64, 1, head_dim_with_sf
             )
+            # PATCH(dsv4-308x): roctx range marker + one-line log so a
+            # rocprof/roctx trace shows exactly which indexer backend fired
+            # each step and matches against the faulting kernel.
+            _fn_name = getattr(fn, "__name__", str(fn))
+            try:
+                from sglang.srt import _roctx_util as _roctx
+                _roctx.range_push(f"[INDEXER_MQA] {_fn_name}")
+            except Exception:
+                _roctx = None
+            if _forced_backend != "auto":
+                logger.info(
+                    "[dsv4-308x] indexer backend forced=%s actual=%s query_rows=%s "
+                    "page_table.shape=%s seq_lens.min/max=...",
+                    _forced_backend,
+                    _fn_name,
+                    query_rows,
+                    tuple(page_table.shape),
+                )
             logits = fn(
                 q,
                 c4_indexer_kv_cache,
@@ -781,6 +821,8 @@ class C4IndexerBackendMixin:
                 indexer_metadata.max_c4_seq_len,
                 False,
             )
+            if _roctx is not None:
+                _roctx.range_pop()
 
         assert indexer_metadata.page_table is core_metadata.page_table
         if self.debug_use_external_c4_sparse_indices:
