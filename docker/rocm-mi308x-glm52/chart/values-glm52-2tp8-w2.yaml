@@ -3,8 +3,8 @@
 #   helm install sglang-glm52-2tp8-w2 .../chart/ -f values-glm52-2tp8-w2.yaml
 #
 # Topology:
-#   - sglang-glm52-2tp8    on node-21.151.225.152 (worker + router + gateway) — see values-glm52-2tp8.yaml
-#   - sglang-glm52-2tp8-w2 on node-21.151.225.172 (this file, worker only)
+#   - sglang-glm52-2tp8    on node-NODE_PREFILL_1_IP (worker + router + gateway) — see values-glm52-2tp8.yaml
+#   - sglang-glm52-2tp8-w2 on node-NODE_DECODE_1_IP (this file, worker only)
 #
 # History:
 #   2026-07-18: OOM fix — memFraction 0.88→0.75, prefillMaxRequests 32→4,
@@ -19,13 +19,13 @@
 # ---------------------------------------------------------------------------
 # Image — same as worker 1
 # ---------------------------------------------------------------------------
-image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+image: YOUR_REGISTRY/your-project/sglang-glm52-308x
 tag: xgmi-opt-0716d
 
 # ---------------------------------------------------------------------------
 # Worker placement — pin to 172 (secondary, worker only)
 # ---------------------------------------------------------------------------
-nodeName: node-21.151.225.172
+nodeName: node-NODE_DECODE_1_IP
 replicas: 1
 
 # ---------------------------------------------------------------------------

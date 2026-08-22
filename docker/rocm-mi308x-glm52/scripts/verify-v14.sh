@@ -5,7 +5,7 @@ set -euo pipefail
 
 NODE_IP="${1:-127.0.0.1}"
 PORT=30000
-API_KEY="sk-46faecc9d0bc4dcd9db6a15c73ae91c8"
+API_KEY="sk-REPLACE_WITH_YOUR_API_KEY"
 BASE="http://${NODE_IP}:${PORT}"
 
 echo "============================================"

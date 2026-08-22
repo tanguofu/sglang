@@ -1,0 +1,351 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  annotations:
+    meta.helm.sh/release-name: sglang-1p1d
+    meta.helm.sh/release-namespace: kube-system
+  labels:
+    app.kubernetes.io/component: decode
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sglang-1p1d
+    pd-role: decode
+  name: sglang-1p1d-decode
+  namespace: kube-system
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  podManagementPolicy: OrderedReady
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: decode
+      app.kubernetes.io/name: sglang-1p1d
+  serviceName: sglang-1p1d-decode
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: '2026-08-19T14:31:21+08:00'
+      labels:
+        app.kubernetes.io/component: decode
+        app.kubernetes.io/name: sglang-1p1d
+        pd-role: decode
+    spec:
+      containers:
+      - args:
+        - 'set -euo pipefail
+
+          echo "=== GLM-5.2 DECODE (MI308X, baked GDR + DSA tilelang + NEXTN 2/3) ==="
+
+          exec python3 -m sglang.launch_server --model-path /data/model/glm52-fp8 --model-impl sglang --served-model-name
+          glm-5.2 --tp-size 8 --pp-size 1 --trust-remote-code --host 0.0.0.0 --port 30000 --context-length 1048576 --tool-call-parser
+          glm47 --reasoning-parser glm45 --preferred-sampling-params ''{"max_new_tokens":163840}'' --attention-backend dsa
+          --dsa-prefill-backend tilelang --dsa-decode-backend tilelang --enable-aiter-allreduce-fusion --enable-fused-qk-norm-rope
+          --schedule-conservativeness 0.8 --kv-cache-dtype fp8_e4m3 --max-running-requests 32 --disaggregation-transfer-backend
+          mooncake --num-reserved-decode-tokens 1024 --enable-metrics --log-level info --mem-fraction-static 0.92 --cuda-graph-bs-decode
+          1 2 3 4 5 6 7 8 9 10 12 16 20 24 32 --cuda-graph-max-bs-decode 32 --speculative-algorithm NEXTN --speculative-num-steps
+          3 --speculative-num-draft-tokens 4 --speculative-eagle-topk 1 --num-continuous-decode-steps 3 --stream-interval
+          2 --skip-server-warmup --watchdog-timeout 1800 --load-balance-method follow_bootstrap_room --disaggregation-mode
+          decode --disaggregation-ib-device "{\"0\":\"bnxt_re_bond0\",\"1\":\"bnxt_re_bond1\",\"2\":\"bnxt_re_bond2\",\"3\":\"bnxt_re_bond3\",\"4\":\"bnxt_re_bond4\",\"5\":\"bnxt_re_bond5\",\"6\":\"bnxt_re_bond6\",\"7\":\"bnxt_re_bond7\"}"
+          --disaggregation-bootstrap-port 8998
+
+          '
+        command:
+        - /bin/bash
+        - -c
+        env:
+        - name: HIP_FORCE_DEV_KERNARG
+          value: '1'
+        - name: SGLANG_MOONCAKE_SEND_AUX_TCP
+          value: '1'
+        - name: SGLANG_DISAGGREGATION_WAITING_TIMEOUT
+          value: '1800'
+        - name: SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT
+          value: '600'
+        - name: HIP_VISIBLE_DEVICES
+          value: 0,1,2,3,4,5,6,7
+        - name: HSA_ENABLE_SDMA
+          value: '0'
+        - name: MC_DISABLE_HIP_TRANSPORT
+          value: '1'
+        - name: MC_GID_INDEX
+          value: '3'
+        - name: MOONCAKE_PROTOCOL
+          value: rdma
+        - name: NCCL_CUMEM_ENABLE
+          value: '0'
+        - name: NCCL_DEBUG
+          value: WARN
+        - name: NCCL_IB_GID_INDEX
+          value: '3'
+        - name: NCCL_MIN_NCHANNELS
+          value: '112'
+        - name: NCCL_NVLS_ENABLE
+          value: '0'
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: expandable_segments:True
+        - name: PYTORCH_ROCM_ARCH
+          value: gfx942
+        - name: ROCM_QUICK_REDUCE_QUANTIZATION
+          value: INT8
+        - name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN
+          value: '1'
+        - name: SGLANG_DISABLE_CUDNN_CHECK
+          value: '1'
+        - name: SGLANG_DSA_HIP_DISABLE_PRESHUFFLE
+          value: '1'
+        - name: SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM
+          value: '1'
+        - name: SGLANG_HEALTH_CHECK_TIMEOUT
+          value: '60'
+        - name: SGLANG_INT4_WEIGHT
+          value: '0'
+        - name: SGLANG_MOE_PADDING
+          value: '1'
+        - name: SGLANG_OPT_USE_TOPK_V2
+          value: '0'
+        - name: SGLANG_PD_HOST_STAGING
+          value: '0'
+        - name: SGLANG_ROCM_DISABLE_LINEARQUANT
+          value: '0'
+        - name: SGLANG_ROCM_FUSED_DECODE_MLA
+          value: '1'
+        - name: SGLANG_SET_CPU_AFFINITY
+          value: '1'
+        - name: SGLANG_USE_AITER
+          value: '1'
+        - name: SGLANG_USE_ROCM700A
+          value: '1'
+        - name: SGLANG_HOST_IP
+          value: NODE_DECODE_0_IP
+        image: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0517-gdr-kernel-v1
+        imagePullPolicy: Always
+        livenessProbe:
+          failureThreshold: 40
+          httpGet:
+            path: /health
+            port: 30000
+            scheme: HTTP
+          initialDelaySeconds: 900
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 60
+        name: sglang
+        ports:
+        - containerPort: 30000
+          name: http
+          protocol: TCP
+        - containerPort: 8998
+          name: bootstrap
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 40
+          httpGet:
+            path: /health
+            port: 30000
+            scheme: HTTP
+          initialDelaySeconds: 900
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 60
+        resources:
+          limits:
+            amd.com/gpu: '8'
+          requests:
+            amd.com/gpu: '8'
+            cpu: '360'
+            memory: 2100Gi
+        securityContext:
+          allowPrivilegeEscalation: true
+          privileged: true
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: Unconfined
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /dev/shm
+          name: shm
+        - mountPath: /data
+          name: data
+        - mountPath: /dev/kfd
+          name: dev-kfd
+        - mountPath: /dev/dri
+          name: dev-dri
+        - mountPath: /dev/infiniband
+          name: dev-infiniband
+        - mountPath: /shared
+          name: shared-init
+      dnsPolicy: ClusterFirstWithHostNet
+      hostIPC: true
+      hostNetwork: true
+      hostPID: true
+      imagePullSecrets:
+      - name: tencent-registry
+      initContainers:
+      - args:
+        - "set -euo pipefail\n\necho \"========== Environment Pre-Flight Check ==========\"\necho \"Timestamp: $(date -u '+%Y-%m-%dT%H:%M:%SZ')\"\
+          \necho \"Hostname:  $(hostname)\"\necho \"\"\n\n# 1. GPU Detection\necho \"--- GPU Detection ---\"\nGPU_COUNT=$(rocminfo\
+          \ 2>/dev/null | grep -c \"^  Name:.*gfx\" || true)\necho \"GPU count: ${GPU_COUNT}\"\nif [ \"${GPU_COUNT}\" -lt\
+          \ 1 ]; then\n  echo \"FATAL: No GPU detected via rocminfo\" >&2\n  exit 1\nfi\nrocminfo 2>/dev/null | grep -E \"\
+          Marketing Name:|Name:.*gfx|Compute Unit:\" | head -12\necho \"\"\n\n# 2. Driver Version\necho \"--- Driver Version\
+          \ ---\"\nrocm-smi --showdriverversion 2>&1 | grep -i \"driver version\" || echo \"(unable to query driver version)\"\
+          \necho \"\"\n\n# 3. Firmware Version (GPU 0 only)\necho \"--- Firmware Version (GPU 0) ---\"\nrocm-smi --showfwinfo\
+          \ 2>&1 | grep \"GPU\\[0\\]\" | head -10 || echo \"(unable to query firmware info)\"\necho \"\"\n\n# 4. VRAM Occupancy\n\
+          echo \"--- VRAM Occupancy ---\"\nrocm-smi --showmeminfo vram 2>&1 | grep -E \"GPU\\[|VRAM Total\" | head -20\nVRAM_USED=$(rocm-smi\
+          \ --showmeminfo vram 2>&1 | grep \"GPU\\[0\\].*Used\" | awk '{print $NF}' || true)\nVRAM_TOTAL=$(rocm-smi --showmeminfo\
+          \ vram 2>&1 | grep \"GPU\\[0\\].*Total Memory\" | awk '{print $NF}' || true)\nif [ -n \"${VRAM_USED}\" ] && [ -n\
+          \ \"${VRAM_TOTAL}\" ] && [ \"${VRAM_TOTAL}\" -gt 0 ] 2>/dev/null; then\n  VRAM_PCT=$((VRAM_USED * 100 / VRAM_TOTAL))\n\
+          \  echo \"GPU[0] VRAM usage: ${VRAM_PCT}% (${VRAM_USED} / ${VRAM_TOTAL} bytes)\"\n  if [ \"${VRAM_PCT}\" -gt 50\
+          \ ]; then\n    echo \"WARNING: VRAM occupancy ${VRAM_PCT}% > 50% before sglang start \u2014 possible stale process\"\
+          \ >&2\n  fi\nelse\n  echo \"(unable to parse VRAM usage)\"\nfi\necho \"\"\n\n# 5. Host Memory\necho \"--- Host Memory\
+          \ ---\"\nfree -h | head -3\nMEM_AVAIL_KB=$(grep MemAvailable /proc/meminfo | awk '{print $2}')\nMEM_TOTAL_KB=$(grep\
+          \ MemTotal /proc/meminfo | awk '{print $2}')\nif [ \"${MEM_TOTAL_KB}\" -gt 0 ] 2>/dev/null; then\n  MEM_PCT=$((\
+          \ (MEM_TOTAL_KB - MEM_AVAIL_KB) * 100 / MEM_TOTAL_KB ))\n  echo \"Host memory usage: ${MEM_PCT}% (${MEM_AVAIL_KB}\
+          \ KB available / ${MEM_TOTAL_KB} KB total)\"\n  if [ \"${MEM_PCT}\" -gt 80 ]; then\n    echo \"WARNING: Host memory\
+          \ usage ${MEM_PCT}% > 80%\" >&2\n  fi\nelse\n  echo \"(unable to parse host memory)\"\nfi\necho \"\"\n\n# 6. IB\
+          \ Device Status\necho \"--- IB Device Status ---\"\nibv_devinfo 2>&1 | grep -E \"hca_id|transport|fw_ver|state|link_layer\"\
+          \ | head -40 || echo \"(ibv_devinfo not available)\"\nIB_ACTIVE=$(ibv_devinfo 2>&1 | grep -c \"PORT_ACTIVE\" ||\
+          \ true)\necho \"Active IB ports: ${IB_ACTIVE}\"\nif [ \"${IB_ACTIVE}\" -lt 1 ]; then\n  echo \"WARNING: No active\
+          \ IB ports detected \u2014 PD transfer will fall back to TCP\" >&2\nfi\necho \"\"\n\n# 7. Model File Check\necho\
+          \ \"--- Model File Check ---\"\nMODEL_PATH=\"/data/model/glm52-fp8\"\nif [ ! -d \"${MODEL_PATH}\" ]; then\n  echo\
+          \ \"FATAL: Model directory ${MODEL_PATH} not found\" >&2\n  exit 1\nfi\nif [ ! -f \"${MODEL_PATH}/config.json\"\
+          \ ]; then\n  echo \"FATAL: ${MODEL_PATH}/config.json missing\" >&2\n  exit 1\nfi\necho \"Model path: ${MODEL_PATH}\"\
+          \nls -la \"${MODEL_PATH}/config.json\"\nls \"${MODEL_PATH}/\"*.safetensors 2>/dev/null | head -5 || echo \"(no .safetensors\
+          \ files found)\"\nMODEL_SIZE=$(du -sh \"${MODEL_PATH}\" 2>/dev/null | awk '{print $1}')\necho \"Model size: ${MODEL_SIZE}\"\
+          \necho \"\"\n\n# 8. GEMM CSV: extract ONLY newly-tuned gfx942 K=6144 entries to a model_configs file\n# IMPORTANT:\n\
+          # - Do NOT replace the image's source CSV \u2014 that causes aiter's merge process to\n#   truncate all model_configs/*.csv\
+          \ files to 0 rows.\n# - Do NOT include ALL gfx942 entries \u2014 many already exist in other model_configs\n#  \
+          \ (glm5, dsv3, etc.) and duplicates cause RuntimeError on import.\n# - ONLY include the shapes we actually tuned:\
+          \ gfx942 with K=6144 (N=256 and N=32).\n#   These were missing from all existing configs and caused \"not found\
+          \ tuned config\"\n#   warnings at runtime.\necho \"--- aiter GEMM CSV ---\"\nSRC_CSV=\"/data/aiter_configs/bf16_tuned_gemm.csv\"\
+          \nOUT_CSV=\"/shared/mi308x_gfx942_bf16_tuned_gemm.csv\"\nif [ -f \"${SRC_CSV}\" ]; then\n  # Extract ONLY genuinely\
+          \ new gfx942 K=6144 entries that don't already exist\n  # in the image's model_configs files. The aiter merge process\
+          \ raises\n  # RuntimeError on duplicate shape keys, so we must filter them out here.\n  python3 << 'PYEOF'\nimport\
+          \ csv, glob, os, sys\n\nsrc = \"/data/aiter_configs/bf16_tuned_gemm.csv\"\nout = \"/shared/mi308x_gfx942_bf16_tuned_gemm.csv\"\
+          \nconfigs_dir = \"/sgl-workspace/aiter/aiter/configs/model_configs\"\n\n# Collect existing shape keys (first 10\
+          \ fields) from all model_configs CSVs\nexisting_keys = set()\nfor f in glob.glob(os.path.join(configs_dir, \"*.csv\"\
+          )):\n    try:\n        with open(f, newline='') as fh:\n            reader = csv.reader(fh)\n            next(reader,\
+          \ None)\n            for row in reader:\n                if len(row) >= 10:\n                    existing_keys.add(tuple(row[:10]))\n\
+          \    except Exception:\n        pass\n\ncount = 0\ntotal = 0\nwith open(src, newline='') as fin, open(out, 'w',\
+          \ newline='') as fout:\n    reader = csv.reader(fin)\n    writer = csv.writer(fout)\n    try:\n        header =\
+          \ next(reader)\n        writer.writerow(header)\n    except StopIteration:\n        sys.exit(0)\n    for row in\
+          \ reader:\n        if len(row) >= 10 and row[0] == \"gfx942\" and row[4] == \"6144\":\n            total += 1\n\
+          \            if tuple(row[:10]) not in existing_keys:\n                writer.writerow(row)\n                count\
+          \ += 1\n\nprint(f\"Extracted {count} new gfx942 K=6144 entries (of {total} total, {total - count} duplicates filtered)\"\
+          )\nPYEOF\n  TOTAL_ROWS=$(wc -l < \"${OUT_CSV}\")\n  echo \"Wrote ${TOTAL_ROWS} lines (including header) to ${OUT_CSV}\"\
+          \nelse\n  echo \"WARNING: ${SRC_CSV} not found \u2014 will use image default configs\" >&2\n  touch \"${OUT_CSV}\"\
+          \  # empty sentinel so main container knows\nfi\necho \"\"\n\n# 9. Mooncake patched files check\necho \"--- Mooncake\
+          \ Patched Files ---\"\nMC_DIR=\"/data/mooncake-patched\"\nif [ -d \"${MC_DIR}\" ]; then\n  ls -la \"${MC_DIR}/\"\
+          \ | head -10\nelse\n  echo \"WARNING: ${MC_DIR} not found \u2014 main container will fail\" >&2\nfi\necho \"\"\n\
+          \necho \"========== Pre-Flight Check Complete ==========\"\n"
+        command:
+        - /bin/bash
+        - -c
+        env:
+        - name: SGLANG_DSA_HIP_DISABLE_PRESHUFFLE
+          value: '1'
+        - name: SGLANG_PD_HOST_STAGING
+          value: '0'
+        - name: SGLANG_DISAGGREGATION_WAITING_TIMEOUT
+          value: '1800'
+        image: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0516-batch1
+        imagePullPolicy: Always
+        name: env-check-aiter-init
+        resources:
+          limits:
+            amd.com/gpu: '8'
+          requests:
+            cpu: '4'
+            memory: 8Gi
+        securityContext:
+          allowPrivilegeEscalation: true
+          privileged: true
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: Unconfined
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /data
+          name: data
+        - mountPath: /shared
+          name: shared-init
+        - mountPath: /dev/kfd
+          name: dev-kfd
+        - mountPath: /dev/dri
+          name: dev-dri
+        - mountPath: /dev/infiniband
+          name: dev-infiniband
+      - args:
+        - "set -euo pipefail\necho \"========== Environment Pre-Flight Check ==========\"\necho \"Timestamp: $(date -u '+%Y-%m-%dT%H:%M:%SZ')\"\
+          \necho \"Hostname:  $(hostname)\"\nGPU_COUNT=$(rocminfo 2>/dev/null | grep -c \"^  Name:.*gfx\" || true)\necho \"\
+          GPU count: ${GPU_COUNT}\"\nif [ \"${GPU_COUNT}\" -lt 1 ]; then\n  echo \"FATAL: No GPU detected via rocminfo\" >&2\n\
+          \  exit 1\nfi\nMODEL_PATH=\"/data/model/glm52-fp8\"\nif [ ! -d \"${MODEL_PATH}\" ] || [ ! -f \"${MODEL_PATH}/config.json\"\
+          \ ]; then\n  echo \"FATAL: Model ${MODEL_PATH} missing\" >&2\n  exit 1\nfi\necho \"Model path: ${MODEL_PATH} size=$(du\
+          \ -sh \"${MODEL_PATH}\" 2>/dev/null | awk '{print $1}')\"\nIB_ACTIVE=$(ibv_devinfo 2>&1 | grep -c \"PORT_ACTIVE\"\
+          \ || true)\necho \"Active IB ports: ${IB_ACTIVE}\"\nif [ \"${IB_ACTIVE}\" -lt 1 ]; then\n  echo \"WARNING: No active\
+          \ IB ports \u2014 PD may fall back to TCP\" >&2\nfi\necho \"========== Pre-Flight Check Complete ==========\"\n"
+        command:
+        - /bin/bash
+        - -c
+        image: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0517-gdr-kernel-v1
+        imagePullPolicy: Always
+        name: env-check
+        resources: {}
+        securityContext:
+          allowPrivilegeEscalation: true
+          privileged: true
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: Unconfined
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /dev/shm
+          name: shm
+        - mountPath: /data
+          name: data
+        - mountPath: /dev/kfd
+          name: dev-kfd
+        - mountPath: /dev/dri
+          name: dev-dri
+        - mountPath: /dev/infiniband
+          name: dev-infiniband
+      nodeName: node-NODE_DECODE_0_IP
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - operator: Exists
+      volumes:
+      - emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi
+        name: shm
+      - hostPath:
+          path: /data
+          type: Directory
+        name: data
+      - hostPath:
+          path: /dev/kfd
+          type: CharDevice
+        name: dev-kfd
+      - hostPath:
+          path: /dev/dri
+          type: Directory
+        name: dev-dri
+      - hostPath:
+          path: /dev/infiniband
+          type: Directory
+        name: dev-infiniband
+      - emptyDir:
+          medium: Memory
+          sizeLimit: 16Mi
+        name: shared-init
+  updateStrategy:
+    rollingUpdate:
+      partition: 0
+    type: RollingUpdate

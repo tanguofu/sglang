@@ -1,0 +1,111 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    meta.helm.sh/release-name: sglang-1p1d
+    meta.helm.sh/release-namespace: kube-system
+  labels:
+    app.kubernetes.io/component: router
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sglang-1p1d
+    pd-role: router
+  name: sglang-1p1d-router
+  namespace: kube-system
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: router
+      app.kubernetes.io/name: sglang-1p1d
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        eks.tke.cloud.tencent.com/cluster-ip-switch: cluster
+        eks.tke.cloud.tencent.com/resolv-conf: 'nameserver 9.137.197.120 9.137.192.34
+
+          '
+        kubectl.kubernetes.io/restartedAt: '2026-07-29T20:14:57+08:00'
+        tke.cloud.tencent.com/pod-type: eklet
+      labels:
+        app.kubernetes.io/component: router
+        app.kubernetes.io/name: sglang-1p1d
+        pd-role: router
+    spec:
+      containers:
+      - args:
+        - "set -euo pipefail\ncp /dev/shm/sglang_router_rs.abi3.so /opt/venv/lib/python3.12/site-packages/sglang_router/sglang_router_rs.abi3.so\
+          \ 2>/dev/null || true\necho \"=== SGLang PD Router ===\"\nexec python3 -m sglang_router.launch_router \\\n  --pd-disaggregation\
+          \ \\\n  --prefill http://NODE_PREFILL_0_IP:30000 8998 \\\n  --prefill http://NODE_PREFILL_1_IP:30000 8998 \\\n    --decode\
+          \ http://NODE_DECODE_0_IP:30000 \\\n  --decode http://NODE_DECODE_1_IP:30000 \\\n  --host 0.0.0.0 --port 30001 \\\n\
+          \  --prometheus-port 19096 \\\n  --model-path /data/model/glm52-fp8 \\\n  --api-key sk-REPLACE_WITH_YOUR_API_KEY\
+          \ \\\n  --health-check-timeout-secs 60 \\\n  --health-check-interval-secs 5 \\\n  --health-failure-threshold 3 \\\
+          \n  --health-success-threshold 2 \\\n  --balance-abs-threshold 8 \\\n  --cb-timeout-duration-secs 7200 \\\n  --log-level\
+          \ info\n"
+        command:
+        - /bin/bash
+        - -c
+        env:
+        - name: PYTHONUNBUFFERED
+          value: '1'
+        image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router:v0516-batch1-tok
+        imagePullPolicy: Always
+        livenessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /health
+            port: 30001
+            scheme: HTTP
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 10
+        name: router
+        ports:
+        - containerPort: 30001
+          name: http
+          protocol: TCP
+        - containerPort: 19096
+          name: metrics
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /health
+            port: 30001
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          successThreshold: 1
+          timeoutSeconds: 10
+        resources:
+          limits:
+            memory: 8Gi
+            tke.cloud.tencent.com/eni-ip: '1'
+          requests:
+            cpu: '4'
+            memory: 4Gi
+            tke.cloud.tencent.com/eni-ip: '1'
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      imagePullSecrets:
+      - name: tencent-registry
+      nodeName: kn-d5n6h6fp
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30

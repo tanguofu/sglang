@@ -29,7 +29,7 @@ CHART_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASE_NAME="sglang-glm52-2tp8"
 NAMESPACE="kube-system"
 VALUES_FILE="${CHART_DIR}/chart/values-glm52-2tp8-optimized.yaml"
-API_KEY="sk-46faecc9d0bc4dcd9db6a15c73ae91c8"
+API_KEY="sk-REPLACE_WITH_YOUR_API_KEY"
 
 # Colors for output
 RED='\033[0;31m'

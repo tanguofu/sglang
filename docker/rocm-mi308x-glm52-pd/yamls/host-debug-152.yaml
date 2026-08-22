@@ -6,11 +6,11 @@ metadata:
 spec:
   hostPID: true
   hostNetwork: true
-  nodeName: node-21.151.225.152
+  nodeName: node-NODE_PREFILL_1_IP
   restartPolicy: Never
   containers:
     - name: debug
-      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd:v2-8card
+      image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd:v2-8card
       imagePullPolicy: IfNotPresent
       command: ["sleep", "36000"]
       securityContext:

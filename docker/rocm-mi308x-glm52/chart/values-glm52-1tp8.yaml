@@ -15,7 +15,7 @@
 #   radix_attention.py: MHA companion swap disabled
 # Expected: prefill speed 5-10x improvement (eager ~700-1400 tok/s -> CG ~5000-8000+ tok/s)
 # ---------------------------------------------------------------------------
-image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+image: YOUR_REGISTRY/your-project/sglang-glm52-308x
 tag: breakable-v0.5.15
 
 # ---------------------------------------------------------------------------

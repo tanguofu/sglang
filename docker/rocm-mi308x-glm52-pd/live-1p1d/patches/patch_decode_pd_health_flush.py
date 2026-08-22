@@ -3,8 +3,19 @@ from pathlib import Path
 TARGET = Path("/sgl-workspace/sglang/python/sglang/srt/disaggregation/decode.py")
 LOOPS = ("event_loop_normal_disagg_decode", "event_loop_overlap_disagg_decode")
 NL = chr(10)
-ANCHOR = "            self.process_input_requests(recv_reqs)" + NL + "            self.process_decode_queue()" + NL
-INSERT = ANCHOR + "            # Flush queued synthetic health replies even if PD transfer work prevents a batch." + NL + "            self.maybe_send_health_check_signal()" + NL
+# v0.5.17 inserts `if self._engine_paused: continue` between the two calls.
+# This anchor matches both v0.5.16 (without guard) and v0.5.17 (with guard)
+# because we search for the v0.5.17 pattern first and fall back below.
+ANCHOR = (
+    "            self.process_input_requests(recv_reqs)" + NL
+    + "            if self._engine_paused:" + NL
+    + "                continue" + NL
+    + "            self.process_decode_queue()" + NL
+)
+INSERT = ANCHOR + (
+    "            # Flush queued synthetic health replies even if PD transfer work prevents a batch." + NL
+    + "            self.maybe_send_health_check_signal()" + NL
+)
 
 def loop_bounds(text, loop_name):
     start = text.index(f"def {loop_name}")

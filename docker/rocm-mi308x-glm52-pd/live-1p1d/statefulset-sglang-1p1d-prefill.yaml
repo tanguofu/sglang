@@ -52,18 +52,7 @@ spec:
           \  /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so\n  ldconfig\n\
           \  echo \"Installed bnxt_re 235.2.86.0 driver (kernel ABI v8 compatible)\"\
           \nelse\n  echo \"WARNING: libbnxt_re-235.2.86.0.so not found! RDMA will\
-          \ fall back to TCP\" >&2\nfi\n# Apply patched protocol.py and serving_responses.py\
-          \ for PD disaggregation bootstrap support.\nif [ -f /data/mooncake-patched/protocol_v0516_patched.py\
-          \ ]; then\n  cp /data/mooncake-patched/protocol_v0516_patched.py \\\n  \
-          \   /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/protocol.py\n\
-          \  echo \"Applied patched protocol.py (ResponsesRequest bootstrap fields)\
-          \ from /data/mooncake-patched/\"\nelse\n  echo \"WARNING: /data/mooncake-patched/protocol_v0516_patched.py\
-          \ not found!\" >&2\nfi\nif [ -f /data/mooncake-patched/serving_responses_v0516_patched.py\
-          \ ]; then\n  cp /data/mooncake-patched/serving_responses_v0516_patched.py\
-          \ \\\n     /sgl-workspace/sglang/python/sglang/srt/entrypoints/openai/serving_responses.py\n\
-          \  echo \"Applied patched serving_responses.py (bootstrap field forwarding)\
-          \ from /data/mooncake-patched/\"\nelse\n  echo \"WARNING: /data/mooncake-patched/serving_responses_v0516_patched.py\
-          \ not found!\" >&2\nfi\necho \"=== GLM-5.2 PREFILL (MI308X, GDR via HIP\
+          \ fall back to TCP\" >&2\nfi\necho \"=== GLM-5.2 PREFILL (MI308X, GDR via HIP\
           \ dmabuf) ===\"\n          # Install tuned aiter GEMM configs from initContainer\n\
           \          # Copy as a model_configs file (NOT replacing the source CSV)\
           \ to avoid\n          # truncating existing model_configs during aiter's\
@@ -76,25 +65,27 @@ spec:
           \ argmax fix baked into image (v0516-deterministic)\n          # Patch server_args.py\
           \ to allow DSA with --enable-deterministic-inference\n          # server_args.py\
           \ patch removed (not needed without --enable-deterministic-inference)\n\
-          \          \n\n# === i32 overflow fix for DSA MQA logits kernel ===\nif\
-          \ [ -f /data/mooncake-patched/dsa_indexer_i32fix.py ]; then\n  cp /data/mooncake-patched/dsa_indexer_i32fix.py\
-          \ \\\n     /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_indexer.py\n\
-          \  echo \"Applied i32 overflow fix to dsa_indexer.py from /data/mooncake-patched/\"\
-          \nelse\n  echo \"WARNING: dsa_indexer_i32fix.py not found! i32 overflow\
-          \ fix not applied\" >&2\nfi\nif [ -f /data/mooncake-patched/patch_scheduler_health.py\
+          \          \n\nif [ -f /data/mooncake-patched/patch_scheduler_health.py\
           \ ]; then\n  python3 /data/mooncake-patched/patch_scheduler_health.py\n\
           else\n  echo \"WARNING: patch_scheduler_health.py not found, health check\
           \ patch skipped\" >&2\nfi\n# Abort notifications must not block the scheduler\
-          \ on a busy peer (zmq HWM deadlock).\npython3 /data/mooncake-patched/patch_abort_noblock.py\n\
-          exec python3 -m sglang.launch_server \\\n  --model-path /data/model/glm52-fp8\
+          \ on a busy peer (zmq HWM deadlock).\n          python3 /data/mooncake-patched/patch_abort_noblock.py\n# Prefill D2H before RDMA (HIP L2 incoherent GPU reads on cold KV).\npython3 /data/mooncake-patched/patch_prefill_d2h.py || echo WARNING: prefill D2H patch failed non-fatal
+python3 /data/mooncake-patched/patch_gdr_flush.py || echo WARNING: gdr flush patch failed non-fatal\npython3 /data/mooncake-patched/patch_bootstrap_room_scalar.py || echo WARNING: bootstrap_room scalar patch failed non-fatal\npython3 /data/mooncake-patched/patch_responses_404.py || echo WARNING: responses 404 guardrail patch failed non-fatal\n#\
+          \ Overwrite broken baked-in dsa_indexer.py (v0.5.17 base has syntax error\
+          \ from i32 patch).\nif [ -f /data/mooncake-patched/dsa_indexer_v0517_fixed.py\
+          \ ]; then\n  cp /data/mooncake-patched/dsa_indexer_v0517_fixed.py \\\n    \
+          \ /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/dsa_indexer.py\n\
+          \  echo \"Overwrote dsa_indexer.py with fixed version\"\nelse\n  echo \"\
+          ERROR: dsa_indexer_v0517_fixed.py not found!\" >&2\n  exit 1\nfi\nexec python3\
+          \ -m sglang.launch_server \\\n  --model-path /data/model/glm52-fp8\
           \ \\\n  --model-impl sglang --served-model-name glm-5.2 \\\n  --tp-size\
           \ 8 --pp-size 1 --trust-remote-code \\\n  --host 0.0.0.0 --port 30000 \\\
           \n  --context-length 1048576 \\\n  --tool-call-parser glm47 --reasoning-parser\
-          \ glm45 \\\n  --mem-fraction-static 0.90 \\\n  --attention-backend dsa \\\
+          \ glm45 \\\n  --preferred-sampling-params '{\"max_new_tokens\":65536}' \\\n  --mem-fraction-static 0.90 \\\n  --attention-backend dsa \\\
           \n  --dsa-prefill-backend tilelang \\\n  --dsa-decode-backend tilelang \\\
-          \n  --enable-aiter-allreduce-fusion \\\n  --chunked-prefill-size 8192 \\\
-          \n  --enable-fused-qk-norm-rope \\\n  --schedule-conservativeness 1.0 \\\
-          \n  --prefill-max-requests 32 \\\n  --max-prefill-tokens 16384 \\\n  --hicache-ratio\
+          \n  --enable-aiter-allreduce-fusion \\\n  --chunked-prefill-size 16384 \\\
+          \n  --enable-fused-qk-norm-rope \\\n  --schedule-conservativeness 0.5 \\\
+          \n  --prefill-max-requests 32 \\\n  --max-prefill-tokens 32768 \\\n  --hicache-ratio\
           \ 4 \\\n  --kv-cache-dtype fp8_e4m3 \\\n  --disable-decode-cuda-graph \\\
           \n  --max-running-requests 32 \\\n  --disaggregation-mode prefill \\\n \
           \ --disaggregation-transfer-backend mooncake \\\n  --disaggregation-ib-device\
@@ -110,7 +101,7 @@ spec:
         - name: SGLANG_HEALTH_CHECK_TIMEOUT
           value: '60'
         - name: SGLANG_HOST_IP
-          value: 21.151.225.144
+          value: NODE_PREFILL_0_IP
         - name: MOONCAKE_PROTOCOL
           value: rdma
         - name: MC_GID_INDEX
@@ -167,7 +158,7 @@ spec:
           value: '1'
         - name: SGLANG_PD_HOST_STAGING
           value: '0'
-        image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0516-deterministic-v4
+        image: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0517-fusedstore-fix-v1
         imagePullPolicy: IfNotPresent
         livenessProbe:
           failureThreshold: 40
@@ -315,7 +306,7 @@ spec:
         command:
         - /bin/bash
         - -c
-        image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0516-batch1
+        image: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0516-batch1
         imagePullPolicy: Always
         name: env-check-aiter-init
         resources:
@@ -343,7 +334,7 @@ spec:
           name: dev-dri
         - mountPath: /dev/infiniband
           name: dev-infiniband
-      nodeName: node-21.151.225.144
+      nodeName: node-NODE_PREFILL_0_IP
       restartPolicy: Always
       schedulerName: default-scheduler
       securityContext: {}

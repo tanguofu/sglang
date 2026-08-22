@@ -13,7 +13,7 @@
 #
 # Build (from repo root):
 #   docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile.router-slim \
-#     -t mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:pd-resp-msg-v2-slim .
+#     -t YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router:pd-resp-msg-v2-slim .
 
 # ---- Stage 1: build the wheel from source ----
 FROM rust:1.90-slim AS builder

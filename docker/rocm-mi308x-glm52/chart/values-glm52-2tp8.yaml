@@ -4,8 +4,8 @@
 #   helm install sglang-glm52-2tp8-w2 .../chart/ -f values-glm52-2tp8-w2.yaml
 #
 # Topology:
-#   - sglang-glm52-2tp8    on node-21.151.225.152 (worker + router + gateway)
-#   - sglang-glm52-2tp8-w2 on node-21.151.225.172 (worker only)
+#   - sglang-glm52-2tp8    on node-NODE_PREFILL_1_IP (worker + router + gateway)
+#   - sglang-glm52-2tp8-w2 on node-NODE_DECODE_1_IP (worker only)
 # Router workerUrls point to both nodes so cache_aware picks the best prefix hit.
 #
 # History:
@@ -24,13 +24,13 @@
 # ---------------------------------------------------------------------------
 # Image — xgmi-opt-0716d build (XGMI P2P + ROCm 7.2.4 + sglang 0.5.14)
 # ---------------------------------------------------------------------------
-image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+image: YOUR_REGISTRY/your-project/sglang-glm52-308x
 tag: xgmi-opt-0716d
 
 # ---------------------------------------------------------------------------
 # Worker placement — pin to 152 (primary, hosts router + gateway)
 # ---------------------------------------------------------------------------
-nodeName: node-21.151.225.152
+nodeName: node-NODE_PREFILL_1_IP
 replicas: 1
 
 # ---------------------------------------------------------------------------
@@ -54,8 +54,8 @@ router:
   port: 30001
   policy: cache_aware
   workerUrls:
-    - "http://21.151.225.152:30000"  # primary (this release)
-    - "http://21.151.225.172:30000"  # secondary (sglang-glm52-2tp8-w2)
+    - "http://NODE_PREFILL_1_IP:30000"  # primary (this release)
+    - "http://NODE_DECODE_1_IP:30000"  # secondary (sglang-glm52-2tp8-w2)
   # Router tuning (per project_glm52_router_cache_aware_tuning.md):
   #   cacheThreshold 0.2 (was 0.5) — lower prefix-match threshold to route more aggressively
   #   balanceAbsThreshold 1 (was 32) — tighter load balance band
@@ -64,9 +64,9 @@ router:
   balanceAbsThreshold: 1
   balanceRelThreshold: 1.2
   # pd-router image with /v1/messages route patched in (worker image does NOT have it).
-  image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router
+  image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router
   tag: messages-0717c
-  # Tolerations — node-21.151.225.152 has taint dedicated=sglang-2tp8:NoSchedule.
+  # Tolerations — node-NODE_PREFILL_1_IP has taint dedicated=sglang-2tp8:NoSchedule.
   # The `operator: Exists` toleration is a broad fallback so the router can land on
   # any AMD GPU node if the primary is unavailable.
   tolerations:

@@ -5,7 +5,7 @@ aitersTunedGemm:
   enabled: false              # CHANGED: true → false (replaced by aiterConfigImage)
 aiterConfigImage:             # CHANGED: NEW — bake tuned CSV (incl. N=160) into image
   enabled: true
-  repository: mirrors.tencent.com/ti-platform/sglang-glm52-308x-aiter-config
+  repository: YOUR_REGISTRY/your-project/sglang-glm52-308x-aiter-config
   tag: n160-v1
   pullPolicy: IfNotPresent
 eaglePatch:
@@ -20,7 +20,7 @@ gateway:
   httpsSectionName: https-glm52-2tp8
   lbAddress: 21.162.215.14
 hostNetwork: true
-image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+image: YOUR_REGISTRY/your-project/sglang-glm52-308x
 imagePullSecret: ""
 imagePullSecrets:
 - name: tencent-registry
@@ -58,9 +58,9 @@ router:
   balanceRelThreshold: 1.2
   cacheThreshold: 0.1            # CODEX: 0.2 → 0.1 (codex 相似 prefix 多，更激进匹配)
   enabled: true
-  image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router
+  image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router
   maxConcurrentRequests: 256     # CODEX: 128 → 256 (codex 高并发 session)
-  nodeName: node-21.151.225.144
+  nodeName: node-NODE_PREFILL_0_IP
   policy: cache_aware
   port: 30080
   queueSize: 128                 # CODEX: 64 → 128 (突发流量缓冲)
@@ -73,8 +73,8 @@ router:
     operator: Equal
     value: sglang-1pd-A-group
   workerUrls:
-  - http://21.151.225.152:30000
-  - http://21.151.225.172:30000
+  - http://NODE_PREFILL_1_IP:30000
+  - http://NODE_DECODE_1_IP:30000
 sglang:
   chunkedPrefillSize: 16384    # CHANGED: 32768 → 16384 (lower OOM risk)
   contextLength: "524288"

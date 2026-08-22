@@ -4,7 +4,7 @@
 #
 # Build (from repo root):
 #   docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile.router \
-#     -t mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:responses-0714 .
+#     -t YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router:responses-0714 .
 
 FROM lmsysorg/sglang-rocm:v0.5.15-rocm720-mi30x-20260710
 

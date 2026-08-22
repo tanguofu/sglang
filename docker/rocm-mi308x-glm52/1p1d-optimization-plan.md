@@ -368,12 +368,12 @@ falling back to ibv_reg_mr()
 ```bash
 # 1. Chat Completions API
 curl -s https://glm52-pd-1p1d.jmpti.woa.com/v1/chat/completions \
-  -H "Authorization: Bearer sk-46faecc9d0bc4dcd9db6a15c73ae91c8" \
+  -H "Authorization: Bearer sk-REPLACE_WITH_YOUR_API_KEY" \
   -d '{"model":"glm-5.2","messages":[{"role":"user","content":"hi"}],"max_tokens":20}'
 
 # 2. Responses API (Codex 格式)
 curl -s https://glm52-pd-1p1d.jmpti.woa.com/v1/responses \
-  -H "Authorization: Bearer sk-46faecc9d0bc4dcd9db6a15c73ae91c8" \
+  -H "Authorization: Bearer sk-REPLACE_WITH_YOUR_API_KEY" \
   -d '{"model":"glm-5.2","input":"hi","max_output_tokens":20}'
 
 # 3. PD transfer 验证 (decode pod 日志)

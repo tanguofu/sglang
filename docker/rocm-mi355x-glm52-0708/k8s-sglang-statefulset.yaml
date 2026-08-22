@@ -52,7 +52,7 @@ spec:
             - name: PORT
               value: "30000"
             - name: API_KEY
-              value: "sk-46faecc9d0bc4dcd9db6a15c73ae91c8"
+              value: "sk-REPLACE_WITH_YOUR_API_KEY"
             - name: SERVED_MODEL_NAME
               value: "glm-5.2"
             # ROCm environment — ensure all 8 GPUs are visible

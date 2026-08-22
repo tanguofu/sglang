@@ -13,9 +13,9 @@ metadata:
   name: sglang-1p1d-router
   namespace: kube-system
 spec:
-  clusterIP: 9.165.124.209
+  clusterIP: ROUTER_CLUSTER_IP
   clusterIPs:
-  - 9.165.124.209
+  - ROUTER_CLUSTER_IP
   internalTrafficPolicy: Cluster
   ipFamilies:
   - IPv4

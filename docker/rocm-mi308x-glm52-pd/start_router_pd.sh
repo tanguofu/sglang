@@ -4,8 +4,8 @@
 
 set -euo pipefail
 
-PREFILL_URL=${PREFILL_URL:-http://21.151.225.144:30000}
-DECODE_URL=${DECODE_URL:-http://21.151.225.132:30000}
+PREFILL_URL=${PREFILL_URL:-http://NODE_PREFILL_0_IP:30000}
+DECODE_URL=${DECODE_URL:-http://NODE_DECODE_0_IP:30000}
 PORT=${ROUTER_PORT:-30001}
 
 echo "============================================"

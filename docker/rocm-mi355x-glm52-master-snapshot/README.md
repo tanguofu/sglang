@@ -62,7 +62,7 @@ python3 -m sglang.launch_server \
     --model-path /data/models/GLM-5.2-FP8 \
     --model-impl sglang \
     --served-model-name glm-5.2 \
-    --api-key sk-46faecc9d0bc4dcd9db6a15c73ae91c8 \
+    --api-key sk-REPLACE_WITH_YOUR_API_KEY \
     --tp-size 8 --pp-size 1 --trust-remote-code \
     --host 0.0.0.0 --port 30000 \
     --context-length 1048576 \

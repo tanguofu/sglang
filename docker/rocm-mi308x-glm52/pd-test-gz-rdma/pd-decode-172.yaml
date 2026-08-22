@@ -1,4 +1,4 @@
-# SGLang PD Decode server on GZ node 132 (21.151.225.132)
+# SGLang PD Decode server on GZ node 132 (NODE_DECODE_0_IP)
 # RDMA mode with patched Mooncake (host staging + MC_DISABLE_HIP_TRANSPORT)
 # MTP (speculative decoding) enabled
 apiVersion: v1
@@ -12,14 +12,14 @@ metadata:
 spec:
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
-  nodeName: node-21.151.225.172
+  nodeName: node-NODE_DECODE_1_IP
   restartPolicy: Never
   terminationGracePeriodSeconds: 300
   imagePullSecrets:
     - name: tencent-registry
   containers:
     - name: sglang-decode
-      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:0710
+      image: YOUR_REGISTRY/your-project/sglang-glm52-308x:0710
       imagePullPolicy: IfNotPresent
       command: ["/bin/bash", "-c"]
       args:
@@ -40,7 +40,7 @@ spec:
             --model-path /data/model/glm52-fp8 \
             --model-impl sglang \
             --served-model-name glm-5.2 \
-            --api-key sk-46faecc9d0bc4dcd9db6a15c73ae91c8 \
+            --api-key sk-REPLACE_WITH_YOUR_API_KEY \
             --tp-size 8 --pp-size 1 --trust-remote-code \
             --host 0.0.0.0 --port 30000 \
             --context-length 1048576 \
@@ -70,7 +70,7 @@ spec:
         - name: PORT
           value: "30000"
         - name: API_KEY
-          value: "sk-46faecc9d0bc4dcd9db6a15c73ae91c8"
+          value: "sk-REPLACE_WITH_YOUR_API_KEY"
         - name: DISAGG_BOOTSTRAP_PORT
           value: "8998"
         # ROCm environment

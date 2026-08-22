@@ -12,14 +12,14 @@ metadata:
 spec:
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
-  nodeName: node-21.151.225.144
+  nodeName: node-NODE_PREFILL_0_IP
   restartPolicy: Never
   terminationGracePeriodSeconds: 60
   imagePullSecrets:
     - name: tencent-registry
   containers:
     - name: router
-      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd:rocm700-0716
+      image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd:rocm700-0716
       imagePullPolicy: IfNotPresent
       command: ["/bin/bash", "-c"]
       args:
@@ -28,14 +28,14 @@ spec:
           echo "============================================"
           echo " SGLang Router (PD Disaggregation) - A-group post1-0716"
           echo "============================================"
-          echo " Prefill: http://21.151.225.144:30000"
-          echo " Decode:  http://21.151.225.132:30000"
+          echo " Prefill: http://NODE_PREFILL_0_IP:30000"
+          echo " Decode:  http://NODE_DECODE_0_IP:30000"
           echo " Port:    30002  (Prometheus: 19096)"
           echo "============================================"
           exec python3 -m sglang_router.launch_router \
             --pd-disaggregation \
-            --prefill http://21.151.225.144:30000 \
-            --decode http://21.151.225.132:30000 \
+            --prefill http://NODE_PREFILL_0_IP:30000 \
+            --decode http://NODE_DECODE_0_IP:30000 \
             --host 0.0.0.0 --port 30002 \
             --prometheus-port 19096 \
             --model-path /data/model/glm52-fp8

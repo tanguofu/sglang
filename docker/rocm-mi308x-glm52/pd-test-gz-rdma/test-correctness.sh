@@ -4,9 +4,9 @@
 
 set -euo pipefail
 
-ROUTER_IP=${ROUTER_IP:-21.151.225.172}
+ROUTER_IP=${ROUTER_IP:-NODE_DECODE_1_IP}
 ROUTER_PORT=${ROUTER_PORT:-30001}
-API_KEY="sk-46faecc9d0bc4dcd9db6a15c73ae91c8"
+API_KEY="sk-REPLACE_WITH_YOUR_API_KEY"
 BASE_URL="http://${ROUTER_IP}:${ROUTER_PORT}"
 
 echo "============================================"

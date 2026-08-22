@@ -21,7 +21,7 @@ ROUTER_1P1D = "http://sglang-1p1d-router.kube-system:30001"
 ROUTER_2TP8 = "http://sglang-glm52-2tp8-router.kube-system:30080"
 MODEL_1P1D = "glm-5.2"
 MODEL_2TP8 = "unknown"
-API_KEY = "sk-46faecc9d0bc4dcd9db6a15c73ae91c8"
+API_KEY = "sk-REPLACE_WITH_YOUR_API_KEY"
 
 OUTDIR = Path("/tmp/bench-compare")
 OUTDIR.mkdir(exist_ok=True)

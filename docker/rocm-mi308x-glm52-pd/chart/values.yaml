@@ -1,120 +1,184 @@
-# GLM-5.2 PD Helm Chart Values
-# Deploy: helm install glm52-pd ./chart -n kube-system -f chart/values.yaml
+# GLM-5.2 MI308X 1P1D — measured kernel / PD scheme
+#
+#   helm upgrade --install sglang-1p1d \
+#     docker/rocm-mi308x-glm52-pd/chart \
+#     -n kube-system -f docker/rocm-mi308x-glm52-pd/chart/values.yaml
+#
+# Image bakes GDR peermem + L2 flush + HIP/PD patches. No /data/mooncake-patched overlay.
 
-# --- Images (built from Dockerfile + Dockerfile.router, pushed to mirrors) ---
-workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd:http-0714v5
-routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:responses-0714
+nameOverride: sglang-1p1d
 
-# --- API ---
-apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
+workerImage: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0517-gdr-kernel-v1
+routerImage: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router:v0516-batch1-tok
+imagePullPolicy: Always
+imagePullSecrets:
+  - tencent-registry
+
+apiKey: sk-REPLACE_WITH_YOUR_API_KEY
 modelName: glm-5.2
 modelPath: /data/model/glm52-fp8
 
-# --- Nodes (bare metal CVM, hostNetwork) ---
-prefillNode: node-21.151.225.144
-prefillIP: "21.151.225.144"
-decodeNode: node-21.151.225.132
-decodeIP: "21.151.225.132"
-routerNode: node-21.151.225.172
-routerIP: "21.151.225.172"
+# 3P1D: P on 144/152/172, D stays on 132 (GDR-validated).
+prefills:
+  - nodeName: node-NODE_PREFILL_0_IP
+    ip: "NODE_PREFILL_0_IP"
+  - nodeName: node-NODE_PREFILL_1_IP
+    ip: "NODE_PREFILL_1_IP"
+  - nodeName: node-NODE_DECODE_1_IP
+    ip: "NODE_DECODE_1_IP"
+decodeNode: node-NODE_DECODE_0_IP
+decodeIP: "NODE_DECODE_0_IP"
 
-# --- RDMA (8 bonds, one per GPU) ---
-# mooncake topology auto-discovery respects this mapping when /dev/infiniband is mounted
+# Prefill-only HiCache. ratio 4 previously OOM'd ~2TB host KV on TP8.
+# L1=GPU radix, L2=host (ratio 1), L3=Mooncake DRAM pool shared across 3P.
+hicache:
+  enabled: true
+  ratio: 1
+  storageBackend: mooncake
+  prefetchPolicy: timeout
+  memLayout: page_first_direct
+  writePolicy: write_through
+
+# Master on decode node (hostNetwork). Prefills contribute GLOBAL_SEGMENT_SIZE
+# each (TP ranks split that total). Metadata is P2P, no extra HTTP service.
+mooncake:
+  master:
+    enabled: true
+    nodeName: node-NODE_DECODE_0_IP
+    hostIP: "NODE_DECODE_0_IP"
+    port: 50051
+    metricsPort: 9003
+    evictionHighWatermark: "0.95"
+  globalSegmentSize: "64gb"
+  metadataServer: P2PHANDSHAKE
+  mmapArenaPoolSize: "4gb"
+
+# Router / LiteLLM run on TKE eklet (not a GPU node).
+router:
+  nodeName: kn-d5n6h6fp
+  port: 30001
+  metricsPort: 19096
+  # 163840 gen @ ~90 tok/s is ~30 min; long thinks can restart and exceed 1h.
+  cbTimeoutSecs: 7200
+
 ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
 bootstrapPort: "8998"
 
-# --- Worker common env ---
+gateway:
+  hostname: glm52-pd-1p1d.jmpti.woa.com
+  httprouteName: glm52-pd-1p1d
+  parentNamespace: ti-cloud
+  parentGateway: eg-tke
+
+# Host /data is model weights only. Runtime conn.py / engine.so overlays are off.
+hostPathData: /data
+allowHostPathOverlay: "0"
+
 workerEnv:
-  - name: MOONCAKE_PROTOCOL
-    value: "rdma"
-  - name: MC_GID_INDEX
-    value: "3"
-  - name: MC_DISABLE_HIP_TRANSPORT
-    value: "1"
-  - name: SGLANG_PD_HOST_STAGING
-    value: "1"
-  - name: HIP_VISIBLE_DEVICES
-    value: "0,1,2,3,4,5,6,7"
-  - name: NCCL_DEBUG
-    value: "WARN"
-  - name: NCCL_IB_GID_INDEX
-    value: "3"
-  - name: NCCL_CUMEM_ENABLE
-    value: "0"
-  - name: NCCL_MIN_NCHANNELS
-    value: "112"
-  - name: NCCL_NVLS_ENABLE
-    value: "0"
-  - name: HSA_ENABLE_SDMA
-    value: "0"
-  - name: HIP_FORCE_DEV_KERNARG
-    value: "1"
-  - name: PYTORCH_CUDA_ALLOC_CONF
-    value: "expandable_segments:True"
-  - name: PYTORCH_ROCM_ARCH
-    value: "gfx942"
-  - name: ROCM_QUICK_REDUCE_QUANTIZATION
-    value: "INT8"
-  - name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN
-    value: "1"
-  - name: SGLANG_DISABLE_CUDNN_CHECK
-    value: "1"
-  - name: SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM
-    value: "1"
-  - name: SGLANG_INT4_WEIGHT
-    value: "0"
-  - name: SGLANG_MOE_PADDING
-    value: "1"
-  - name: SGLANG_ROCM_DISABLE_LINEARQUANT
-    value: "0"
-  - name: SGLANG_ROCM_FUSED_DECODE_MLA
-    value: "1"
-  - name: SGLANG_SET_CPU_AFFINITY
-    value: "1"
-  - name: SGLANG_USE_AITER
-    value: "1"
-  - name: SGLANG_USE_ROCM700A
-    value: "1"
-  - name: SGLANG_OPT_USE_TOPK_V2
-    value: "0"
-  # NOTE: HSA_NO_SCRATCH_RECLAIM removed — that's an Ascend NPU var, not ROCm
+  SGLANG_HEALTH_CHECK_TIMEOUT: "60"
+  MOONCAKE_PROTOCOL: rdma
+  MC_GID_INDEX: "3"
+  HIP_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+  NCCL_DEBUG: WARN
+  NCCL_IB_GID_INDEX: "3"
+  HSA_ENABLE_SDMA: "0"
+  HIP_FORCE_DEV_KERNARG: "1"
+  NCCL_CUMEM_ENABLE: "0"
+  NCCL_MIN_NCHANNELS: "112"
+  NCCL_NVLS_ENABLE: "0"
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  PYTORCH_ROCM_ARCH: gfx942
+  ROCM_QUICK_REDUCE_QUANTIZATION: INT8
+  SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN: "1"
+  SGLANG_DISABLE_CUDNN_CHECK: "1"
+  SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM: "1"
+  SGLANG_INT4_WEIGHT: "0"
+  SGLANG_MOE_PADDING: "1"
+  SGLANG_ROCM_DISABLE_LINEARQUANT: "0"
+  SGLANG_ROCM_FUSED_DECODE_MLA: "1"
+  SGLANG_SET_CPU_AFFINITY: "1"
+  SGLANG_USE_AITER: "1"
+  SGLANG_USE_ROCM700A: "1"
+  SGLANG_OPT_USE_TOPK_V2: "0"
+  SGLANG_DSA_HIP_DISABLE_PRESHUFFLE: "1"
+  MC_DISABLE_HIP_TRANSPORT: "1"
+  SGLANG_PD_HOST_STAGING: "0"
 
-# --- Prefill launch args (beyond common) ---
-prefillExtraArgs: >-
-  --cuda-graph-backend-prefill breakable
-  --cuda-graph-bs-prefill 4 8 16 32
-  --max-running-requests 128
-  --prefill-max-requests 64 --max-prefill-tokens 32768
-  --mem-fraction-static 0.90
-  --disaggregation-mode prefill
+commonArgs:
+  - --model-path /data/model/glm52-fp8
+  - --model-impl sglang
+  - --served-model-name glm-5.2
+  - --tp-size 8
+  - --pp-size 1
+  - --trust-remote-code
+  - --host 0.0.0.0
+  - --port 30000
+  - --context-length 1048576
+  - --tool-call-parser glm47
+  - --reasoning-parser glm45
+  - --preferred-sampling-params '{"max_new_tokens":163840}'
+  - --attention-backend dsa
+  - --dsa-prefill-backend tilelang
+  - --dsa-decode-backend tilelang
+  - --enable-aiter-allreduce-fusion
+  - --enable-fused-qk-norm-rope
+  - --schedule-conservativeness 0.5
+  - --kv-cache-dtype fp8_e4m3
+  - --max-running-requests 32
+  - --disaggregation-transfer-backend mooncake
+  - --num-reserved-decode-tokens 1024
+  - --enable-metrics
+  - --log-level info
 
-# --- Decode launch args (beyond common) ---
-decodeExtraArgs: >-
-  --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16
-  --cuda-graph-max-bs-decode 16
-  --speculative-algorithm NEXTN
-  --speculative-num-steps 2 --speculative-num-draft-tokens 4
-  --speculative-eagle-topk 1
-  --max-running-requests 128
-  --mem-fraction-static 0.90
-  --disaggregation-mode decode
+prefill:
+  extraEnv:
+    SGLANG_MOONCAKE_SEND_AUX_TCP: "1"
+    SGLANG_HICACHE_HOST_ALLOCATOR: default
+    MOONCAKE_MASTER: "NODE_DECODE_0_IP:50051"
+    MOONCAKE_TE_META_DATA_SERVER: P2PHANDSHAKE
+    MOONCAKE_GLOBAL_SEGMENT_SIZE: "64gb"
+    MC_MMAP_ARENA_POOL_SIZE: "4gb"
+  args:
+    - --mem-fraction-static 0.88
+    - --chunked-prefill-size 16384
+    - --prefill-max-requests 32
+    - --max-prefill-tokens 32768
+    - --disable-decode-cuda-graph
+    - --disaggregation-mode prefill
+    - --watchdog-timeout 7200
+  resources:
+    limits:
+      amd.com/gpu: "8"
+    requests:
+      amd.com/gpu: "8"
+      cpu: "360"
+      memory: 1800Gi
+  watchdogNote: "HiCache ratio 1 + Mooncake L3. Do not set ratio 4 (OOM ~2TB host KV on TP8)."
 
-# --- Common worker launch args ---
-workerCommonArgs: >-
-  --model-path /data/model/glm52-fp8
-  --model-impl sglang --served-model-name glm-5.2
-  --api-key sk-46faecc9d0bc4dcd9db6a15c73ae91c8
-  --tp-size 8 --pp-size 1 --trust-remote-code
-  --host 0.0.0.0 --port 30000
-  --context-length 1048576
-  --tool-call-parser glm47
-  --enable-aiter-allreduce-fusion
-  --chunked-prefill-size 32768
-  --enable-fused-qk-norm-rope
-  --schedule-conservativeness 0.5
-  --kv-cache-dtype fp8_e4m3
-  --disaggregation-transfer-backend mooncake
-  --num-reserved-decode-tokens 1024
-  --disable-overlap-schedule
-  --enable-metrics --skip-server-warmup
-  --watchdog-timeout 3600 --log-level info
+decode:
+  args:
+    - --mem-fraction-static 0.92
+    - --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32
+    - --cuda-graph-max-bs-decode 32
+    - --speculative-algorithm NEXTN
+    - --speculative-num-steps 2
+    - --speculative-num-draft-tokens 3
+    - --speculative-eagle-topk 1
+    - --num-continuous-decode-steps 2
+    - --skip-server-warmup
+    - --watchdog-timeout 1800
+    - --load-balance-method follow_bootstrap_room
+    - --disaggregation-mode decode
+  resources:
+    limits:
+      amd.com/gpu: "8"
+    requests:
+      amd.com/gpu: "8"
+      cpu: "360"
+      memory: 2100Gi
+
+probes:
+  initialDelaySeconds: 900
+  periodSeconds: 30
+  timeoutSeconds: 60
+  failureThreshold: 40

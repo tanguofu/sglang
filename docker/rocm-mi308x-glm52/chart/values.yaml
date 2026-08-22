@@ -10,7 +10,7 @@
 # ---------------------------------------------------------------------------
 # Image
 # ---------------------------------------------------------------------------
-image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+image: YOUR_REGISTRY/your-project/sglang-glm52-308x
 tag: latest
 pullPolicy: IfNotPresent
 imagePullSecret: tencent-registry
@@ -53,7 +53,7 @@ resources:
 model:
   path: /data/model/glm52-fp8
   servedName: glm-5.2
-  apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
+  apiKey: sk-REPLACE_WITH_YOUR_API_KEY
 
 # ---------------------------------------------------------------------------
 # Server launch parameters (same for both test and prod)
@@ -115,10 +115,10 @@ router:
   port: 30001
   policy: cache_aware
   workerUrls:
-    - "http://21.151.225.144:30000"  # GZ test-0 (ins-bjoqlzak)
-    - "http://21.151.225.132:30000"  # GZ test-1 (ins-6qgdzzvu)
-    - "http://21.151.225.172:30000"  # GZ test-2 (ins-o8y5rwq2)
-    - "http://21.151.225.152:30000"  # GZ test-3 (ins-1g40idxe)
+    - "http://NODE_PREFILL_0_IP:30000"  # GZ test-0 (ins-bjoqlzak)
+    - "http://NODE_DECODE_0_IP:30000"  # GZ test-1 (ins-6qgdzzvu)
+    - "http://NODE_DECODE_1_IP:30000"  # GZ test-2 (ins-o8y5rwq2)
+    - "http://NODE_PREFILL_1_IP:30000"  # GZ test-3 (ins-1g40idxe)
   cacheThreshold: 0.3
   balanceAbsThreshold: 64
   balanceRelThreshold: 1.5
@@ -142,23 +142,23 @@ router:
 llmDRouter:
   enabled: true
   port: 30001
-  eppImage: mirrors.tencent.com/ti-platform/llm-d-router-endpoint-picker
+  eppImage: YOUR_REGISTRY/your-project/llm-d-router-endpoint-picker
   eppVersion: v0.9.0-amd64
-  envoyImage: mirrors.tencent.com/ti-platform/envoy
+  envoyImage: YOUR_REGISTRY/your-project/envoy
   envoyVersion: distroless-v1.33.2-amd64
   nodeName: ""  # Set to pin router to a specific node
   endpoints:
     - name: sglang-test-0
-      address: 21.151.225.144
+      address: NODE_PREFILL_0_IP
       port: 30000
     - name: sglang-test-1
-      address: 21.151.225.132
+      address: NODE_DECODE_0_IP
       port: 30000
     - name: sglang-test-2
-      address: 21.151.225.172
+      address: NODE_DECODE_1_IP
       port: 30000
     - name: sglang-test-3
-      address: 21.151.225.152
+      address: NODE_PREFILL_1_IP
       port: 30000
 
 # ---------------------------------------------------------------------------
@@ -227,6 +227,6 @@ aitersTunedGemm:
 # takes precedence over aitersTunedGemm. See aiters-config/README.md.
 aiterConfigImage:
   enabled: false
-  repository: mirrors.tencent.com/ti-platform/sglang-glm52-308x-aiter-config
+  repository: YOUR_REGISTRY/your-project/sglang-glm52-308x-aiter-config
   tag: n160-v1
   pullPolicy: IfNotPresent

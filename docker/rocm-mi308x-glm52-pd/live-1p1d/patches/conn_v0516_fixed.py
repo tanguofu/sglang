@@ -307,34 +307,69 @@ class MooncakeKVManager(CommonKVManager):
             with self.connection_lock:
                 self.connection_pool.clear()
 
-    def _copy_host_to_gpu(self):
-        """Copy KV data from host staging buffers to GPU after PD transfer."""
+    def _copy_host_to_gpu(self, kv_indices=None):
+        """Copy transferred KV pages from host staging to GPU.
+
+        Never copies the full pool: a tens-of-GB hipMemcpy DMA can
+        invalidate bnxt_re IOMMU mappings and kill RDMA QPs.
+        Missing kv_indices skips the copy rather than falling back.
+        """
         import ctypes
 
         hip_lib = ctypes.CDLL("libamdhip64.so")
-        # All buffers in this manager belong to the same GPU (TP rank).
         gpu_id = getattr(self.kv_args, "gpu_id", 0)
         hip_lib.hipSetDevice(ctypes.c_int(gpu_id))
-        for host_ptr, gpu_ptr, length in zip(
-            self._host_staging_ptrs,
-            self._gpu_ptrs,
-            self._host_staging_lens,
-        ):
-            ret = hip_lib.hipMemcpy(
-                ctypes.c_void_p(int(gpu_ptr)),
-                ctypes.c_void_p(int(host_ptr)),
-                ctypes.c_size_t(length),
-                ctypes.c_int(1),  # hipMemcpyHostToDevice
+
+        if kv_indices is None or len(kv_indices) == 0:
+            logger.warning(
+                "_copy_host_to_gpu: skip copy — no kv_indices "
+                "(refusing full-pool hipMemcpy that kills bnxt_re QPs)"
             )
-            if ret != 0:
-                logger.error(
-                    f"_copy_host_to_gpu: hipMemcpy failed: ret={ret}, "
-                    f"gpu=0x{int(gpu_ptr):x}, host=0x{int(host_ptr):x}, "
-                    f"len={length}, dev={gpu_id}"
+            return
+
+        page_size = self.kv_args.page_size
+        kv_item_lens = self.kv_args.kv_item_lens
+
+        indices = sorted(set(int(i) for i in kv_indices))
+        groups = []
+        start = indices[0]
+        end = indices[0] + 1
+        for idx in indices[1:]:
+            if idx == end:
+                end = idx + 1
+            else:
+                groups.append((start, end - start))
+                start = idx
+                end = idx + 1
+        groups.append((start, end - start))
+
+        total_copied = 0
+        for buf_idx, (host_ptr, gpu_ptr) in enumerate(
+            zip(self._host_staging_ptrs, self._gpu_ptrs)
+        ):
+            if buf_idx >= len(kv_item_lens):
+                continue
+            item_len = kv_item_lens[buf_idx]
+            if item_len == 0:
+                continue
+            for start_idx, count in groups:
+                offset = start_idx * page_size * item_len
+                length = count * page_size * item_len
+                ret = hip_lib.hipMemcpy(
+                    ctypes.c_void_p(int(gpu_ptr) + offset),
+                    ctypes.c_void_p(int(host_ptr) + offset),
+                    ctypes.c_size_t(length),
+                    ctypes.c_int(1),  # hipMemcpyHostToDevice
                 )
+                if ret != 0:
+                    logger.error(
+                        f"_copy_host_to_gpu: hipMemcpy failed ret={ret} "
+                        f"buf={buf_idx} offset={offset} len={length} dev={gpu_id}"
+                    )
+                total_copied += length
         logger.info(
-            f"_copy_host_to_gpu: copied {len(self._host_staging_ptrs)} "
-            f"buffers (total {sum(self._host_staging_lens)} bytes), dev={gpu_id}"
+            f"_copy_host_to_gpu: selective copy {total_copied} bytes "
+            f"for {len(indices)} pages ({len(groups)} groups) dev={gpu_id}"
         )
 
     # ------------------------------------------------------------------
@@ -715,6 +750,10 @@ class MooncakeKVManager(CommonKVManager):
 
             # D2H copy using pre-allocated staging buffers
             if need_d2h:
+                logger.info(
+                    f"_transfer_data: D2H {len(need_d2h)} blocks "
+                    f"({sum(x[2] for x in need_d2h)} bytes) then RDMA"
+                )
                 # All buffers in this manager belong to the same GPU (TP rank).
                 # Set the device once for all hipMemcpy calls in this thread.
                 gpu_id = getattr(self.kv_args, "gpu_id", 0)
@@ -2132,6 +2171,7 @@ class MooncakeKVReceiver(CommonKVReceiver):
                         str(decode_prefix_len or 0).encode("ascii"),
                     ]
                 )
+        self._dst_kv_indices = kv_indices
         self.init_time = time.time()
 
     def poll(self) -> KVPoll:
@@ -2145,7 +2185,7 @@ class MooncakeKVReceiver(CommonKVReceiver):
                 status == KVPoll.Success
                 and hasattr(self.kv_mgr, "_host_staging_buffers")
             ):
-                self.kv_mgr._copy_host_to_gpu()
+                self.kv_mgr._copy_host_to_gpu(getattr(self, "_dst_kv_indices", None))
         elif status == KVPoll.WaitingForInput:
             timeout_result = self._check_waiting_timeout()
             if timeout_result is not None:

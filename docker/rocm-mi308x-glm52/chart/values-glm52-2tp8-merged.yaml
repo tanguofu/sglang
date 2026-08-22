@@ -9,9 +9,9 @@
 #   helm install sglang-glm52-2tp8 .../chart/ -f values-glm52-2tp8-merged.yaml
 #
 # Topology:
-#   - pod-0 → node-21.151.225.152 (worker, taint dedicated=sglang-2tp8)
-#   - pod-1 → node-21.151.225.172 (worker, taint dedicated=sglang-2tp8)
-#   - router → node-21.151.225.144 (taint dedicated=sglang-1pd-A-group)
+#   - pod-0 → node-NODE_PREFILL_1_IP (worker, taint dedicated=sglang-2tp8)
+#   - pod-1 → node-NODE_DECODE_1_IP (worker, taint dedicated=sglang-2tp8)
+#   - router → node-NODE_PREFILL_0_IP (taint dedicated=sglang-1pd-A-group)
 #
 # History:
 #   2026-07-18: OOM fix — memFraction 0.88→0.75, prefillMaxRequests 32→4,
@@ -39,7 +39,7 @@
 #   radix_attention.py: MHA companion swap disabled
 # Expected: prefill speed 3x+ improvement (eager ~700-1400 tok/s -> CG ~2000+ tok/s)
 # ---------------------------------------------------------------------------
-image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+image: YOUR_REGISTRY/your-project/sglang-glm52-308x
 tag: breakable-v0.5.15
 
 # ---------------------------------------------------------------------------
@@ -147,8 +147,8 @@ router:
   # hostNetwork pods cannot resolve pod-specific headless DNS
   # (e.g. pod-0.sglang-glm52-2tp8-sglang.kube-system.svc). Use hardcoded host IPs.
   workerUrls:
-    - "http://21.151.225.152:30000"  # pod-0 (node .152)
-    - "http://21.151.225.172:30000"  # pod-1 (node .172)
+    - "http://NODE_PREFILL_1_IP:30000"  # pod-0 (node .152)
+    - "http://NODE_DECODE_1_IP:30000"  # pod-1 (node .172)
   # Router tuning (per project_glm52_router_cache_aware_tuning.md):
   #   cacheThreshold 0.2 (was 0.5) — lower prefix-match threshold to route more aggressively
   #   balanceAbsThreshold 1 (was 32) — tighter load balance band
@@ -157,12 +157,12 @@ router:
   balanceAbsThreshold: 1
   balanceRelThreshold: 1.2
   # pd-router image with /v1/messages route patched in (worker image does NOT have it).
-  image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router
+  image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router
   tag: messages-0717c
   # Router pod placement — pin to .144 (dedicated=sglang-1pd-A-group taint).
   # .144 is the 1pd-A-group node, not a 2tp8 worker node, so the router does
   # not compete with workers for GPU resources.
-  nodeName: node-21.151.225.144
+  nodeName: node-NODE_PREFILL_0_IP
   tolerations:
     - key: dedicated
       operator: Equal

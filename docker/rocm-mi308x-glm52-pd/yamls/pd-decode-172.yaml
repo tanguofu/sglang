@@ -1,4 +1,4 @@
-# GLM-5.2-FP8 PD Decode on MI308X node 172 (21.151.225.172, bond0 26.24.42.182)
+# GLM-5.2-FP8 PD Decode on MI308X node 172 (NODE_DECODE_1_IP, bond0 26.24.42.182)
 # bnxt_re RoCE + mooncake (MC_DISABLE_HIP_TRANSPORT=1) + host staging + MTP (NEXTN)
 apiVersion: v1
 kind: Pod
@@ -11,14 +11,14 @@ metadata:
 spec:
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
-  nodeName: node-21.151.225.172
+  nodeName: node-NODE_DECODE_1_IP
   restartPolicy: Never
   terminationGracePeriodSeconds: 300
   imagePullSecrets:
     - name: tencent-registry
   containers:
     - name: sglang-decode
-      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd:latest
+      image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd:latest
       imagePullPolicy: Always
       command: ["/bin/bash", "-c"]
       args:

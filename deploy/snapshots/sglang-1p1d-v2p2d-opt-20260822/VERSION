@@ -1,0 +1,19 @@
+version: v2p2d-opt-20260822
+date: 2026-08-22
+architecture: 2P2D
+engine_image: YOUR_REGISTRY/your-project/sglang-glm52-308x:v2p2d-opt-20260822
+router_image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router:v2p2d-opt-20260822
+base_engine_image: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0517-gdr-kernel-v1
+base_router_image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router:v0516-batch1-tok
+model: glm52-fp8
+gpu: AMD MI308X (gfx942)
+tp_size: 8
+nodes:
+  - ip: NODE_DECODE_0_IP
+    role: decode-0, mooncake-master
+  - ip: NODE_PREFILL_0_IP
+    role: prefill-0
+  - ip: NODE_PREFILL_1_IP
+    role: prefill-1
+  - ip: NODE_DECODE_1_IP
+    role: decode-1

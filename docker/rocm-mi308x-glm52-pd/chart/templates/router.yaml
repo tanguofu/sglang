@@ -1,55 +1,126 @@
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: pd-router-172
-  namespace: kube-system
+  name: {{ include "sglang-1p1d.name" . }}-router
+  namespace: {{ .Release.Namespace }}
   labels:
-    app: pd-router
+    {{- include "sglang-1p1d.labels" . | nindent 4 }}
+    app.kubernetes.io/component: router
     pd-role: router
 spec:
-  hostNetwork: true
-  restartPolicy: Always
-  nodeName: {{ .Values.routerNode }}
-  containers:
-  - name: router
-    image: {{ .Values.routerImage }}
-    imagePullPolicy: Always
-    command: ["/bin/bash", "-c"]
-    args:
-    - |
-      set -euo pipefail
-      echo "=== SGLang PD Router (responses) ==="
-      exec python3 -m sglang_router.launch_router \
-        --pd-disaggregation \
-        --prefill http://{{ .Values.prefillIP }}:30000 \
-        --decode http://{{ .Values.decodeIP }}:30000 \
-        --host 0.0.0.0 --port 30001 \
-        --prometheus-port 19097 \
-        --model-path {{ .Values.modelPath }} \
-        --log-level info
-    securityContext:
-      privileged: true
-      capabilities:
-        add: ["SYS_PTRACE", "IPC_LOCK", "NET_ADMIN"]
-        drop: ["ALL"]
-      seccompProfile:
-        type: Unconfined
-    resources:
-      limits:
-        memory: 8Gi
-      requests:
-        cpu: "4"
-        memory: 4Gi
-    env:
-    - name: PYTHONUNBUFFERED
-      value: "1"
-    volumeMounts:
-    - name: data
-      mountPath: /data
-  volumes:
-  - name: data
-    hostPath:
-      path: /data
-      type: Directory
-  tolerations:
-  - operator: Exists
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
+      app.kubernetes.io/component: router
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
+        app.kubernetes.io/component: router
+        pd-role: router
+      annotations:
+        {{- include "sglang-1p1d.ekletAnnotations" . | nindent 8 }}
+    spec:
+      dnsPolicy: ClusterFirst
+      nodeName: {{ .Values.router.nodeName }}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      containers:
+        - name: router
+          image: {{ .Values.routerImage }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              cp /dev/shm/sglang_router_rs.abi3.so /opt/venv/lib/python3.12/site-packages/sglang_router/sglang_router_rs.abi3.so 2>/dev/null || true
+              echo "=== SGLang PD Router ==="
+              exec python3 -m sglang_router.launch_router \
+                --pd-disaggregation \
+                {{- range .Values.prefills }}
+                --prefill http://{{ .ip }}:30000 {{ $.Values.bootstrapPort }} \
+                {{- end }}
+                --decode http://{{ .Values.decodeIP }}:30000 \
+                --host 0.0.0.0 --port {{ .Values.router.port }} \
+                --prometheus-port {{ .Values.router.metricsPort }} \
+                --model-path {{ .Values.modelPath }} \
+                --api-key {{ .Values.apiKey }} \
+                --health-check-timeout-secs 60 \
+                --health-check-interval-secs 30 \
+                --health-failure-threshold 10 \
+                --health-success-threshold 2 \
+                --cb-timeout-duration-secs {{ .Values.router.cbTimeoutSecs | default 3600 }} \
+                --log-level info
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          ports:
+            - name: http
+              containerPort: {{ .Values.router.port }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.router.metricsPort }}
+              protocol: TCP
+          resources:
+            limits:
+              memory: 8Gi
+              tke.cloud.tencent.com/eni-ip: "1"
+            requests:
+              cpu: "4"
+              memory: 4Gi
+              tke.cloud.tencent.com/eni-ip: "1"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.router.port }}
+              scheme: HTTP
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.router.port }}
+              scheme: HTTP
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sglang-1p1d.name" . }}-router
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sglang-1p1d.labels" . | nindent 4 }}
+    app.kubernetes.io/component: router
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
+    app.kubernetes.io/component: router
+  ports:
+    - name: http
+      port: {{ .Values.router.port }}
+      targetPort: {{ .Values.router.port }}
+      protocol: TCP
+    - name: metrics
+      port: {{ .Values.router.metricsPort }}
+      targetPort: {{ .Values.router.metricsPort }}
+      protocol: TCP

@@ -1,96 +1,106 @@
-apiVersion: v1
-kind: Pod
+{{- $root := . }}
+{{- range $i, $p := .Values.prefills }}
+{{- $component := "prefill" }}
+{{- if gt (int $i) 0 }}
+{{- $component = printf "prefill-%d" (int $i) }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
 metadata:
-  name: pd-prefill-144
-  namespace: kube-system
+  name: {{ include "sglang-1p1d.prefillStsName" (dict "root" $root "index" $i) }}
+  namespace: {{ $root.Release.Namespace }}
   labels:
-    app: pd-prefill-144
+    {{- include "sglang-1p1d.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
     pd-role: prefill
+    prefill-index: "{{ $i }}"
 spec:
-  hostNetwork: true
-  hostPID: true
-  hostIPC: true
-  restartPolicy: Always
-  nodeName: {{ .Values.prefillNode }}
-  containers:
-  - name: sglang
-    image: {{ .Values.workerImage }}
-    imagePullPolicy: Always
-    command: ["/bin/bash", "-c"]
-    args:
-    - |
-      set -euo pipefail
-      cp /data/mooncake-patched/engine.cpython-310-x86_64-linux-gnu.so /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so
-      cp /data/mooncake-patched/conn.py /sgl-workspace/sglang/python/sglang/srt/disaggregation/mooncake/conn.py
-      echo "=== GLM-5.2 PREFILL (MI308X) ==="
-      exec python3 -m sglang.launch_server \
-        --model-path {{ .Values.modelPath }} \
-        --model-impl sglang --served-model-name {{ .Values.modelName }} \
-        --api-key {{ .Values.apiKey }} \
-        --tp-size 8 --pp-size 1 --trust-remote-code \
-        --host 0.0.0.0 --port 30000 \
-        --context-length 1048576 \
-        --tool-call-parser glm47 --reasoning-parser glm45 \
-        --mem-fraction-static 0.90 --enable-aiter-allreduce-fusion \
-        --chunked-prefill-size 32768 --enable-fused-qk-norm-rope \
-        --schedule-conservativeness 0.5 \
-        --prefill-max-requests 64 --max-prefill-tokens 32768 \
-        --kv-cache-dtype fp8_e4m3 --cuda-graph-backend-prefill breakable \
-        --cuda-graph-bs-prefill 4 8 16 32 --max-running-requests 128 \
-        --disaggregation-mode prefill --disaggregation-transfer-backend mooncake \
-        --disaggregation-ib-device '{{ .Values.ibDevice }}' \
-        --disaggregation-bootstrap-port {{ .Values.bootstrapPort }} \
-        --num-reserved-decode-tokens 1024 \
-        --disable-overlap-schedule --enable-metrics --skip-server-warmup \
-        --watchdog-timeout 3600 --log-level info
-    securityContext:
-      privileged: true
-      allowPrivilegeEscalation: true
-      readOnlyRootFilesystem: false
-      seccompProfile:
-        type: Unconfined
-    resources:
-      limits:
-        amd.com/gpu: "8"
-      requests:
-        amd.com/gpu: "8"
-        cpu: "360"
-        memory: "2100Gi"
-    env:
-    - name: SGLANG_HOST_IP
-      value: "{{ .Values.prefillIP }}"
-    {{- toYaml .Values.workerEnv | nindent 4 }}
-    volumeMounts:
-    - name: shm
-      mountPath: /dev/shm
-    - name: dev-infiniband
-      mountPath: /dev/infiniband
-    - name: dev-kfd
-      mountPath: /dev/kfd
-    - name: dev-dri
-      mountPath: /dev/dri
-    - name: data
-      mountPath: /data
-  volumes:
-  - name: shm
-    emptyDir:
-      medium: Memory
-      sizeLimit: 64Gi
-  - name: dev-infiniband
-    hostPath:
-      path: /dev/infiniband
-      type: Directory
-  - name: dev-kfd
-    hostPath:
-      path: /dev/kfd
-      type: CharDevice
-  - name: dev-dri
-    hostPath:
-      path: /dev/dri
-      type: Directory
-  - name: data
-    hostPath:
-      path: /data
-      type: Directory
-  tolerations:
-  - operator: Exists
+  serviceName: {{ include "sglang-1p1d.name" $root }}-prefill
+  replicas: 1
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "sglang-1p1d.name" $root }}
+      app.kubernetes.io/component: {{ $component }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "sglang-1p1d.name" $root }}
+        app.kubernetes.io/component: {{ $component }}
+        pd-role: prefill
+        prefill-index: "{{ $i }}"
+    spec:
+      hostNetwork: true
+      hostIPC: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeName: {{ $p.nodeName }}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      imagePullSecrets:
+        {{- range $root.Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: env-check
+          image: {{ $root.Values.workerImage }}
+          imagePullPolicy: {{ $root.Values.imagePullPolicy }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              {{- include "sglang-1p1d.preflight" $root | nindent 14 }}
+          securityContext:
+            {{- include "sglang-1p1d.securityContext" $root | nindent 12 }}
+          volumeMounts:
+            {{- include "sglang-1p1d.workerVolumeMounts" $root | nindent 12 }}
+      containers:
+        - name: sglang
+          image: {{ $root.Values.workerImage }}
+          imagePullPolicy: {{ $root.Values.imagePullPolicy }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              echo "=== GLM-5.2 PREFILL-{{ $i }} {{ $p.ip }} (GDR + DSA tilelang + Mooncake L3) ==="
+              exec python3 -m sglang.launch_server{{- include "sglang-1p1d.launchArgs" (dict "root" $root "extra" $root.Values.prefill.args) }}{{- include "sglang-1p1d.hicacheArgs" $root }}
+          env:
+            {{- include "sglang-1p1d.workerEnv" (dict "root" $root "hostIP" $p.ip "extra" $root.Values.prefill.extraEnv "mooncakeLocal" true) | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 30000
+              protocol: TCP
+            - name: bootstrap
+              containerPort: 8998
+              protocol: TCP
+          {{- with $root.Values.prefill.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "sglang-1p1d.securityContext" $root | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 30000
+              scheme: HTTP
+            initialDelaySeconds: {{ $root.Values.probes.initialDelaySeconds }}
+            periodSeconds: {{ $root.Values.probes.periodSeconds }}
+            timeoutSeconds: {{ $root.Values.probes.timeoutSeconds }}
+            failureThreshold: {{ $root.Values.probes.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 30000
+              scheme: HTTP
+            initialDelaySeconds: {{ $root.Values.probes.initialDelaySeconds }}
+            periodSeconds: {{ $root.Values.probes.periodSeconds }}
+            timeoutSeconds: {{ $root.Values.probes.timeoutSeconds }}
+            failureThreshold: {{ $root.Values.probes.failureThreshold }}
+          volumeMounts:
+            {{- include "sglang-1p1d.workerVolumeMounts" $root | nindent 12 }}
+      volumes:
+        {{- include "sglang-1p1d.workerVolumes" $root | nindent 8 }}
+{{- end }}

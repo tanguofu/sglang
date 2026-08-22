@@ -1,0 +1,104 @@
+{{- if .Values.mooncake.master.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sglang-1p1d.name" . }}-mooncake-master
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sglang-1p1d.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mooncake-master
+    pd-role: mooncake-master
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
+      app.kubernetes.io/component: mooncake-master
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
+        app.kubernetes.io/component: mooncake-master
+        pd-role: mooncake-master
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      nodeName: {{ .Values.mooncake.master.nodeName }}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 15
+      imagePullSecrets:
+        {{- range .Values.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: mooncake-master
+          image: {{ .Values.workerImage }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              echo "=== mooncake_master rpc=:{{ .Values.mooncake.master.port }} on {{ .Values.mooncake.master.hostIP }} ==="
+              exec mooncake_master \
+                --rpc_address=0.0.0.0 \
+                --rpc_port={{ .Values.mooncake.master.port }} \
+                --metrics_port={{ .Values.mooncake.master.metricsPort }} \
+                --logtostderr \
+                --eviction_high_watermark_ratio={{ .Values.mooncake.master.evictionHighWatermark }}
+          ports:
+            - name: rpc
+              containerPort: {{ .Values.mooncake.master.port }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.mooncake.master.metricsPort }}
+              protocol: TCP
+          resources:
+            limits:
+              memory: 4Gi
+            requests:
+              cpu: "2"
+              memory: 2Gi
+          securityContext:
+            {{- include "sglang-1p1d.securityContext" . | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.mooncake.master.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.mooncake.master.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sglang-1p1d.name" . }}-mooncake-master
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sglang-1p1d.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mooncake-master
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
+    app.kubernetes.io/component: mooncake-master
+  ports:
+    - name: rpc
+      port: {{ .Values.mooncake.master.port }}
+      targetPort: {{ .Values.mooncake.master.port }}
+      protocol: TCP
+    - name: metrics
+      port: {{ .Values.mooncake.master.metricsPort }}
+      targetPort: {{ .Values.mooncake.master.metricsPort }}
+      protocol: TCP
+{{- end }}

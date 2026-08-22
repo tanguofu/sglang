@@ -7,7 +7,7 @@
 #   - FlyDSL mfma_r4_w4 variant
 #   - Deterministic argmax patch
 
-image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+image: YOUR_REGISTRY/your-project/sglang-glm52-308x
 tag: breakable
 
 replicas: 1

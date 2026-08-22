@@ -15,7 +15,7 @@
 #   - scheduleConservativeness: 0.7 → 0.7 (keep same)
 #   - chunkedPrefillSize: 16384 → 16384 (keep same, already safe)
 
-image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+image: YOUR_REGISTRY/your-project/sglang-glm52-308x
 tag: breakable-v0.5.15
 
 nodeName: node-21.234.170.19

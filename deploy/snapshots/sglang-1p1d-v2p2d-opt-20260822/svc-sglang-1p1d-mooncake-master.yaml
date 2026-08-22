@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    meta.helm.sh/release-name: sglang-1p1d
+    meta.helm.sh/release-namespace: kube-system
+    service.cloud.tencent.com/sync-begin-time: '2026-08-21T17:58:39+08:00'
+    service.cloud.tencent.com/sync-end-time: '2026-08-21T17:58:40+08:00'
+  labels:
+    app.kubernetes.io/component: mooncake-master
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sglang-1p1d
+  name: sglang-1p1d-mooncake-master
+  namespace: kube-system
+spec:
+  clusterIP: MOONCAKE_MASTER_CLUSTER_IP
+  clusterIPs:
+  - MOONCAKE_MASTER_CLUSTER_IP
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: rpc
+    port: 50051
+    protocol: TCP
+    targetPort: 50051
+  - name: metrics
+    port: 9003
+    protocol: TCP
+    targetPort: 9003
+  selector:
+    app.kubernetes.io/component: mooncake-master
+    app.kubernetes.io/name: sglang-1p1d
+  sessionAffinity: None
+  type: ClusterIP

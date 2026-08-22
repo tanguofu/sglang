@@ -1,28 +1,35 @@
 from pathlib import Path
 
 TARGET = Path("/sgl-workspace/sglang/python/sglang/srt/managers/overlap_utils.py")
-OLD = """        if self.publish_ready is not None:
-            if _is_hip:
+
+# v0.5.17 inserts a `_DEBUG_ASSERT` consume-once block between
+# `if self.publish_ready is not None:` and `if _is_hip:`, so matching the
+# full block fails.  Match only the _is_hip branch — it appears exactly once
+# in the file and is stable across v0.5.16 / v0.5.17.
+#
+# NOTE: NEW (`            self.publish_ready.wait()\n`, 12 spaces) is a substring
+# of OLD's else branch (`                self.publish_ready.wait()\n`, 16 spaces),
+# so we cannot use new_count for idempotency detection.  Rely solely on
+# old_count: 1 → apply, 0 → already-patched.
+OLD = """            if _is_hip:
                 # Temporary workaround: Event.wait() regresses TPOT on AMD MI355.
                 self.publish_ready.synchronize()
             else:
                 self.publish_ready.wait()
 """
-NEW = """        if self.publish_ready is not None:
-            self.publish_ready.wait()
+NEW = """            self.publish_ready.wait()
 """
 text = TARGET.read_text()
 old_count = text.count(OLD)
-new_count = text.count(NEW)
-if old_count == 1 and new_count == 0:
+if old_count == 1:
     text = text.replace(OLD, NEW, 1)
     TARGET.write_text(text)
     status = "applied"
-elif old_count == 0 and new_count == 1:
+elif old_count == 0:
     status = "already-patched"
 else:
-    raise RuntimeError(f"Unexpected overlap patch state: old={old_count}, new={new_count}")
+    raise RuntimeError(f"Unexpected overlap patch state: old={old_count}")
 verified = TARGET.read_text()
-if verified.count(NEW) != 1 or verified.count(OLD) != 0:
-    raise RuntimeError("Overlap HIP wait patch verification failed")
+if verified.count(OLD) != 0:
+    raise RuntimeError("Overlap HIP wait patch verification failed: OLD still present")
 print(f"OVERLAP_HIP_WAIT_PATCH={status}")

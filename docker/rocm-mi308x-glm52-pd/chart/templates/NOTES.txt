@@ -1,0 +1,13 @@
+3P1D GDR + Mooncake L3 worker image: {{ .Values.workerImage }}
+Public gateway: https://{{ .Values.gateway.hostname }} (HTTPRoute → router :{{ .Values.router.port }})
+In-cluster router: http://{{ include "sglang-1p1d.name" . }}-router.{{ .Release.Namespace }}:{{ .Values.router.port }}
+Prefills:
+{{- range $i, $p := .Values.prefills }}
+  - P{{ $i }} {{ $p.ip }} ({{ $p.nodeName }})
+{{- end }}
+Decode: {{ .Values.decodeIP }}
+Mooncake master: {{ .Values.mooncake.master.hostIP }}:{{ .Values.mooncake.master.port }}
+HiCache: enabled={{ .Values.hicache.enabled }} ratio={{ .Values.hicache.ratio }} backend={{ .Values.hicache.storageBackend }}
+
+Upgrade:
+  helm upgrade --install {{ .Release.Name }} docker/rocm-mi308x-glm52-pd/chart -n {{ .Release.Namespace }} --force-conflicts

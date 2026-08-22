@@ -1,6 +1,6 @@
 apiVersion: v2
-name: glm52-pd
-description: GLM-5.2 PD (Prefill-Decode disaggregation) with /v1/responses support for codex
+name: sglang-1p1d
+description: GLM-5.2 MI308X 3P1D PD (GDR + DSA tilelang + Mooncake L3). helm upgrade --install sglang-1p1d
 type: application
-version: 0.1.0
-appVersion: "0.5.15"
+version: 0.3.1
+appVersion: "0.5.17"

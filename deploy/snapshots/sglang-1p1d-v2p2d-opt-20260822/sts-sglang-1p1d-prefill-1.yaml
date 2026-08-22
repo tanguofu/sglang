@@ -1,0 +1,258 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  annotations:
+    meta.helm.sh/release-name: sglang-1p1d
+    meta.helm.sh/release-namespace: kube-system
+  labels:
+    app.kubernetes.io/component: prefill-1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sglang-1p1d
+    pd-role: prefill
+    prefill-index: '1'
+  name: sglang-1p1d-prefill-1
+  namespace: kube-system
+spec:
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  podManagementPolicy: OrderedReady
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: prefill-1
+      app.kubernetes.io/name: sglang-1p1d
+  serviceName: sglang-1p1d-prefill
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: prefill-1
+        app.kubernetes.io/name: sglang-1p1d
+        pd-role: prefill
+        prefill-index: '1'
+    spec:
+      containers:
+      - args:
+        - 'set -euo pipefail
+
+          echo "=== GLM-5.2 PREFILL-1 NODE_PREFILL_1_IP (GDR + DSA tilelang + Mooncake L3) ==="
+
+          exec python3 -m sglang.launch_server --model-path /data/model/glm52-fp8 --model-impl sglang --served-model-name
+          glm-5.2 --tp-size 8 --pp-size 1 --trust-remote-code --host 0.0.0.0 --port 30000 --context-length 1048576 --tool-call-parser
+          glm47 --reasoning-parser glm45 --preferred-sampling-params ''{"max_new_tokens":163840}'' --attention-backend dsa
+          --dsa-prefill-backend tilelang --dsa-decode-backend tilelang --enable-aiter-allreduce-fusion --enable-fused-qk-norm-rope
+          --schedule-conservativeness 0.8 --kv-cache-dtype fp8_e4m3 --max-running-requests 32 --disaggregation-transfer-backend
+          mooncake --num-reserved-decode-tokens 1024 --enable-metrics --log-level info --mem-fraction-static 0.88 --chunked-prefill-size
+          16384 --prefill-max-requests 32 --max-prefill-tokens 32768 --disable-decode-cuda-graph --disaggregation-mode prefill
+          --watchdog-timeout 7200 --disaggregation-ib-device "{\"0\":\"bnxt_re_bond0\",\"1\":\"bnxt_re_bond1\",\"2\":\"bnxt_re_bond2\",\"3\":\"bnxt_re_bond3\",\"4\":\"bnxt_re_bond4\",\"5\":\"bnxt_re_bond5\",\"6\":\"bnxt_re_bond6\",\"7\":\"bnxt_re_bond7\"}"
+          --disaggregation-bootstrap-port 8998 --enable-hierarchical-cache --hicache-ratio 1 --hicache-storage-backend mooncake
+          --hicache-storage-prefetch-policy timeout --hicache-mem-layout page_first_direct --hicache-write-policy write_through
+
+          '
+        command:
+        - /bin/bash
+        - -c
+        env:
+        - name: HIP_FORCE_DEV_KERNARG
+          value: '1'
+        - name: HIP_VISIBLE_DEVICES
+          value: 0,1,2,3,4,5,6,7
+        - name: HSA_ENABLE_SDMA
+          value: '0'
+        - name: MC_DISABLE_HIP_TRANSPORT
+          value: '1'
+        - name: MC_GID_INDEX
+          value: '3'
+        - name: MOONCAKE_PROTOCOL
+          value: rdma
+        - name: NCCL_CUMEM_ENABLE
+          value: '0'
+        - name: NCCL_DEBUG
+          value: WARN
+        - name: NCCL_IB_GID_INDEX
+          value: '3'
+        - name: NCCL_MIN_NCHANNELS
+          value: '112'
+        - name: NCCL_NVLS_ENABLE
+          value: '0'
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: expandable_segments:True
+        - name: PYTORCH_ROCM_ARCH
+          value: gfx942
+        - name: ROCM_QUICK_REDUCE_QUANTIZATION
+          value: INT8
+        - name: SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN
+          value: '1'
+        - name: SGLANG_DISABLE_CUDNN_CHECK
+          value: '1'
+        - name: SGLANG_DSA_HIP_DISABLE_PRESHUFFLE
+          value: '1'
+        - name: SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM
+          value: '1'
+        - name: SGLANG_HEALTH_CHECK_TIMEOUT
+          value: '60'
+        - name: SGLANG_INT4_WEIGHT
+          value: '0'
+        - name: SGLANG_MOE_PADDING
+          value: '1'
+        - name: SGLANG_OPT_USE_TOPK_V2
+          value: '0'
+        - name: SGLANG_PD_HOST_STAGING
+          value: '0'
+        - name: SGLANG_ROCM_DISABLE_LINEARQUANT
+          value: '0'
+        - name: SGLANG_ROCM_FUSED_DECODE_MLA
+          value: '1'
+        - name: SGLANG_SET_CPU_AFFINITY
+          value: '1'
+        - name: SGLANG_USE_AITER
+          value: '1'
+        - name: SGLANG_USE_ROCM700A
+          value: '1'
+        - name: SGLANG_HOST_IP
+          value: NODE_PREFILL_1_IP
+        - name: MOONCAKE_LOCAL_HOSTNAME
+          value: NODE_PREFILL_1_IP
+        - name: MC_MMAP_ARENA_POOL_SIZE
+          value: 4gb
+        - name: MOONCAKE_GLOBAL_SEGMENT_SIZE
+          value: 64gb
+        - name: MOONCAKE_MASTER
+          value: NODE_DECODE_0_IP:50051
+        - name: MOONCAKE_TE_META_DATA_SERVER
+          value: P2PHANDSHAKE
+        - name: SGLANG_HICACHE_HOST_ALLOCATOR
+          value: default
+        - name: SGLANG_MOONCAKE_SEND_AUX_TCP
+          value: '1'
+        image: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0517-gdr-kernel-v1
+        imagePullPolicy: Always
+        livenessProbe:
+          failureThreshold: 40
+          httpGet:
+            path: /health
+            port: 30000
+            scheme: HTTP
+          initialDelaySeconds: 900
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 60
+        name: sglang
+        ports:
+        - containerPort: 30000
+          name: http
+          protocol: TCP
+        - containerPort: 8998
+          name: bootstrap
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 40
+          httpGet:
+            path: /health
+            port: 30000
+            scheme: HTTP
+          initialDelaySeconds: 900
+          periodSeconds: 30
+          successThreshold: 1
+          timeoutSeconds: 60
+        resources:
+          limits:
+            amd.com/gpu: '8'
+          requests:
+            amd.com/gpu: '8'
+            cpu: '360'
+            memory: 1800Gi
+        securityContext:
+          allowPrivilegeEscalation: true
+          privileged: true
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: Unconfined
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /dev/shm
+          name: shm
+        - mountPath: /data
+          name: data
+        - mountPath: /dev/kfd
+          name: dev-kfd
+        - mountPath: /dev/dri
+          name: dev-dri
+        - mountPath: /dev/infiniband
+          name: dev-infiniband
+      dnsPolicy: ClusterFirstWithHostNet
+      hostIPC: true
+      hostNetwork: true
+      hostPID: true
+      imagePullSecrets:
+      - name: tencent-registry
+      initContainers:
+      - args:
+        - "set -euo pipefail\necho \"========== Environment Pre-Flight Check ==========\"\necho \"Timestamp: $(date -u '+%Y-%m-%dT%H:%M:%SZ')\"\
+          \necho \"Hostname:  $(hostname)\"\nGPU_COUNT=$(rocminfo 2>/dev/null | grep -c \"^  Name:.*gfx\" || true)\necho \"\
+          GPU count: ${GPU_COUNT}\"\nif [ \"${GPU_COUNT}\" -lt 1 ]; then\n  echo \"FATAL: No GPU detected via rocminfo\" >&2\n\
+          \  exit 1\nfi\nMODEL_PATH=\"/data/model/glm52-fp8\"\nif [ ! -d \"${MODEL_PATH}\" ] || [ ! -f \"${MODEL_PATH}/config.json\"\
+          \ ]; then\n  echo \"FATAL: Model ${MODEL_PATH} missing\" >&2\n  exit 1\nfi\necho \"Model path: ${MODEL_PATH} size=$(du\
+          \ -sh \"${MODEL_PATH}\" 2>/dev/null | awk '{print $1}')\"\nIB_ACTIVE=$(ibv_devinfo 2>&1 | grep -c \"PORT_ACTIVE\"\
+          \ || true)\necho \"Active IB ports: ${IB_ACTIVE}\"\nif [ \"${IB_ACTIVE}\" -lt 1 ]; then\n  echo \"WARNING: No active\
+          \ IB ports \u2014 PD may fall back to TCP\" >&2\nfi\necho \"========== Pre-Flight Check Complete ==========\"\n"
+        command:
+        - /bin/bash
+        - -c
+        image: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0517-gdr-kernel-v1
+        imagePullPolicy: Always
+        name: env-check
+        resources: {}
+        securityContext:
+          allowPrivilegeEscalation: true
+          privileged: true
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: Unconfined
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /dev/shm
+          name: shm
+        - mountPath: /data
+          name: data
+        - mountPath: /dev/kfd
+          name: dev-kfd
+        - mountPath: /dev/dri
+          name: dev-dri
+        - mountPath: /dev/infiniband
+          name: dev-infiniband
+      nodeName: node-NODE_PREFILL_1_IP
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - operator: Exists
+      volumes:
+      - emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi
+        name: shm
+      - hostPath:
+          path: /data
+          type: Directory
+        name: data
+      - hostPath:
+          path: /dev/kfd
+          type: CharDevice
+        name: dev-kfd
+      - hostPath:
+          path: /dev/dri
+          type: Directory
+        name: dev-dri
+      - hostPath:
+          path: /dev/infiniband
+          type: Directory
+        name: dev-infiniband
+  updateStrategy:
+    rollingUpdate:
+      partition: 0
+    type: RollingUpdate

@@ -1,4 +1,4 @@
-# Service + HTTPRoute for A-group PD router (pd-router-144 on 21.151.225.144:30002)
+# Service + HTTPRoute for A-group PD router (pd-router-144 on NODE_PREFILL_0_IP:30002)
 # Service: headless-ish, points at the router pod (hostNetwork, port 30002)
 # HTTPRoute: glm52-pd-a.jmpti.woa.com → eg-tke Gateway → this Service → router
 ---

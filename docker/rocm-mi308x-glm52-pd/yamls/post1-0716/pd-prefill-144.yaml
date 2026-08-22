@@ -1,4 +1,4 @@
-# SGLang PD Prefill server on GZ node 144 (21.151.225.144)
+# SGLang PD Prefill server on GZ node 144 (NODE_PREFILL_0_IP)
 # Image: sglang-glm52-308x-pd:rocm700-0716 (post1 base + 9 ported patches + mooncake host-staging + FlyDSL)
 # Config: official doc 4026150697 — aiter attention + triton moe (avoid CK MoE crash) + disable-prefill-cuda-graph (avoid garbage in PD) + disable-overlap-schedule (host staging)
 apiVersion: v1
@@ -12,14 +12,14 @@ metadata:
 spec:
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
-  nodeName: node-21.151.225.144
+  nodeName: node-NODE_PREFILL_0_IP
   restartPolicy: Never
   terminationGracePeriodSeconds: 300
   imagePullSecrets:
     - name: tencent-registry
   containers:
     - name: sglang-prefill
-      image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd:rocm700-0716
+      image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd:rocm700-0716
       imagePullPolicy: IfNotPresent
       command: ["/bin/bash", "-c"]
       args:
@@ -36,7 +36,7 @@ spec:
             --model-path /data/model/glm52-fp8 \
             --model-impl sglang \
             --served-model-name glm-5.2 \
-            --api-key sk-46faecc9d0bc4dcd9db6a15c73ae91c8 \
+            --api-key sk-REPLACE_WITH_YOUR_API_KEY \
             --tp-size 8 --pp-size 1 --trust-remote-code \
             --host 0.0.0.0 --port 30000 \
             --context-length 1048576 \
@@ -67,7 +67,7 @@ spec:
         - name: PORT
           value: "30000"
         - name: API_KEY
-          value: "sk-46faecc9d0bc4dcd9db6a15c73ae91c8"
+          value: "sk-REPLACE_WITH_YOUR_API_KEY"
         - name: DISAGG_BOOTSTRAP_PORT
           value: "8998"
         # ROCm environment

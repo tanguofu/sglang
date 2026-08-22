@@ -17,7 +17,7 @@ Deploys SGLang GLM-5.2-FP8 inference service on AMD MI308X nodes with envoy gate
 
 ```bash
 # 1. Label target node (must have model weights at /data/model/glm52-fp8/)
-kubectl label node node-21.151.225.144 sglang-model=ready --overwrite
+kubectl label node node-NODE_PREFILL_0_IP sglang-model=ready --overwrite
 
 # 2. Deploy
 helm install sglang-glm52-308x docker/rocm-mi308x-glm52/chart/ -n kube-system
@@ -27,7 +27,7 @@ kubectl get pod -n kube-system -l app=sglang
 kubectl logs -n kube-system sglang-glm52-308x-sglang-0 -f
 
 # 4. Test
-curl -s http://21.151.225.144:30000/health
+curl -s http://NODE_PREFILL_0_IP:30000/health
 curl -s http://glm52-308x.jmpti.woa.com/v1/models
 ```
 
@@ -36,10 +36,10 @@ curl -s http://glm52-308x.jmpti.woa.com/v1/models
 ```bash
 # Deploy to specific node (override nodeSelector)
 helm install sglang-glm52-308x-t1 docker/rocm-mi308x-glm52/chart/ -n kube-system \
-  --set nodeName=node-21.151.225.132 --set gateway.enabled=false
+  --set nodeName=node-NODE_DECODE_0_IP --set gateway.enabled=false
 
 helm install sglang-glm52-308x-t2 docker/rocm-mi308x-glm52/chart/ -n kube-system \
-  --set nodeName=node-21.151.225.172 --set gateway.enabled=false
+  --set nodeName=node-NODE_DECODE_1_IP --set gateway.enabled=false
 ```
 
 ## Values Files
@@ -91,7 +91,7 @@ The router tolerations are captured in `values-glm52-2tp8.yaml` so they survive 
 
 | Method | URL |
 |--------|-----|
-| Direct node | `http://21.151.225.144:30000` |
+| Direct node | `http://NODE_PREFILL_0_IP:30000` |
 | Envoy gateway | `http://glm52-308x.jmpti.woa.com` |
 | In-cluster | `http://sglang-glm52-308x-sglang.kube-system:30000` |
 
@@ -104,10 +104,10 @@ cd sglang
 
 # Build (requires Docker, ~15GB base image pull)
 docker build -f docker/rocm-mi308x-glm52/Dockerfile \
-  -t mirrors.tencent.com/ti-platform/sglang-glm52-308x:latest .
+  -t YOUR_REGISTRY/your-project/sglang-glm52-308x:latest .
 
-# Push to registry (requires /etc/hosts: 30.163.240.137 mirrors.tencent.com)
-docker push mirrors.tencent.com/ti-platform/sglang-glm52-308x:latest
+# Push to registry (requires /etc/hosts: 30.163.240.137 YOUR_REGISTRY)
+docker push YOUR_REGISTRY/your-project/sglang-glm52-308x:latest
 ```
 
 The Dockerfile:
@@ -124,7 +124,7 @@ Key values in `values.yaml`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `image` | `mirrors.tencent.com/ti-platform/sglang-glm52-308x` | SGLang image |
+| `image` | `YOUR_REGISTRY/your-project/sglang-glm52-308x` | SGLang image |
 | `tag` | `latest` | Image tag |
 | `nodeName` | `""` | Pin to specific node (overrides nodeSelector) |
 | `hostNetwork` | `true` | Required for TKE ENI network mode |

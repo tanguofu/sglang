@@ -1,0 +1,155 @@
+allowHostPathOverlay: "0"
+apiKey: sk-REPLACE_WITH_YOUR_API_KEY
+bootstrapPort: "8998"
+commonArgs:
+- --model-path /data/model/glm52-fp8
+- --model-impl sglang
+- --served-model-name glm-5.2
+- --tp-size 8
+- --pp-size 1
+- --trust-remote-code
+- --host 0.0.0.0
+- --port 30000
+- --context-length 1048576
+- --tool-call-parser glm47
+- --reasoning-parser glm45
+- --preferred-sampling-params '{"max_new_tokens":163840}'
+- --attention-backend dsa
+- --dsa-prefill-backend tilelang
+- --dsa-decode-backend tilelang
+- --enable-aiter-allreduce-fusion
+- --enable-fused-qk-norm-rope
+- --schedule-conservativeness 0.5
+- --kv-cache-dtype fp8_e4m3
+- --max-running-requests 32
+- --disaggregation-transfer-backend mooncake
+- --num-reserved-decode-tokens 1024
+- --enable-metrics
+- --log-level info
+decode:
+  args:
+  - --mem-fraction-static 0.92
+  - --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32
+  - --cuda-graph-max-bs-decode 32
+  - --speculative-algorithm NEXTN
+  - --speculative-num-steps 2
+  - --speculative-num-draft-tokens 3
+  - --speculative-eagle-topk 1
+  - --num-continuous-decode-steps 2
+  - --skip-server-warmup
+  - --watchdog-timeout 1800
+  - --load-balance-method follow_bootstrap_room
+  - --disaggregation-mode decode
+  resources:
+    limits:
+      amd.com/gpu: "8"
+    requests:
+      amd.com/gpu: "8"
+      cpu: "360"
+      memory: 2100Gi
+decodeIP: NODE_DECODE_0_IP
+decodeNode: node-NODE_DECODE_0_IP
+gateway:
+  hostname: glm52-pd-1p1d.jmpti.woa.com
+  httprouteName: glm52-pd-1p1d
+  parentGateway: eg-tke
+  parentNamespace: ti-cloud
+hicache:
+  enabled: true
+  memLayout: page_first_direct
+  prefetchPolicy: timeout
+  ratio: 1
+  storageBackend: mooncake
+  writePolicy: write_through
+hostPathData: /data
+ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
+imagePullPolicy: Always
+imagePullSecrets:
+- tencent-registry
+modelName: glm-5.2
+modelPath: /data/model/glm52-fp8
+mooncake:
+  globalSegmentSize: 64gb
+  master:
+    enabled: true
+    evictionHighWatermark: "0.95"
+    hostIP: NODE_DECODE_0_IP
+    metricsPort: 9003
+    nodeName: node-NODE_DECODE_0_IP
+    port: 50051
+  metadataServer: P2PHANDSHAKE
+  mmapArenaPoolSize: 4gb
+nameOverride: sglang-1p1d
+prefill:
+  args:
+  - --mem-fraction-static 0.88
+  - --chunked-prefill-size 16384
+  - --prefill-max-requests 32
+  - --max-prefill-tokens 32768
+  - --disable-decode-cuda-graph
+  - --disaggregation-mode prefill
+  - --watchdog-timeout 7200
+  extraEnv:
+    MC_MMAP_ARENA_POOL_SIZE: 4gb
+    MOONCAKE_GLOBAL_SEGMENT_SIZE: 64gb
+    MOONCAKE_MASTER: NODE_DECODE_0_IP:50051
+    MOONCAKE_TE_META_DATA_SERVER: P2PHANDSHAKE
+    SGLANG_HICACHE_HOST_ALLOCATOR: default
+    SGLANG_MOONCAKE_SEND_AUX_TCP: "1"
+  resources:
+    limits:
+      amd.com/gpu: "8"
+    requests:
+      amd.com/gpu: "8"
+      cpu: "360"
+      memory: 1800Gi
+  watchdogNote: HiCache ratio 1 + Mooncake L3. Do not set ratio 4 (OOM ~2TB host KV
+    on TP8).
+prefills:
+- ip: NODE_PREFILL_0_IP
+  nodeName: node-NODE_PREFILL_0_IP
+- ip: NODE_PREFILL_1_IP
+  nodeName: node-NODE_PREFILL_1_IP
+- ip: NODE_DECODE_1_IP
+  nodeName: node-NODE_DECODE_1_IP
+probes:
+  failureThreshold: 40
+  initialDelaySeconds: 900
+  periodSeconds: 30
+  timeoutSeconds: 60
+router:
+  cbTimeoutSecs: 7200
+  metricsPort: 19096
+  nodeName: kn-d5n6h6fp
+  port: 30001
+routerImage: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router:v0516-batch1-tok
+workerEnv:
+  HIP_FORCE_DEV_KERNARG: "1"
+  HIP_VISIBLE_DEVICES: 0,1,2,3,4,5,6,7
+  HSA_ENABLE_SDMA: "0"
+  MC_DISABLE_HIP_TRANSPORT: "1"
+  MC_GID_INDEX: "3"
+  MOONCAKE_PROTOCOL: rdma
+  NCCL_CUMEM_ENABLE: "0"
+  NCCL_DEBUG: WARN
+  NCCL_IB_GID_INDEX: "3"
+  NCCL_MIN_NCHANNELS: "112"
+  NCCL_NVLS_ENABLE: "0"
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  PYTORCH_ROCM_ARCH: gfx942
+  ROCM_QUICK_REDUCE_QUANTIZATION: INT8
+  SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN: "1"
+  SGLANG_DISABLE_CUDNN_CHECK: "1"
+  SGLANG_DSA_HIP_DISABLE_PRESHUFFLE: "1"
+  SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM: "1"
+  SGLANG_HEALTH_CHECK_TIMEOUT: "60"
+  SGLANG_INT4_WEIGHT: "0"
+  SGLANG_MOE_PADDING: "1"
+  SGLANG_OPT_USE_TOPK_V2: "0"
+  SGLANG_PD_HOST_STAGING: "0"
+  SGLANG_ROCM_DISABLE_LINEARQUANT: "0"
+  SGLANG_ROCM_FUSED_DECODE_MLA: "1"
+  SGLANG_SET_CPU_AFFINITY: "1"
+  SGLANG_USE_AITER: "1"
+  SGLANG_USE_ROCM700A: "1"
+workerImage: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0517-gdr-kernel-v1

@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    meta.helm.sh/release-name: sglang-1p1d
+    meta.helm.sh/release-namespace: kube-system
+  labels:
+    app.kubernetes.io/component: mooncake-master
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sglang-1p1d
+    pd-role: mooncake-master
+  name: sglang-1p1d-mooncake-master
+  namespace: kube-system
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: mooncake-master
+      app.kubernetes.io/name: sglang-1p1d
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: mooncake-master
+        app.kubernetes.io/name: sglang-1p1d
+        pd-role: mooncake-master
+    spec:
+      containers:
+      - args:
+        - "set -euo pipefail\necho \"=== mooncake_master rpc=:50051 on NODE_DECODE_0_IP ===\"\nexec mooncake_master \\\n  --rpc_address=0.0.0.0\
+          \ \\\n  --rpc_port=50051 \\\n  --metrics_port=9003 \\\n  --logtostderr \\\n  --eviction_high_watermark_ratio=0.95\n"
+        command:
+        - /bin/bash
+        - -c
+        image: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0517-gdr-kernel-v1
+        imagePullPolicy: Always
+        livenessProbe:
+          failureThreshold: 5
+          initialDelaySeconds: 10
+          periodSeconds: 15
+          successThreshold: 1
+          tcpSocket:
+            port: 50051
+          timeoutSeconds: 5
+        name: mooncake-master
+        ports:
+        - containerPort: 50051
+          name: rpc
+          protocol: TCP
+        - containerPort: 9003
+          name: metrics
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          tcpSocket:
+            port: 50051
+          timeoutSeconds: 5
+        resources:
+          limits:
+            memory: 4Gi
+          requests:
+            cpu: '2'
+            memory: 2Gi
+        securityContext:
+          allowPrivilegeEscalation: true
+          privileged: true
+          readOnlyRootFilesystem: false
+          seccompProfile:
+            type: Unconfined
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirstWithHostNet
+      hostNetwork: true
+      imagePullSecrets:
+      - name: tencent-registry
+      nodeName: node-NODE_DECODE_0_IP
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 15
+      tolerations:
+      - operator: Exists

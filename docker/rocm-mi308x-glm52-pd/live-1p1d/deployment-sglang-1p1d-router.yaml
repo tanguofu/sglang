@@ -45,19 +45,19 @@ spec:
           \ ln -sf /usr/lib/x86_64-linux-gnu/libcrypto.so.3 /opt/venv/lib/python3.12/site-packages/sglang_router.libs/libcrypto-f488e5cd.so.3;\
           \ set -euo pipefail\necho \"=== SGLang PD Router (v0516-batch1-tok) ===\"\
           \nexec python3 -m sglang_router.launch_router \\\n  --pd-disaggregation\
-          \ \\\n  --prefill http://21.151.225.144:30000 8998 \\\n  --decode http://21.151.225.132:30000\
+          \ \\\n  --prefill http://NODE_PREFILL_0_IP:30000 8998 \\\n  --decode http://NODE_DECODE_0_IP:30000\
           \ \\\n  --host 0.0.0.0 --port 30001 \\\n  --prometheus-port 19096 \\\n \
           \ --model-path /data/model/glm52-fp8 \\\n  --health-check-timeout-secs 60\
           \ \\\n  --health-check-interval-secs 30 \\\n  --health-failure-threshold\
           \ 10 \\\n  --health-success-threshold 2 \\\n  --cb-timeout-duration-secs\
-          \ 300 \\\n  --log-level info"
+          \ 1800 \\\n  --log-level info"
         command:
         - /bin/bash
         - -c
         env:
         - name: PYTHONUNBUFFERED
           value: '1'
-        image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0516-batch1-tok
+        image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router:v0516-batch1-tok
         imagePullPolicy: Always
         livenessProbe:
           failureThreshold: 5

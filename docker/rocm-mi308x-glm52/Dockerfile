@@ -111,7 +111,7 @@ ENV SGLANG_USE_ROCM700A=1
 # Runtime-overridable params
 ENV MODEL_PATH=/data/model/glm52-fp8
 ENV PORT=30000
-ENV API_KEY=sk-46faecc9d0bc4dcd9db6a15c73ae91c8
+ENV API_KEY=sk-REPLACE_WITH_YOUR_API_KEY
 
 # ============================================================
 # Entrypoint

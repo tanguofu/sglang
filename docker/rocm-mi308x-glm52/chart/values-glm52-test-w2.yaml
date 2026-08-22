@@ -1,4 +1,4 @@
-# SGLang GLM-5.2 test deployment — secondary worker on node-21.151.225.132
+# SGLang GLM-5.2 test deployment — secondary worker on node-NODE_DECODE_0_IP
 # Usage:
 #   helm install sglang-glm52-test-w2 .../chart/ -f values-glm52-test-w2.yaml
 #
@@ -9,13 +9,13 @@
 # ---------------------------------------------------------------------------
 # Image — must match the primary release so both workers serve the same model
 # ---------------------------------------------------------------------------
-image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+image: YOUR_REGISTRY/your-project/sglang-glm52-308x
 tag: xgmi-opt-0716d
 
 # ---------------------------------------------------------------------------
 # Worker placement — pin to 132 (secondary, worker only)
 # ---------------------------------------------------------------------------
-nodeName: node-21.151.225.132
+nodeName: node-NODE_DECODE_0_IP
 replicas: 1
 
 tolerations:

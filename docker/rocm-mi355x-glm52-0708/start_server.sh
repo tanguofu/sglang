@@ -13,7 +13,7 @@
 set -euo pipefail
 
 MODEL_PATH=${MODEL_PATH:-/data/models/GLM-5.2-FP8}
-API_KEY=${API_KEY:-sk-46faecc9d0bc4dcd9db6a15c73ae91c8}
+API_KEY=${API_KEY:-sk-REPLACE_WITH_YOUR_API_KEY}
 PORT=${PORT:-30000}
 
 echo "============================================"

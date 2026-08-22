@@ -15,11 +15,11 @@
 #
 # Build (from repo root):
 #   docker build -f docker/rocm-mi308x-glm52/aiters-config/Dockerfile \
-#     -t mirrors.tencent.com/ti-platform/sglang-glm52-308x-aiter-config:n160-v1 \
+#     -t YOUR_REGISTRY/your-project/sglang-glm52-308x-aiter-config:n160-v1 \
 #     docker/rocm-mi308x-glm52/aiters-config/
 #
 # Push:
-#   docker push mirrors.tencent.com/ti-platform/sglang-glm52-308x-aiter-config:n160-v1
+#   docker push YOUR_REGISTRY/your-project/sglang-glm52-308x-aiter-config:n160-v1
 #
 # CSV contents (gfx942 rows):
 #   - 200 rows inherited from the upstream aiter config (N=32..32320)

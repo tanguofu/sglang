@@ -1,0 +1,38 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  annotations:
+    meta.helm.sh/release-name: sglang-1p1d
+    meta.helm.sh/release-namespace: kube-system
+  labels:
+    app.kubernetes.io/component: router
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: sglang-1p1d
+  name: glm52-pd-1p1d
+  namespace: kube-system
+spec:
+  hostnames:
+  - glm52-pd-1p1d.jmpti.woa.com
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: eg-tke
+    namespace: ti-cloud
+    sectionName: http
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: eg-tke
+    namespace: ti-cloud
+    sectionName: https-glm52-pd-1p1d
+  rules:
+  - backendRefs:
+    - group: ''
+      kind: Service
+      name: sglang-1p1d-router
+      namespace: kube-system
+      port: 30001
+      weight: 1
+    matches:
+    - path:
+        type: PathPrefix
+        value: /

@@ -273,7 +273,7 @@ info "  $WRITE_LOG"
 # Health via router (HTTPS HTTPRoute).
 log "Health check via router (HTTPS HTTPRoute):"
 HEALTH=$(curl -s --connect-timeout 10 --max-time 15 \
-  -H "Authorization: Bearer sk-46faecc9d0bc4dcd9db6a15c73ae91c8" \
+  -H "Authorization: Bearer sk-REPLACE_WITH_YOUR_API_KEY" \
   https://glm52-2tp8.jmpti.woa.com/health 2>&1 || echo "FAIL")
 if [ "$HEALTH" = "OK" ]; then
   log "Router health: OK ✅"
@@ -284,7 +284,7 @@ fi
 # Smoke test: one chat completion through the router.
 log "Smoke test (1 chat completion via router):"
 SMOKE=$(curl -s --connect-timeout 15 --max-time 120 \
-  -H "Authorization: Bearer sk-46faecc9d0bc4dcd9db6a15c73ae91c8" \
+  -H "Authorization: Bearer sk-REPLACE_WITH_YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   https://glm52-2tp8.jmpti.woa.com/v1/chat/completions \
   -d '{"model":"glm-5.2","messages":[{"role":"user","content":"say ok"}],"max_tokens":8,"stream":false}' 2>&1)

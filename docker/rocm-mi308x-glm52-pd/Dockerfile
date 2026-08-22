@@ -24,6 +24,7 @@
 #        frozen_kv_mtp_worker_v2.py (06b seq_lens_cpu fast path)
 #        forward_mha.py     (07  aiter+HIP non-power-of-2 nope_dim guard for GLM-5.2)
 #        aiter_backend.py   (08  forward_extend/decode +**kwargs for DSA topk_indices)
+#        conn_host_staging.py (HIP L2: decode selective H2D + prefill D2H)
 #   3. FlyDSL gfx942 fp8 MQA logits kernel (BLOCK_KV=128, register-based)
 #   4. AITER tuned GEMM/MoE CSV configs for gfx942
 #   5. libbnxt_re-rdmav34.so 238.1.138.5 (ts4 kernel bnxt_re ABI match; image default 235.x fails)
@@ -32,34 +33,34 @@
 #   docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile \
 #     -t sglang-glm52-308x-pd:rocm700-0716-gdr .
 
-FROM rocm/sgl-dev:v0.5.15.post1-rocm700-mi30x-20260715
+FROM rocm/sgl-dev:v0.5.17-rocm720-mi30x-20260809
 
 LABEL maintainer="guofutan"
-LABEL sglang-base-image="v0.5.15.post1-rocm700-mi30x-20260715"
+LABEL sglang-base-image="v0.5.17-rocm720-mi30x-20260809"
 LABEL gpu-arch="gfx942"
-LABEL rdma-mode="GDR (HIP dmabuf, no host staging)"
+LABEL rdma-mode="GDR peermem (SGLANG_PD_HOST_STAGING=0) + optional host-staging fallback"
 
 # ============================================================
-# Layer 1: Apply Mooncake GDR patches + rebuild .so
-# Base already ships Mooncake@01d1eb2a source at /sgl-workspace/Mooncake with a
-# pre-configured build dir (USE_HIP_DMABUF=ON in CMakeCache.txt), and engine.so is
-# pip-installed (non-editable) into site-packages. We strip any prior host-staging
-# injection, add MC_DISABLE_HIP_TRANSPORT support, then rebuild + copy the .so.
-# The resulting engine.so uses the GDR path:
-#   hipMemoryTypeDevice + isKernelDmabufSupported()
-#     -> hsa_amd_portable_export_dmabuf() + ibv_reg_dmabuf_mr()
-# NOT host staging (hipMallocHost + hipMemcpy + ibv_reg_mr).
+# Layer 1: Mooncake true GDR (amdgpu peermem + HipDeviceGuard).
+# Do NOT inject C++ host-staging bounce buffers. Python host-staging remains
+# env-gated (SGLANG_PD_HOST_STAGING=1) as a fallback.
 # ============================================================
-COPY docker/rocm-mi308x-glm52-pd/patches/mooncake/apply_gdr.sh /tmp/apply_gdr.sh
+COPY docker/rocm-mi308x-glm52-pd/patches/mooncake/apply_gdr.sh /tmp/mooncake/apply_gdr.sh
+COPY docker/rocm-mi308x-glm52-pd/patches/mooncake/apply_gdr_peermem.py /tmp/mooncake/apply_gdr_peermem.py
 RUN set -eux; \
-    chmod +x /tmp/apply_gdr.sh && cd /sgl-workspace/Mooncake && /tmp/apply_gdr.sh; \
+    chmod +x /tmp/mooncake/apply_gdr.sh && \
+    /tmp/mooncake/apply_gdr.sh /sgl-workspace/Mooncake; \
+    grep -q 'FIX(gdr-peermem-device-guard)' \
+      /sgl-workspace/Mooncake/mooncake-transfer-engine/src/transport/rdma_transport/rdma_context.cpp; \
+    grep -q 'MC_DISABLE_HIP_TRANSPORT' \
+      /sgl-workspace/Mooncake/mooncake-transfer-engine/src/transfer_engine_impl.cpp; \
     cd /sgl-workspace/Mooncake/build && \
     find . -name "*.o" -delete && \
     make -j "$(nproc)" && \
     cp mooncake-integration/engine.cpython-310-x86_64-linux-gnu.so \
        /opt/venv/lib/python3.10/site-packages/mooncake/engine.cpython-310-x86_64-linux-gnu.so && \
     ldconfig; \
-    echo "[Mooncake] GDR patches applied and .so refreshed (USE_HIP_DMABUF path)"
+    echo "[Mooncake] GDR peermem engine.so rebuilt"
 
 # ============================================================
 # Layer 2: Apply 11 GLM-5.2/PD/HIP patches ported to post1.
@@ -67,6 +68,11 @@ RUN set -eux; \
 # source file in-place. (See patches/post1/ for per-patch docs.)
 # ============================================================
 COPY docker/rocm-mi308x-glm52-pd/patches/post1/ /tmp/post1-patches/
+COPY docker/rocm-mi308x-glm52-pd/live-1p1d/patches/ /tmp/live-patches/
+COPY python/sglang/srt/disaggregation/mooncake/gdr_l2_flush.py \
+     /sgl-workspace/sglang/python/sglang/srt/disaggregation/mooncake/gdr_l2_flush.py
+COPY docker/rocm-mi308x-glm52-pd/live-1p1d/patches/gdr_l2_flush.hsaco \
+     /sgl-workspace/sglang/python/sglang/srt/disaggregation/mooncake/gdr_l2_flush.hsaco
 
 RUN set -eux; \
     S=/sgl-workspace/sglang/python/sglang; \
@@ -75,13 +81,17 @@ RUN set -eux; \
     python3 /tmp/post1-patches/deepseek_nextn.py           $S/srt/models/deepseek_nextn.py; \
     python3 /tmp/post1-patches/transformers.py             $S/srt/models/transformers.py; \
     python3 /tmp/post1-patches/dsa_backend.py              $S/srt/layers/attention/dsa_backend.py; \
-    python3 /tmp/post1-patches/elementwise.py              $S/jit_kernel/dsv4/elementwise.py; \
-    python3 /tmp/post1-patches/fused_store_index_cache.py  $S/jit_kernel/csrc/dsa/fused_store_index_cache.cuh; \
+    python3 /tmp/post1-patches/elementwise.py              $S/kernels/ops/attention/dsv4/elementwise.py; \
+    python3 /tmp/post1-patches/fused_store_index_cache.py  $S/kernels/jit/csrc/dsa/fused_store_index_cache.cuh; \
     python3 /tmp/post1-patches/eagle_worker_v2.py          $S/srt/speculative/eagle_worker_v2.py; \
     python3 /tmp/post1-patches/frozen_kv_mtp_worker_v2.py  $S/srt/speculative/frozen_kv_mtp_worker_v2.py; \
-    python3 /tmp/post1-patches/forward_mha.py              $S/srt/models/deepseek_common/attention_forward_methods/forward_mha.py; \
     python3 /tmp/post1-patches/aiter_backend.py            $S/srt/layers/attention/aiter_backend.py; \
-    echo "[GLM-5.2] 11 patches applied to post1 source"
+    python3 /tmp/post1-patches/decode_bootstrap.py         $S/srt/disaggregation/decode.py; \
+    python3 /tmp/post1-patches/protocol_responses.py       $S/srt/entrypoints/openai/protocol.py; \
+    python3 /tmp/post1-patches/serving_responses_pd.py     $S/srt/entrypoints/openai/serving_responses.py; \
+    python3 /tmp/post1-patches/conn_host_staging.py        $S/srt/disaggregation/mooncake/conn.py; \
+    python3 /tmp/post1-patches/apply_live_runtime.py       $S; \
+    echo "[GLM-5.2] patches + GDR L2 flush baked into post1 source"
 
 # Verify all 11 ported patches are present in the patched source.
 RUN python3 -c "\
@@ -89,15 +99,24 @@ import pathlib as p; R=p.Path('/sgl-workspace/sglang/python/sglang'); r=lambda x
 assert '(_is_cuda or _is_hip) and envs.SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM' in r('srt/models/deepseek_v2.py'), '2.1'; \
 assert '_k_norm_weight_f32' in r('srt/layers/attention/dsa/dsa_indexer.py'), '1.6'; \
 assert 'FIX(breakable-target-verify)' in r('srt/layers/attention/dsa/dsa_indexer.py'), '04'; \
+assert 'FIX(fused-store-length-guard)' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'fused-store-guard'; \
+assert 'i32_safe_rows' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'i32-overflow'; \
 assert 'is_hip() or envs.SGLANG_NPU_USE_MULTI_STREAM' in r('srt/models/deepseek_nextn.py'), '3.1'; \
 assert '\"mla_kv_a_proj\": \"replicate\"' in r('srt/models/transformers.py'), '4.1'; \
 assert 'q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)' in r('srt/layers/attention/dsa_backend.py'), '5c'; \
-assert 'q_fp8_raw' in r('jit_kernel/dsv4/elementwise.py'), '03'; \
-assert 'using deepseek_v4::fp8::pack_fp8' in r('jit_kernel/csrc/dsa/fused_store_index_cache.cuh'), '05/6.1'; \
+assert 'q_fp8_raw' in r('kernels/ops/attention/dsv4/elementwise.py'), '03'; \
+assert 'using deepseek_v4::fp8::pack_fp8' in r('kernels/jit/csrc/dsa/fused_store_index_cache.cuh'), '05/6.1'; \
 assert '_is_cuda or _is_musa or _is_hip' in r('srt/speculative/eagle_worker_v2.py'), '06c'; \
 assert 'batch.seq_lens_sum = batch.seq_lens_cpu.sum().item()' in r('srt/speculative/frozen_kv_mtp_worker_v2.py'), '06b'; \
-assert '_np2_aiter_guard' in r('srt/models/deepseek_common/attention_forward_methods/forward_mha.py'), '07'; \
 assert '_dsa_kwargs_compat' in r('srt/layers/attention/aiter_backend.py'), '08'; \
+assert 'FIX(bootstrap-list)' in r('srt/disaggregation/decode.py'), 'bootstrap-list'; \
+assert 'bootstrap_host' in r('srt/entrypoints/openai/protocol.py'), 'protocol-responses'; \
+assert '_fix_created_at_int' in r('srt/entrypoints/openai/serving_responses.py'), 'serving-responses-pd'; \
+assert 'FIX(prefill-d2h-host-staging)' in r('srt/disaggregation/mooncake/conn.py'), 'prefill-d2h'; \
+assert 'refusing full-pool' in r('srt/disaggregation/mooncake/conn.py'), 'selective-h2d'; \
+assert 'FIX(gdr-l2-flush)' in r('srt/disaggregation/mooncake/conn.py'), 'gdr-l2-flush'; \
+assert 'rdma_read_flush' in r('srt/disaggregation/mooncake/conn.py'), 'gdr-rdma-read'; \
+assert (R/'srt/disaggregation/mooncake/gdr_l2_flush.hsaco').stat().st_size > 0, 'gdr-hsaco'; \
 # post1 base patches (must remain, not clobbered) \
 assert 'DUAL_STREAM_TOKEN_THRESHOLD = 1024' in r('srt/layers/attention/dsa/dsa_indexer.py'), '06a base'; \
 assert 'is_shuffled = True' in r('srt/layers/quantization/fp8.py'), '02 base'; \
@@ -116,6 +135,35 @@ COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/ait
 # ============================================================
 COPY docker/rocm-mi308x-glm52/patches/glm5_1_gemm_gfx942.csv /sgl-workspace/aiter/aiter/configs/model_configs/glm5_bf16_tuned_gemm.csv
 COPY docker/rocm-mi308x-glm52/patches/glm5_1_fmoe_gfx942.csv /sgl-workspace/aiter/aiter/configs/model_configs/glm5_a8w8_blockscale_bpreshuffle_tuned_gemm.csv
+COPY docker/rocm-mi308x-glm52-pd/patches/mi308x_gfx942_bf16_tuned_gemm.csv /tmp/mi308x_gfx942_bf16_tuned_gemm.csv
+RUN python3 - <<'PY'
+import csv, glob, os
+src = "/tmp/mi308x_gfx942_bf16_tuned_gemm.csv"
+out = "/sgl-workspace/aiter/aiter/configs/model_configs/mi308x_gfx942_bf16_tuned_gemm.csv"
+configs_dir = "/sgl-workspace/aiter/aiter/configs/model_configs"
+existing = set()
+for f in glob.glob(os.path.join(configs_dir, "*.csv")):
+    try:
+        with open(f, newline="") as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                if len(row) >= 10:
+                    existing.add(tuple(row[:10]))
+    except Exception:
+        pass
+kept = 0
+with open(src, newline="") as fin, open(out, "w", newline="") as fout:
+    reader = csv.reader(fin)
+    writer = csv.writer(fout)
+    header = next(reader)
+    writer.writerow(header)
+    for row in reader:
+        if len(row) >= 10 and tuple(row[:10]) not in existing:
+            writer.writerow(row)
+            kept += 1
+print(f"[aiter] baked {kept} new gfx942 K=6144 GEMM rows into {out}")
+PY
 
 # ============================================================
 # Layer 5: libbnxt_re-rdmav34.so 238.1.138.5 (ts4 kernel bnxt_re ABI match)
@@ -125,13 +173,16 @@ COPY docker/rocm-mi308x-glm52/patches/glm5_1_fmoe_gfx942.csv /sgl-workspace/aite
 # kernel module ABI and is required for RDMA on ts4 nodes.
 # ============================================================
 COPY docker/rocm-mi308x-glm52-pd/patches/libbnxt_re/libbnxt_re-rdmav34.so /tmp/libbnxt_re-rdmav34.so
+COPY docker/rocm-mi308x-glm52-pd/patches/libbnxt_re/libbnxt_re-235.2.86.0.so /tmp/libbnxt_re-235.2.86.0.so
 RUN set -eux; \
     cp /tmp/libbnxt_re-rdmav34.so /usr/local/lib/libbnxt_re-rdmav34.so && \
     cp /tmp/libbnxt_re-rdmav34.so /usr/local/lib/x86_64-linux-gnu/libbnxt_re-rdmav34.so && \
+    mkdir -p /usr/lib/x86_64-linux-gnu/libibverbs && \
+    cp /tmp/libbnxt_re-235.2.86.0.so /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so && \
     ldconfig && \
-    rm /tmp/libbnxt_re-rdmav34.so && \
-    echo "[libbnxt_re] installed 238.1.138.5 (ts4 kernel ABI match)" && \
-    strings /usr/local/lib/libbnxt_re-rdmav34.so | grep -m1 "238\."
+    rm /tmp/libbnxt_re-rdmav34.so /tmp/libbnxt_re-235.2.86.0.so && \
+    echo "[libbnxt_re] verbs=235.2.86.0 (kernel ABI v8) local=238.1.138.5" && \
+    strings /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so | grep -m1 "235\."
 
 # ============================================================
 # Layer 6: Environment (gfx942 + 308x-specific)
@@ -158,5 +209,9 @@ ENV SGLANG_SET_CPU_AFFINITY=1
 ENV SGLANG_USE_AITER=1
 ENV SGLANG_USE_ROCM700A=1
 ENV SGLANG_OPT_USE_TOPK_V2=0
+ENV SGLANG_DSA_HIP_DISABLE_PRESHUFFLE=1
+ENV SGLANG_PD_HOST_STAGING=0
+ENV MC_DISABLE_HIP_TRANSPORT=1
+ENV MOONCAKE_PROTOCOL=rdma
 
 CMD ["/bin/bash"]

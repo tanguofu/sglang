@@ -4,20 +4,20 @@
 #   helm install sglang-glm52-test-w2 .../chart/ -f values-glm52-test-w2.yaml
 #
 # Topology:
-#   - sglang-glm52-test      on node-21.151.225.144 (worker + router + gateway)
-#   - sglang-glm52-test-w2   on node-21.151.225.132 (worker only)
+#   - sglang-glm52-test      on node-NODE_PREFILL_0_IP (worker + router + gateway)
+#   - sglang-glm52-test-w2   on node-NODE_DECODE_0_IP (worker only)
 # Router workerUrls point to both nodes so cache_aware picks the best prefix hit.
 
 # ---------------------------------------------------------------------------
 # Image — same worker image as the validated 2tp8 deployment
 # ---------------------------------------------------------------------------
-image: mirrors.tencent.com/ti-platform/sglang-glm52-308x
+image: YOUR_REGISTRY/your-project/sglang-glm52-308x
 tag: xgmi-opt-0716d
 
 # ---------------------------------------------------------------------------
 # Worker placement — pin to 144 (primary, hosts router + gateway)
 # ---------------------------------------------------------------------------
-nodeName: node-21.151.225.144
+nodeName: node-NODE_PREFILL_0_IP
 replicas: 1
 
 tolerations:
@@ -54,14 +54,14 @@ router:
   port: 30001
   policy: cache_aware
   workerUrls:
-    - "http://21.151.225.144:30000"  # primary (this release)
-    - "http://21.151.225.132:30000"  # secondary (sglang-glm52-test-w2)
+    - "http://NODE_PREFILL_0_IP:30000"  # primary (this release)
+    - "http://NODE_DECODE_0_IP:30000"  # secondary (sglang-glm52-test-w2)
   cacheThreshold: 0.5
   balanceAbsThreshold: 32
   balanceRelThreshold: 1.5
   # Use the pd-router image that has the /v1/messages route patched in.
   # Worker image (above) does NOT have /v1/messages — only OpenAI routes.
-  image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router
+  image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router
   tag: messages-0717c
   # Router pod schedules on the same dedicated group as workers.
   tolerations:
