@@ -58,10 +58,10 @@ spec:
               protocol: TCP
           resources:
             limits:
-              memory: 4Gi
+              memory: 16Gi
             requests:
               cpu: "2"
-              memory: 2Gi
+              memory: 4Gi
           securityContext:
             {{- include "sglang-1p1d.securityContext" . | nindent 12 }}
           livenessProbe:

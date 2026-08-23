@@ -101,6 +101,36 @@ awk -F, 'NR>1{$2=80; print}' OFS=, $src >> $dst
 - EAGLE：accept_length 2.8-3.1，accept_rate 0.6-0.7
 - hipEventSynchronize：0 次（num_steps=4 消除）
 
+## mooncake master OOM 修复 + EAGLE 调优（2026-08-23）
+
+### mooncake master memory limit 4Gi→16Gi
+
+**问题**：mooncake master 管理 128GB segment metadata，4Gi 限制太低，OOM killed 2 次
+（dmesg: `oom-kill: Killed process mooncake_master`）。
+
+**修复**：`chart/templates/mooncake-master.yaml` memory limit 4Gi→16Gi，requests 2Gi→4Gi。
+平滑滚动重启，不影响 prefill/decode。
+
+### EAGLE 参数：num_steps=3 优于 num_steps=2
+
+测试对比（200K 5/5 PASS，两者都正确）：
+
+| 配置 | accept_length | accept_rate | 200K cold | conc=8 throughput |
+|------|--------------|-------------|-----------|------------------|
+| num_steps=3, draft=4 | 3.675 | 0.89 | 273s | 402 tok/s |
+| num_steps=2, draft=3 | 2.34 | 0.70 | 275s | 375 tok/s |
+
+**结论**：num_steps=3 的 EAGLE 效率更高（accept_length 3.675 vs 2.34，+57%），
+throughput 也更好。保持 num_steps=3, draft=4。
+
+### 最终配置（2026-08-23）
+
+- decode: `num_continuous_decode_steps=4, speculative-num-steps=3, draft=4`
+- mooncake master: memory limit 16Gi
+- MoE: tuned kernel（AITER_CONFIG_FMOE cu80）
+- 200K: 5/5 PASS，273s cold
+- throughput: conc=1 78 tok/s, conc=16 674 tok/s
+
 ## 200K cold-cache 修复（2026-08-15 / GDR 2026-08-16）
 
 当前生产路径是 **GDR**（`SGLANG_PD_HOST_STAGING=0`），不再走 23GB D2H bounce：
