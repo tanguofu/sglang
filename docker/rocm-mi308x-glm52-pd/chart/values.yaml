@@ -8,8 +8,8 @@
 
 nameOverride: sglang-1p1d
 
-workerImage: YOUR_REGISTRY/your-project/sglang-glm52-308x:v0517-gdr-kernel-v1
-routerImage: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd-router:v0516-batch1-tok
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0517-gdr-kernel-v1
+routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0516-batch1-tok
 imagePullPolicy: Always
 imagePullSecrets:
   - tencent-registry
@@ -103,6 +103,10 @@ workerEnv:
   SGLANG_DSA_HIP_DISABLE_PRESHUFFLE: "1"
   MC_DISABLE_HIP_TRANSPORT: "1"
   SGLANG_PD_HOST_STAGING: "0"
+  # MoE tuned config: aiter glm5_1 CSV with cu_num rewritten 304->80 (MI308X reports 80 CU).
+  # Without this, all MoE GEMMs fall back to default heuristics (20-40% slower).
+  # Generate on each node: awk -F, 'NR>1{$2=80; print}' OFS=, < glm5_1 source > /data/aiter_configs/...cu80.csv
+  AITER_CONFIG_FMOE: /data/aiter_configs/a8w8_blockscale_tuned_fmoe_glm5_1_cu80.csv
 
 commonArgs:
   - --model-path /data/model/glm52-fp8
@@ -161,10 +165,12 @@ decode:
     - --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32
     - --cuda-graph-max-bs-decode 32
     - --speculative-algorithm NEXTN
-    - --speculative-num-steps 2
-    - --speculative-num-draft-tokens 3
+    - --speculative-num-steps 3
+    - --speculative-num-draft-tokens 4
     - --speculative-eagle-topk 1
-    - --num-continuous-decode-steps 2
+    - --num-continuous-decode-steps 4
+    - --schedule-conservativeness 0.8
+    - --stream-interval 2
     - --skip-server-warmup
     - --watchdog-timeout 1800
     - --load-balance-method follow_bootstrap_room
