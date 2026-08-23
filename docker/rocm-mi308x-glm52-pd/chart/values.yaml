@@ -37,7 +37,7 @@ hicache:
   storageBackend: mooncake
   prefetchPolicy: timeout
   memLayout: page_first_direct
-  writePolicy: write_through
+  writePolicy: write_through_selective
 
 # Master on decode node (hostNetwork). Prefills contribute GLOBAL_SEGMENT_SIZE
 # each (TP ranks split that total). Metadata is P2P, no extra HTTP service.

@@ -131,6 +131,37 @@ throughput 也更好。保持 num_steps=3, draft=4。
 - 200K: 5/5 PASS，273s cold
 - throughput: conc=1 78 tok/s, conc=16 674 tok/s
 
+## hicache write_through_selective 优化（2026-08-23）
+
+### 问题
+
+prefill 的 hicache L2（host RAM）满后 backup 到 L3（mooncake）慢：
+- `write_through` policy（threshold=1）：每次 cache hit 都触发 backup
+- 4288 次 backup，27938s 总耗时（6.5s/次）
+- host pool 99.9% 满，backup 跟不上 → `Write page to storage: 128 pages failed`
+  → TRANSFER_FAIL → 服务卡住（需重启 prefill 恢复）
+
+### 修复
+
+`--hicache-write-policy write_through` → `write_through_selective`（threshold=2，
+hit 2 次才 backup）。官方推荐（`write_back` 将废弃，`write_through_selective`
+是替代）。
+
+### 效果
+
+- backup 次数: 4288 → 912（**-79%**）
+- backup 总耗时: 27938s → 10478s（**-63%**）
+- host pool 压力: 99.9% → 43%（大幅降低）
+- 200K: 5/5 PASS 无损
+- throughput: conc=1 80 tok/s（+7%）
+
+### mooncake master 状态（16Gi limit）
+
+- RSS: 3068MB / 16Gi（19%，安全）
+- Mem Storage: 48.62 GB / 128 GB（38%）
+- Keys: 1.89M, Clients: 16, Eviction: 0, AllocFail: 0
+- 之前 4Gi 限制 OOM 2 次，已修复
+
 ## 200K cold-cache 修复（2026-08-15 / GDR 2026-08-16）
 
 当前生产路径是 **GDR**（`SGLANG_PD_HOST_STAGING=0`），不再走 23GB D2H bounce：
