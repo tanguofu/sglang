@@ -59,7 +59,7 @@ router:
   port: 30001
   metricsPort: 19096
   # 163840 gen @ ~90 tok/s is ~30 min; long thinks can restart and exceed 1h.
-  cbTimeoutSecs: 7200
+  cbTimeoutSecs: 60
 
 ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
 bootstrapPort: "8998"
@@ -75,7 +75,9 @@ hostPathData: /data
 allowHostPathOverlay: "0"
 
 workerEnv:
-  SGLANG_HEALTH_CHECK_TIMEOUT: "60"
+  # 300s: 200K cold prefill (~200s) 期间 dummy health request 排队超过 60s 会假阳性 503,
+  # router 误判 unhealthy 导致 warm 请求路由到无 cache 的 prefill (304s vs 2.4s)
+  SGLANG_HEALTH_CHECK_TIMEOUT: "300"
   MOONCAKE_PROTOCOL: rdma
   MC_GID_INDEX: "3"
   HIP_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"

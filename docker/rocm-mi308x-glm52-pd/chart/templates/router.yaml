@@ -52,7 +52,7 @@ spec:
                 --prometheus-port {{ .Values.router.metricsPort }} \
                 --model-path {{ .Values.modelPath }} \
                 --api-key {{ .Values.apiKey }} \
-                --health-check-timeout-secs 60 \
+                --health-check-timeout-secs 30 \
                 --health-check-interval-secs 30 \
                 --health-failure-threshold 10 \
                 --health-success-threshold 2 \
