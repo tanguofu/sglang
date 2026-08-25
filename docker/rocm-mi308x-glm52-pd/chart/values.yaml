@@ -1,4 +1,4 @@
-# GLM-5.2 MI308X 2P2D — live snapshot 2026-08-25 (Wave 1 / v0525-wave1)
+# GLM-5.2 MI308X 2P2D — live snapshot 2026-08-25 (v0825-gate-indexer)
 #
 # Restores the running kube-system/sglang-1p1d cluster (hostNetwork, GDR,
 # DSA tilelang + FlyDSL MQA, NEXTN, Mooncake L3). Router talks to worker host IPs.
@@ -7,13 +7,14 @@
 #     -n kube-system --force-conflicts \
 #     --set apiKey=sk-...
 #
-# Do not helm-install a second PD release. Image bakes GDR peermem + L2 flush;
-# prefill still runs /data/mooncake-patched/patch_evict_backup.py if present
+# Do not helm-install a second PD release. Image bakes GDR peermem + L2 flush
+# + BF16 gate/indexer overlay. Prefill still runs
+# /data/mooncake-patched/patch_evict_backup.py if present
 # (v2: eviction D->H backup without disabling write_through L2/L3).
 
 nameOverride: sglang-1p1d
 
-workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0825-gate-indexer
 routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0516-batch1-tok
 imagePullPolicy: Always
 imagePullSecrets:
@@ -112,6 +113,18 @@ gateway:
 
 hostPathData: /data
 allowHostPathOverlay: "0"
+
+# Thin BF16 overlay for MoE gate (N=256) + DSA indexer weights_proj (N=32).
+# Init generates /data/aiter_configs/mi308x_bf16_gate_indexer.csv (threaded clone,
+# no merge of the fat bf16_tuned_gemm.csv). Main container overwrites the image
+# file model_configs/mi308x_gfx942_bf16_tuned_gemm.csv. Optional GPU retune:
+#   python3 /data/aiter_configs/gen_bf16_gate_indexer.py tune --workers 8
+aiterBf16Gemm:
+  enabled: true
+  version: "1"
+  workers: 8
+  hostCsv: /data/aiter_configs/mi308x_bf16_gate_indexer.csv
+  imageCsv: /sgl-workspace/aiter/aiter/configs/model_configs/mi308x_gfx942_bf16_tuned_gemm.csv
 
 workerEnv:
   # 300s: 200K cold prefill (~200s) dummy health queued >60s was a false 503.

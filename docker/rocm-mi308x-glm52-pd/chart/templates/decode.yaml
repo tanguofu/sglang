@@ -65,6 +65,7 @@ spec:
             - |
               set -euo pipefail
               echo "=== GLM-5.2 DECODE-{{ $i }} {{ $d.ip }} (MI308X, baked GDR + DSA tilelang + NEXTN) ==="
+              {{- include "sglang-1p1d.gemmCsvInstall" $root | nindent 14 }}
               exec python3 -m sglang.launch_server{{- include "sglang-1p1d.launchArgs" (dict "root" $root "extra" $root.Values.decode.args "port" $root.Values.ports.decode.http "bootstrapPort" $root.Values.ports.decode.bootstrap) }}
           env:
             {{- include "sglang-1p1d.workerEnv" (dict "root" $root "extra" ($root.Values.decode.extraEnv | default dict) "hostIP" $d.ip) | nindent 12 }}

@@ -65,6 +65,7 @@ spec:
             - |
               set -euo pipefail
               echo "=== GLM-5.2 PREFILL-{{ $i }} {{ $p.ip }} (GDR + DSA tilelang + Mooncake L3) ==="
+              {{- include "sglang-1p1d.gemmCsvInstall" $root | nindent 14 }}
               python3 /data/mooncake-patched/patch_evict_backup.py || echo "WARNING: evict-backup patch failed"
               python3 /data/mooncake-patched/patch_prefetch_log.py || echo "WARNING: prefetch-log patch failed"
               {{- if and $root.Values.mooncake.store.enabled $root.Values.mooncake.store.standalonePrefill }}

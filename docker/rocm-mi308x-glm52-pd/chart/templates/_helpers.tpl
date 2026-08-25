@@ -141,6 +141,12 @@ tke.cloud.tencent.com/pod-type: eklet
   hostPath:
     path: /dev/infiniband
     type: Directory
+{{- if .Values.aiterBf16Gemm.enabled }}
+- name: aiter-scripts
+  configMap:
+    name: {{ include "sglang-1p1d.name" . }}-aiter-scripts
+    defaultMode: 0555
+{{- end }}
 {{- end -}}
 
 {{- define "sglang-1p1d.workerVolumeMounts" -}}
@@ -154,6 +160,34 @@ tke.cloud.tencent.com/pod-type: eklet
   mountPath: /dev/dri
 - name: dev-infiniband
   mountPath: /dev/infiniband
+{{- if .Values.aiterBf16Gemm.enabled }}
+- name: aiter-scripts
+  mountPath: /opt/aiter-scripts
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "sglang-1p1d.gemmCsvGenerate" -}}
+{{- if .Values.aiterBf16Gemm.enabled }}
+echo "--- BF16 gate/indexer overlay (generate, no merge) ---"
+python3 /opt/aiter-scripts/gen_bf16_gate_indexer.py generate \
+  --version {{ .Values.aiterBf16Gemm.version | quote }} \
+  --workers {{ .Values.aiterBf16Gemm.workers }} \
+  --host-csv {{ .Values.aiterBf16Gemm.hostCsv | quote }} \
+  --image-csv {{ .Values.aiterBf16Gemm.imageCsv | quote }} \
+  --script-src /opt/aiter-scripts/gen_bf16_gate_indexer.py
+echo "host csv: {{ .Values.aiterBf16Gemm.hostCsv }}"
+ls -l {{ .Values.aiterBf16Gemm.hostCsv }} {{ .Values.aiterBf16Gemm.hostCsv | replace ".csv" ".meta" }} || true
+{{- end }}
+{{- end -}}
+
+{{- define "sglang-1p1d.gemmCsvInstall" -}}
+{{- if .Values.aiterBf16Gemm.enabled }}
+echo "--- BF16 gate/indexer overlay (overwrite image file) ---"
+python3 /opt/aiter-scripts/gen_bf16_gate_indexer.py install \
+  --host-csv {{ .Values.aiterBf16Gemm.hostCsv | quote }} \
+  --image-csv {{ .Values.aiterBf16Gemm.imageCsv | quote }}
+{{- end }}
 {{- end -}}
 
 {{- define "sglang-1p1d.securityContext" -}}
@@ -186,5 +220,6 @@ echo "Active IB ports: ${IB_ACTIVE}"
 if [ "${IB_ACTIVE}" -lt 1 ]; then
   echo "WARNING: No active IB ports — PD may fall back to TCP" >&2
 fi
+{{- include "sglang-1p1d.gemmCsvGenerate" . }}
 echo "========== Pre-Flight Check Complete =========="
 {{- end -}}

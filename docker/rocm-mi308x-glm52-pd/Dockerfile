@@ -137,39 +137,16 @@ COPY docker/rocm-mi308x-glm52/patches/flydsl/__init__.py /sgl-workspace/aiter/ai
 COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/triton/attention/fp8_mqa_logits.py
 
 # ============================================================
-# Layer 4: AITER tuned GEMM/MoE configs for gfx942 (pre-built csv)
+# Layer 4: AITER tuned GEMM/MoE configs for gfx942
+# Overlay is a standalone overwrite (gate N=256 + indexer N=32 + N=160
+# passthrough). Do not merge into the fat source CSV.
 # ============================================================
 COPY docker/rocm-mi308x-glm52/patches/glm5_1_gemm_gfx942.csv /sgl-workspace/aiter/aiter/configs/model_configs/glm5_bf16_tuned_gemm.csv
 COPY docker/rocm-mi308x-glm52/patches/glm5_1_fmoe_gfx942.csv /sgl-workspace/aiter/aiter/configs/model_configs/glm5_a8w8_blockscale_bpreshuffle_tuned_gemm.csv
-COPY docker/rocm-mi308x-glm52-pd/patches/mi308x_gfx942_bf16_tuned_gemm.csv /tmp/mi308x_gfx942_bf16_tuned_gemm.csv
-RUN python3 - <<'PY'
-import csv, glob, os
-src = "/tmp/mi308x_gfx942_bf16_tuned_gemm.csv"
-out = "/sgl-workspace/aiter/aiter/configs/model_configs/mi308x_gfx942_bf16_tuned_gemm.csv"
-configs_dir = "/sgl-workspace/aiter/aiter/configs/model_configs"
-existing = set()
-for f in glob.glob(os.path.join(configs_dir, "*.csv")):
-    try:
-        with open(f, newline="") as fh:
-            reader = csv.reader(fh)
-            next(reader, None)
-            for row in reader:
-                if len(row) >= 10:
-                    existing.add(tuple(row[:10]))
-    except Exception:
-        pass
-kept = 0
-with open(src, newline="") as fin, open(out, "w", newline="") as fout:
-    reader = csv.reader(fin)
-    writer = csv.writer(fout)
-    header = next(reader)
-    writer.writerow(header)
-    for row in reader:
-        if len(row) >= 10 and tuple(row[:10]) not in existing:
-            writer.writerow(row)
-            kept += 1
-print(f"[aiter] baked {kept} new gfx942 K=6144 GEMM rows into {out}")
-PY
+COPY docker/rocm-mi308x-glm52-pd/patches/mi308x_gfx942_bf16_gate_indexer.csv \
+     /sgl-workspace/aiter/aiter/configs/model_configs/mi308x_gfx942_bf16_tuned_gemm.csv
+COPY docker/rocm-mi308x-glm52-pd/scripts/gen_bf16_gate_indexer.py \
+     /opt/aiter-scripts/gen_bf16_gate_indexer.py
 
 # ============================================================
 # Layer 5: libbnxt_re-rdmav34.so 238.1.138.5 (ts4 kernel bnxt_re ABI match)

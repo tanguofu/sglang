@@ -1,6 +1,6 @@
 # GLM-5.2 MI308X 2P2D Helm chart
 
-Live snapshot of `kube-system/sglang-1p1d` as of 2026-08-25 (chart 0.3.5, worker `v0525-wave1`). Two TP8 prefills + two TP8 decodes, GDR PD, DSA tilelang + FlyDSL MQA, NEXTN, Mooncake L3 HiCache. `page_size=64`, prefill L2 ratio 2, Mooncake store sidecars, router `round_robin`.
+Live snapshot of `kube-system/sglang-1p1d` as of 2026-08-25 (chart 0.3.7, worker `v0825-gate-indexer`). Two TP8 prefills + two TP8 decodes, GDR PD, DSA tilelang + FlyDSL MQA, NEXTN, Mooncake L3 HiCache. `page_size=64`, prefill L2 ratio 2, Mooncake store sidecars, router `round_robin`.
 
 Use this chart to rebuild the **current** cluster from zero. Worker discovery is the live scheme: **hostNetwork + node host IPs** (not STS DNS). Prefill and decode all bind `:30000` / `:8998` because they sit on different nodes.
 
@@ -44,6 +44,29 @@ Do not commit the live API key. Do not `helm install` a second PD release. Do no
 
 Each GPU node needs `/data/model/glm52-fp8` and `/data/aiter_configs/a8w8_blockscale_tuned_fmoe_glm5_1_cu80.csv` (cu_num=80 **and** decode tiles `expert=256,topk=8` for token 1..128; see `scripts/merge_decode_fmoe_256_8.py`). Prefill will try `/data/mooncake-patched/patch_evict_backup.py` (v2) and `patch_prefetch_log.py` and continue if they are missing.
 
+## BF16 gate / indexer overlay (chart 0.3.6)
+
+Do **not** merge the fat `/data/aiter_configs/bf16_tuned_gemm.csv`. Init generates a thin table (threaded, `--workers 8`) and the main container **overwrites** the image file:
+
+`/sgl-workspace/aiter/aiter/configs/model_configs/mi308x_gfx942_bf16_tuned_gemm.csv`
+
+Per-node hostPath (locatable):
+
+```
+/data/aiter_configs/gen_bf16_gate_indexer.py
+/data/aiter_configs/mi308x_bf16_gate_indexer.csv
+/data/aiter_configs/mi308x_bf16_gate_indexer.meta
+```
+
+`N=32` is DSA indexer `weights_proj` (BF16 by design). `N=256` is MoE `mlp.gate` (BF16 by design). Optional GPU retune after generate, **not** in init:
+
+```bash
+kubectl exec -n kube-system sglang-1p1d-prefill-0 -c sglang -- \
+  python3 /data/aiter_configs/gen_bf16_gate_indexer.py tune --workers 8
+```
+
+Then bounce that prefill so `install` copies the tuned CSV over the image overlay. Bump `aiterBf16Gemm.version` to force regenerate.
+
 ## Mooncake L3 layout
 
 Do **not** run a Mooncake master per GPU node. L3 is one shared DRAM pool:
@@ -59,8 +82,8 @@ A per-node master would partition L3 and make cross-P prefix sharing impossible.
 
 ## Images
 
-- Workers / mooncake: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1`
+- Workers / mooncake: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0825-gate-indexer`
 - Router: `mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0516-batch1-tok`
-- Rollback workers: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0517-gdr-kernel-v1`
+- Rollback workers: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1`
 
-Wave 1 (`v0525-wave1`): FlyDSL gfx942 MQA logits, HIP `Event.wait()`, decode MoE CSV 256/8. Chart 0.3.5 unsets `SGLANG_DSA_HIP_DISABLE_PRESHUFFLE` so both P and D use `page_size=64` (Triton ≥ 3.5 in the image). Router is Recreate + `round_robin`.
+`v0825-gate-indexer` is `v0525-wave1` plus the thin BF16 gate/indexer overlay (`N=32/256 K=6144`, 135 rows) and `/opt/aiter-scripts/gen_bf16_gate_indexer.py`. Wave 1 (`v0525-wave1`): FlyDSL gfx942 MQA logits, HIP `Event.wait()`, decode MoE CSV 256/8. Chart unsets `SGLANG_DSA_HIP_DISABLE_PRESHUFFLE` so both P and D use `page_size=64`. Router is Recreate + `round_robin`.
