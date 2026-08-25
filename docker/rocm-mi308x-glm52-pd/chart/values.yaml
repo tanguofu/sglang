@@ -1,7 +1,7 @@
-# GLM-5.2 MI308X 2P2D — live snapshot 2026-08-25
+# GLM-5.2 MI308X 2P2D — live snapshot 2026-08-25 (Wave 1 / v0525-wave1)
 #
 # Restores the running kube-system/sglang-1p1d cluster (hostNetwork, GDR,
-# DSA tilelang, NEXTN, Mooncake L3). Router talks to worker host IPs.
+# DSA tilelang + FlyDSL MQA, NEXTN, Mooncake L3). Router talks to worker host IPs.
 #
 #   helm upgrade --install sglang-1p1d docker/rocm-mi308x-glm52-pd/chart \
 #     -n kube-system --force-conflicts \
@@ -12,7 +12,7 @@
 
 nameOverride: sglang-1p1d
 
-workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0517-gdr-kernel-v1
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1
 routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0516-batch1-tok
 imagePullPolicy: Always
 imagePullSecrets:

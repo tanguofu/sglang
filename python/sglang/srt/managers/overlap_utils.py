@@ -272,11 +272,10 @@ class FutureMap:
         if fi is None:
             return
         if self.publish_ready is not None:
-            if _is_hip:
-                # Temporary workaround: Event.wait() regresses TPOT on AMD MI355.
-                self.publish_ready.synchronize()
-            else:
-                self.publish_ready.wait()
+            # HIP: Event.wait() is a stream wait. synchronize() host-blocks
+            # every decode step (~2/3 of ITL on MI308X). Do not restore the
+            # MI355 synchronize() workaround on gfx942.
+            self.publish_ready.wait()
         batch.seq_lens = self.new_seq_lens_buf[fi]
 
         if not self.needs_cpu_seq_lens:

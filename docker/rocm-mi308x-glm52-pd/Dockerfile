@@ -120,7 +120,13 @@ assert (R/'srt/disaggregation/mooncake/gdr_l2_flush.hsaco').stat().st_size > 0, 
 # post1 base patches (must remain, not clobbered) \
 assert 'DUAL_STREAM_TOKEN_THRESHOLD = 1024' in r('srt/layers/attention/dsa/dsa_indexer.py'), '06a base'; \
 assert 'is_shuffled = True' in r('srt/layers/quantization/fp8.py'), '02 base'; \
-print('[OK] All 11 ported patches + 2 base patches verified')"
+# WAVE1: FlyDSL MQA + HIP Event.wait(). Do not COPY local indexer/overlap_utils (0.5.17 tree skew). \
+idx = r('srt/layers/attention/dsa/dsa_indexer.py'); \
+assert idx.count('flydsl_fp8_mqa_logits') >= 2, 'wave1-flydsl-sites'; \
+assert idx.count('WAVE1: FlyDSL gfx942 MQA logits') == 2, 'wave1-flydsl-marker'; \
+assert 'self.publish_ready.synchronize()' not in r('srt/managers/overlap_utils.py'), 'wave1-hip-wait'; \
+assert 'Event.wait() regresses TPOT' not in r('srt/managers/overlap_utils.py'), 'wave1-no-mi355-sync'; \
+print('[OK] All 11 ported patches + 2 base patches + WAVE1 flydsl/hip-wait verified')"
 
 # ============================================================
 # Layer 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)

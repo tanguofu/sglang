@@ -7,7 +7,7 @@ helm upgrade --install sglang-1p1d docker/rocm-mi308x-glm52-pd/chart \
   -n kube-system
 ```
 
-Worker 镜像 `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0517-gdr-kernel-v1` 已把 GDR peermem、L2 flush、DSA/HIP 补丁烤进镜像，启动脚本不再依赖 `/data/mooncake-patched` overlay。`/data` hostPath 只挂模型权重。
+Worker 镜像 `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1` 已把 GDR peermem、L2 flush、DSA/HIP、FlyDSL MQA 补丁烤进镜像，启动脚本不再依赖 `/data/mooncake-patched` overlay。`/data` hostPath 只挂模型权重。回滚 tag：`v0517-gdr-kernel-v1`。
 
 本目录仍是 2026-08 生产快照，便于对照；上游以 `chart/` 为准。
 

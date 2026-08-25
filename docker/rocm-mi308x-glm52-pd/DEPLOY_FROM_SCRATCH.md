@@ -1,8 +1,8 @@
 # GLM-5.2 MI308X 1P1D PD 从零部署指南
 
 **环境**: TKE MI308X 集群（gfx942, 内核 5.4, ROCm 7.2.0）
-**镜像**: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0517-gdr-kernel-v1`
-**更新日期**: 2026-08-23
+**镜像**: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1`
+**更新日期**: 2026-08-25
 
 ## 前置条件
 
@@ -41,8 +41,9 @@ head -1 $src > $dst
 awk -F, 'NR>1{$2=80; print}' OFS=, $src >> $dst
 
 # 验证
-wc -l $dst  # 应该 36 行
-md5sum $dst  # 4 个节点应该一致: 3a04d5b4693eeaba81aef34af4065918
+wc -l $dst
+# 补 decode 形状 expert=256,topk=8（token 1..128），保留 257/9 给 prefill
+python3 docker/rocm-mi308x-glm52-pd/scripts/merge_decode_fmoe_256_8.py $dst
 ```
 
 ### Step 2: 配置 chart values
@@ -51,7 +52,7 @@ md5sum $dst  # 4 个节点应该一致: 3a04d5b4693eeaba81aef34af4065918
 
 ```yaml
 # 镜像（已 push 到 mirror）
-workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0517-gdr-kernel-v1
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1
 routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0516-batch1-tok
 
 # 节点 IP（替换成实际 IP）

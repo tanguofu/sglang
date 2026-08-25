@@ -32,4 +32,10 @@ else:
 verified = TARGET.read_text()
 if verified.count(OLD) != 0:
     raise RuntimeError("Overlap HIP wait patch verification failed: OLD still present")
+# old_count==0 used to mean "already patched" even when the HIP synchronize()
+# branch was just a whitespace mismatch and still in the tree. Fail closed.
+if "self.publish_ready.synchronize()" in verified:
+    raise RuntimeError("Overlap HIP wait: publish_ready.synchronize() still present")
+if "Event.wait() regresses TPOT" in verified:
+    raise RuntimeError("Overlap HIP wait: MI355 synchronize workaround still present")
 print(f"OVERLAP_HIP_WAIT_PATCH={status}")

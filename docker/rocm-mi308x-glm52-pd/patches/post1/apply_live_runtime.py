@@ -21,6 +21,7 @@ if LIVE is None:
 SCRIPTS = (
     "patch_gdr_flush.py",
     "patch_overlap_hip_wait.py",
+    "patch_flydsl_mqa.py",
     "patch_decode_pd_health_flush.py",
     "patch_abort_noblock.py",
     "patch_bootstrap_room_scalar.py",
