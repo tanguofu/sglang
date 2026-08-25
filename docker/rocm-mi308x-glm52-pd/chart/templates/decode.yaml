@@ -99,6 +99,9 @@ spec:
             failureThreshold: {{ $root.Values.probes.failureThreshold }}
           volumeMounts:
             {{- include "sglang-1p1d.workerVolumeMounts" $root | nindent 12 }}
+        {{- if $root.Values.mooncake.store.enabled }}
+        {{- include "sglang-1p1d.mooncakeStoreSidecar" (dict "root" $root "hostIP" $d.ip "role" (printf "decode-%d" (int $i)) "segmentSize" $root.Values.mooncake.store.decodeSegmentSize "memoryLimit" "300Gi") | nindent 8 }}
+        {{- end }}
       volumes:
         {{- include "sglang-1p1d.workerVolumes" $root | nindent 8 }}
 {{- end }}

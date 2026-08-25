@@ -2,5 +2,5 @@ apiVersion: v2
 name: sglang-1p1d
 description: GLM-5.2 MI308X 2P2D PD live snapshot (v0525-wave1 FlyDSL MQA + GDR).
 type: application
-version: 0.3.3
+version: 0.3.5
 appVersion: "0.5.17"

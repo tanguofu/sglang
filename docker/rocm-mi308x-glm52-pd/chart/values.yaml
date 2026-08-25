@@ -8,7 +8,8 @@
 #     --set apiKey=sk-...
 #
 # Do not helm-install a second PD release. Image bakes GDR peermem + L2 flush;
-# prefill still runs /data/mooncake-patched/patch_evict_backup.py if present.
+# prefill still runs /data/mooncake-patched/patch_evict_backup.py if present
+# (v2: eviction D->H backup without disabling write_through L2/L3).
 
 nameOverride: sglang-1p1d
 
@@ -50,14 +51,18 @@ ports:
     metrics: 9003
 
 # Prefill-only HiCache. ratio 4 previously OOM'd ~2TB host KV on TP8.
-# L1=GPU radix, L2=host (ratio 1), L3=Mooncake DRAM pool shared across prefills.
+# L1=GPU radix, L2=host (ratio 2 ≈ 992GB/node), L3=Mooncake DRAM pool.
+# wait_complete: PD must not start compute before L3 GET; timeout was
+# existing-but-never-getting. prefetch_threshold 1 token (default 256).
 hicache:
   enabled: true
-  ratio: 1
+  ratio: 2
   storageBackend: mooncake
-  prefetchPolicy: timeout
+  prefetchPolicy: wait_complete
   memLayout: page_first_direct
   writePolicy: write_through_selective
+  extraConfig:
+    prefetch_threshold: 1
 
 # Master colocated with decode-0 (hostNetwork). Prefills must use the host IP,
 # not the ClusterIP — Mooncake RDMA talks to 21.151.225.132:50051.
@@ -72,14 +77,30 @@ mooncake:
   globalSegmentSize: "64gb"
   metadataServer: P2PHANDSHAKE
   mmapArenaPoolSize: "4gb"
+  # One client process per GPU node. Prefill SGLang talks to it as a dummy
+  # client (L3 survives worker restart). Decode only donates DRAM.
+  store:
+    enabled: true
+    port: 50052
+    prefillSegmentSize: "64GB"
+    decodeSegmentSize: "256GB"
+    # Dummy client failed on this ROCm image (setup_dummy -1). Prefill
+    # keeps in-process store; sidecars still donate extra DRAM.
+    standalonePrefill: false
 
 # Live router is hostNetwork on the decode-0 GPU node (not eklet).
+# cache_aware + balance-abs-threshold 0 pinned all traffic to P1/D0:
+# worker.load() stays 0 so imbalance never fires; shared system prompt
+# ties min-load to the first worker. Decode has no HiCache — do not
+# cache_aware-route it. round_robin spreads 2P2D; L3 shares prefixes.
 router:
   nodeName: node-21.151.225.132
   hostNetwork: true
   port: 30001
   metricsPort: 19096
   cbTimeoutSecs: 60
+  prefillPolicy: round_robin
+  decodePolicy: round_robin
 
 ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
 
@@ -122,7 +143,8 @@ workerEnv:
   SGLANG_USE_AITER: "1"
   SGLANG_USE_ROCM700A: "1"
   SGLANG_OPT_USE_TOPK_V2: "0"
-  SGLANG_DSA_HIP_DISABLE_PRESHUFFLE: "1"
+  # Image ENV defaults this to 1; must explicitly set 0 for page_size=64.
+  SGLANG_DSA_HIP_DISABLE_PRESHUFFLE: "0"
   MC_DISABLE_HIP_TRANSPORT: "1"
   SGLANG_PD_HOST_STAGING: "0"
   # MoE tuned config: aiter glm5_1 CSV with cu_num rewritten 304->80 (MI308X reports 80 CU).

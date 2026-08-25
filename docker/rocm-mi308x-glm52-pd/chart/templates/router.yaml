@@ -9,11 +9,11 @@ metadata:
     pd-role: router
 spec:
   replicas: 1
+  # Recreate = kill the old pod first, then start the new one.
+  # RollingUpdate + maxSurge spawned extra eklet NodePorts replicas on this
+  # hostNetwork / nodeName-pinned router. Do not switch back.
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
@@ -60,7 +60,8 @@ spec:
                 --health-check-interval-secs 5 \
                 --health-failure-threshold 5 \
                 --health-success-threshold 2 \
-                --balance-abs-threshold 0 \
+                --prefill-policy {{ .Values.router.prefillPolicy | default "round_robin" }} \
+                --decode-policy {{ .Values.router.decodePolicy | default "round_robin" }} \
                 --cb-timeout-duration-secs {{ .Values.router.cbTimeoutSecs | default 60 }} \
                 --log-level info
           env:

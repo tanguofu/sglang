@@ -66,6 +66,17 @@ spec:
               set -euo pipefail
               echo "=== GLM-5.2 PREFILL-{{ $i }} {{ $p.ip }} (GDR + DSA tilelang + Mooncake L3) ==="
               python3 /data/mooncake-patched/patch_evict_backup.py || echo "WARNING: evict-backup patch failed"
+              python3 /data/mooncake-patched/patch_prefetch_log.py || echo "WARNING: prefetch-log patch failed"
+              {{- if and $root.Values.mooncake.store.enabled $root.Values.mooncake.store.standalonePrefill }}
+              echo "waiting for mooncake_client 127.0.0.1:{{ $root.Values.mooncake.store.port }}"
+              for _ in $(seq 1 90); do
+                if python3 -c "import socket; socket.create_connection(('127.0.0.1', {{ $root.Values.mooncake.store.port }}), 2).close()" 2>/dev/null; then
+                  echo "mooncake_client is up"
+                  break
+                fi
+                sleep 2
+              done
+              {{- end }}
               exec python3 -m sglang.launch_server{{- include "sglang-1p1d.launchArgs" (dict "root" $root "extra" $root.Values.prefill.args "port" $root.Values.ports.prefill.http "bootstrapPort" $root.Values.ports.prefill.bootstrap) }}{{- include "sglang-1p1d.hicacheArgs" $root }}
           env:
             {{- include "sglang-1p1d.workerEnv" (dict "root" $root "extra" $root.Values.prefill.extraEnv "mooncakeLocal" true "hostIP" $p.ip) | nindent 12 }}
@@ -102,6 +113,9 @@ spec:
             failureThreshold: {{ $root.Values.probes.failureThreshold }}
           volumeMounts:
             {{- include "sglang-1p1d.workerVolumeMounts" $root | nindent 12 }}
+        {{- if $root.Values.mooncake.store.enabled }}
+        {{- include "sglang-1p1d.mooncakeStoreSidecar" (dict "root" $root "hostIP" $p.ip "role" (printf "prefill-%d" (int $i)) "segmentSize" $root.Values.mooncake.store.prefillSegmentSize "memoryLimit" "80Gi") | nindent 8 }}
+        {{- end }}
       volumes:
         {{- include "sglang-1p1d.workerVolumes" $root | nindent 8 }}
 {{- end }}

@@ -73,7 +73,45 @@ tke.cloud.tencent.com/pod-type: eklet
 {{- end -}}
 
 {{- define "sglang-1p1d.hicacheArgs" -}}
-{{- if .Values.hicache.enabled }} --enable-hierarchical-cache --hicache-ratio {{ .Values.hicache.ratio }} --hicache-storage-backend {{ .Values.hicache.storageBackend }} --hicache-storage-prefetch-policy {{ .Values.hicache.prefetchPolicy }} --hicache-mem-layout {{ .Values.hicache.memLayout }} --hicache-write-policy {{ .Values.hicache.writePolicy }}{{- end -}}
+{{- if .Values.hicache.enabled }} --enable-hierarchical-cache --hicache-ratio {{ .Values.hicache.ratio }} --hicache-storage-backend {{ .Values.hicache.storageBackend }} --hicache-storage-prefetch-policy {{ .Values.hicache.prefetchPolicy }} --hicache-mem-layout {{ .Values.hicache.memLayout }} --hicache-write-policy {{ .Values.hicache.writePolicy }}{{- if .Values.hicache.extraConfig }} --hicache-storage-backend-extra-config '{{ .Values.hicache.extraConfig | toJson }}'{{- end }}{{- end -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.mooncakeStoreSidecar" -}}
+{{- $root := .root -}}
+- name: mooncake-store
+  image: {{ $root.Values.workerImage }}
+  imagePullPolicy: {{ $root.Values.imagePullPolicy }}
+  command: ["/bin/bash", "-c"]
+  args:
+    - |
+      set -euo pipefail
+      echo "=== mooncake_client {{ .role }} {{ .hostIP }}:{{ $root.Values.mooncake.store.port }} segment={{ .segmentSize }} ==="
+      exec mooncake_client \
+        --master_server_address={{ include "sglang-1p1d.mooncakeMasterAddr" $root }} \
+        --metadata_server={{ $root.Values.mooncake.metadataServer }} \
+        --protocol=rdma \
+        --global_segment_size={{ .segmentSize | quote }} \
+        --host={{ .hostIP }} \
+        --port={{ $root.Values.mooncake.store.port }} \
+        --logtostderr
+  env:
+    - name: MC_GID_INDEX
+      value: {{ index $root.Values.workerEnv "MC_GID_INDEX" | default "3" | quote }}
+    - name: MOONCAKE_PROTOCOL
+      value: "rdma"
+    - name: MC_DISABLE_HIP_TRANSPORT
+      value: "1"
+  resources:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+    limits:
+      memory: {{ .memoryLimit | default "300Gi" }}
+  securityContext:
+    {{- include "sglang-1p1d.securityContext" $root | nindent 4 }}
+  volumeMounts:
+    - name: dev-infiniband
+      mountPath: /dev/infiniband
 {{- end -}}
 
 {{- define "sglang-1p1d.launchArgs" -}}

@@ -1,28 +1,22 @@
 #!/usr/bin/env python3
-"""Patch unified_radix_cache.is_write_back: always defer write-back before eviction.
+"""v2: PD eviction D->H backup without disabling write_through L2/L3.
 
-Root cause (PD prefill warm-cache miss for ~158K prompts):
-  With hicache write_policy != "write_back" (write_through / write_through_selective),
-  `is_write_back` is False, so `tree_core.evict_device_leaf` drops unbackuped
-  GPU nodes entirely instead of returning a deferred BackupKV. The assumption
-  is that write_through backs up on every cache hit, so an unbackuped node was
-  never useful.
+v1 set ``is_write_back = True`` whenever HiCache was enabled. That made
+``tree_core`` skip ``hit_count`` and never ``write_backup`` on a cache hit,
+so ``write_through_selective`` never promoted GPU KV to host (L2) or
+Mooncake (L3). Cross-prefill prefix cache stayed empty.
 
-  PD prefill breaks this assumption: `cache_finished_req` inserts the node
-  (GPU-resident, unbackuped). If it is evicted before its first hit (GPU pool
-  pressure from a large ~158K insert), the KV is lost and the next identical
-  request cold-prefills (~265s instead of ~16s).
+v2 keeps ``is_write_back`` equal to the real write policy (False for
+``write_through`` / ``write_through_selective``) so the 2nd hit still
+promotes L2 then L3. Only the eviction call site forces D->H when HiCache
+is on, which is the original PD bugfix:
 
-  Verified empirically:
-    - 158K prompt, 3s  gap between identical requests -> miss (292s)
-    - 158K prompt, 30s gap between identical requests -> hit  (15.9s)
+  cache_finished_req inserts a GPU-resident unbackuped node. Under GPU
+  pool pressure a large (~158K) insert can evict it before the 2nd hit.
+  write_through eviction would drop that node; forcing backup on eviction
+  keeps the KV on host so the next identical request can load back.
 
-Fix:
-  When HiCache is enabled (cache_controller is not None), set is_write_back
-  True regardless of write policy, so eviction always runs the D->H backup
-  before demoting instead of dropping.
-
-Idempotent: matches the exact OLD block; skips if already patched.
+Idempotent across: fresh image, v1-patched tree, already-v2 tree.
 """
 import sys
 
@@ -32,12 +26,12 @@ TARGET = (
 if len(sys.argv) > 1:
     TARGET = sys.argv[1]
 
-OLD = """self.is_write_back = (
+IS_WRITE_BACK_POLICY = """self.is_write_back = (
             self.cache_controller is not None
             and self.cache_controller.write_policy == "write_back"
         )"""
 
-NEW = """self.is_write_back = (
+IS_WRITE_BACK_V1 = """self.is_write_back = (
             # FIX(evict-backup): back up unbackuped nodes to host before device
             # eviction whenever HiCache is enabled, regardless of write policy.
             # Otherwise write_through eviction drops nodes inserted by PD
@@ -46,24 +40,60 @@ NEW = """self.is_write_back = (
             self.cache_controller is not None
         )"""
 
-with open(TARGET) as f:
-    src = f.read()
+EVICT_OLD = (
+    "result = self.tree_core.evict_device_leaf(node_id, self.is_write_back)"
+)
+EVICT_NEW = """result = self.tree_core.evict_device_leaf(
+            node_id,
+            # FIX(evict-backup-v2): PD prefill may evict unbackuped GPU nodes
+            # before write_through_selective reaches threshold. Force D->H on
+            # eviction whenever HiCache is on, but keep is_write_back tied to
+            # the write policy so hits still promote L2/L3.
+            self.is_write_back or self.cache_controller is not None,
+        )"""
 
-count = src.count(OLD)
-if count == 0:
-    if "FIX(evict-backup)" in src:
-        print("patch_evict_backup: already patched, skipping")
+
+def main() -> None:
+    with open(TARGET) as f:
+        src = f.read()
+
+    if "FIX(evict-backup-v2)" in src and IS_WRITE_BACK_POLICY in src:
+        print("patch_evict_backup: v2 already applied, skipping")
         sys.exit(0)
-    raise RuntimeError(
-        "patch_evict_backup: anchor not found — source layout changed?"
-    )
 
-src = src.replace(OLD, NEW, 1)
-with open(TARGET, "w") as f:
-    f.write(src)
+    if IS_WRITE_BACK_V1 in src:
+        src = src.replace(IS_WRITE_BACK_V1, IS_WRITE_BACK_POLICY, 1)
+        print("patch_evict_backup: reverted v1 is_write_back override")
+    elif IS_WRITE_BACK_POLICY not in src:
+        raise RuntimeError(
+            "patch_evict_backup: is_write_back policy assignment not found"
+        )
 
-with open(TARGET) as f:
-    verify = f.read()
-if verify.count(OLD) != 0 or "FIX(evict-backup)" not in verify:
-    raise RuntimeError("patch_evict_backup: verification failed")
-print("patch_evict_backup: SUCCESS")
+    if "FIX(evict-backup-v2)" in src:
+        pass
+    elif src.count(EVICT_OLD) == 1:
+        src = src.replace(EVICT_OLD, EVICT_NEW, 1)
+    else:
+        raise RuntimeError(
+            "patch_evict_backup: evict_device_leaf call site not found "
+            f"(count={src.count(EVICT_OLD)})"
+        )
+
+    with open(TARGET, "w") as f:
+        f.write(src)
+
+    with open(TARGET) as f:
+        verify = f.read()
+    if IS_WRITE_BACK_V1 in verify:
+        raise RuntimeError("patch_evict_backup: v1 override still present")
+    if IS_WRITE_BACK_POLICY not in verify:
+        raise RuntimeError("patch_evict_backup: policy is_write_back missing")
+    if "FIX(evict-backup-v2)" not in verify:
+        raise RuntimeError("patch_evict_backup: v2 eviction site missing")
+    if verify.count(EVICT_OLD) != 0:
+        raise RuntimeError("patch_evict_backup: unpatched evict call remains")
+    print("patch_evict_backup: SUCCESS v2")
+
+
+if __name__ == "__main__":
+    main()
