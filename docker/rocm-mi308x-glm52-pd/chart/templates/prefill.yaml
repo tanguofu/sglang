@@ -16,7 +16,7 @@ metadata:
     pd-role: prefill
     prefill-index: "{{ $i }}"
 spec:
-  serviceName: {{ include "sglang-1p1d.name" $root }}-prefill
+  serviceName: {{ include "sglang-1p1d.prefillStsName" (dict "root" $root "index" $i) }}
   replicas: 1
   podManagementPolicy: OrderedReady
   selector:
@@ -65,15 +65,16 @@ spec:
             - |
               set -euo pipefail
               echo "=== GLM-5.2 PREFILL-{{ $i }} {{ $p.ip }} (GDR + DSA tilelang + Mooncake L3) ==="
-              exec python3 -m sglang.launch_server{{- include "sglang-1p1d.launchArgs" (dict "root" $root "extra" $root.Values.prefill.args) }}{{- include "sglang-1p1d.hicacheArgs" $root }}
+              python3 /data/mooncake-patched/patch_evict_backup.py || echo "WARNING: evict-backup patch failed"
+              exec python3 -m sglang.launch_server{{- include "sglang-1p1d.launchArgs" (dict "root" $root "extra" $root.Values.prefill.args "port" $root.Values.ports.prefill.http "bootstrapPort" $root.Values.ports.prefill.bootstrap) }}{{- include "sglang-1p1d.hicacheArgs" $root }}
           env:
-            {{- include "sglang-1p1d.workerEnv" (dict "root" $root "hostIP" $p.ip "extra" $root.Values.prefill.extraEnv "mooncakeLocal" true) | nindent 12 }}
+            {{- include "sglang-1p1d.workerEnv" (dict "root" $root "extra" $root.Values.prefill.extraEnv "mooncakeLocal" true "hostIP" $p.ip) | nindent 12 }}
           ports:
             - name: http
-              containerPort: 30000
+              containerPort: {{ $root.Values.ports.prefill.http }}
               protocol: TCP
             - name: bootstrap
-              containerPort: 8998
+              containerPort: {{ $root.Values.ports.prefill.bootstrap }}
               protocol: TCP
           {{- with $root.Values.prefill.resources }}
           resources:
@@ -84,7 +85,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /health
-              port: 30000
+              port: {{ $root.Values.ports.prefill.http }}
               scheme: HTTP
             initialDelaySeconds: {{ $root.Values.probes.initialDelaySeconds }}
             periodSeconds: {{ $root.Values.probes.periodSeconds }}
@@ -93,7 +94,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /health
-              port: 30000
+              port: {{ $root.Values.ports.prefill.http }}
               scheme: HTTP
             initialDelaySeconds: {{ $root.Values.probes.initialDelaySeconds }}
             periodSeconds: {{ $root.Values.probes.periodSeconds }}

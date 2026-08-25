@@ -1,94 +1,104 @@
+{{- $root := . }}
+{{- range $i, $d := .Values.decodes }}
+{{- $component := "decode" }}
+{{- if gt (int $i) 0 }}
+{{- $component = printf "decode-%d" (int $i) }}
+{{- end }}
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "sglang-1p1d.name" . }}-decode
-  namespace: {{ .Release.Namespace }}
+  name: {{ include "sglang-1p1d.decodeStsName" (dict "root" $root "index" $i) }}
+  namespace: {{ $root.Release.Namespace }}
   labels:
-    {{- include "sglang-1p1d.labels" . | nindent 4 }}
-    app.kubernetes.io/component: decode
+    {{- include "sglang-1p1d.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
     pd-role: decode
+    decode-index: "{{ $i }}"
 spec:
-  serviceName: {{ include "sglang-1p1d.name" . }}-decode
+  serviceName: {{ include "sglang-1p1d.decodeStsName" (dict "root" $root "index" $i) }}
   replicas: 1
   podManagementPolicy: OrderedReady
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
-      app.kubernetes.io/component: decode
+      app.kubernetes.io/name: {{ include "sglang-1p1d.name" $root }}
+      app.kubernetes.io/component: {{ $component }}
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
-        app.kubernetes.io/component: decode
+        app.kubernetes.io/name: {{ include "sglang-1p1d.name" $root }}
+        app.kubernetes.io/component: {{ $component }}
         pd-role: decode
+        decode-index: "{{ $i }}"
     spec:
       hostNetwork: true
       hostIPC: true
       hostPID: true
       dnsPolicy: ClusterFirstWithHostNet
-      nodeName: {{ .Values.decodeNode }}
+      nodeName: {{ $d.nodeName }}
       restartPolicy: Always
       terminationGracePeriodSeconds: 30
       imagePullSecrets:
-        {{- range .Values.imagePullSecrets }}
+        {{- range $root.Values.imagePullSecrets }}
         - name: {{ . }}
         {{- end }}
       tolerations:
         - operator: Exists
       initContainers:
         - name: env-check
-          image: {{ .Values.workerImage }}
-          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          image: {{ $root.Values.workerImage }}
+          imagePullPolicy: {{ $root.Values.imagePullPolicy }}
           command: ["/bin/bash", "-c"]
           args:
             - |
-              {{- include "sglang-1p1d.preflight" . | nindent 14 }}
+              {{- include "sglang-1p1d.preflight" $root | nindent 14 }}
           securityContext:
-            {{- include "sglang-1p1d.securityContext" . | nindent 12 }}
+            {{- include "sglang-1p1d.securityContext" $root | nindent 12 }}
           volumeMounts:
-            {{- include "sglang-1p1d.workerVolumeMounts" . | nindent 12 }}
+            {{- include "sglang-1p1d.workerVolumeMounts" $root | nindent 12 }}
       containers:
         - name: sglang
-          image: {{ .Values.workerImage }}
-          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          image: {{ $root.Values.workerImage }}
+          imagePullPolicy: {{ $root.Values.imagePullPolicy }}
           command: ["/bin/bash", "-c"]
           args:
             - |
               set -euo pipefail
-              echo "=== GLM-5.2 DECODE (MI308X, baked GDR + DSA tilelang + NEXTN 2/3) ==="
-              exec python3 -m sglang.launch_server{{- include "sglang-1p1d.launchArgs" (dict "root" . "extra" .Values.decode.args) }}
+              echo "=== GLM-5.2 DECODE-{{ $i }} {{ $d.ip }} (MI308X, baked GDR + DSA tilelang + NEXTN) ==="
+              exec python3 -m sglang.launch_server{{- include "sglang-1p1d.launchArgs" (dict "root" $root "extra" $root.Values.decode.args "port" $root.Values.ports.decode.http "bootstrapPort" $root.Values.ports.decode.bootstrap) }}
           env:
-            {{- include "sglang-1p1d.workerEnv" (dict "root" . "hostIP" .Values.decodeIP) | nindent 12 }}
+            {{- include "sglang-1p1d.workerEnv" (dict "root" $root "extra" ($root.Values.decode.extraEnv | default dict) "hostIP" $d.ip) | nindent 12 }}
           ports:
             - name: http
-              containerPort: 30000
+              containerPort: {{ $root.Values.ports.decode.http }}
               protocol: TCP
             - name: bootstrap
-              containerPort: 8998
+              containerPort: {{ $root.Values.ports.decode.bootstrap }}
               protocol: TCP
           resources:
-            {{- toYaml .Values.decode.resources | nindent 12 }}
+            {{- toYaml $root.Values.decode.resources | nindent 12 }}
           securityContext:
-            {{- include "sglang-1p1d.securityContext" . | nindent 12 }}
+            {{- include "sglang-1p1d.securityContext" $root | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /health
-              port: 30000
+              port: {{ $root.Values.ports.decode.http }}
               scheme: HTTP
-            initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
-            periodSeconds: {{ .Values.probes.periodSeconds }}
-            timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
-            failureThreshold: {{ .Values.probes.failureThreshold }}
+            initialDelaySeconds: {{ $root.Values.probes.initialDelaySeconds }}
+            periodSeconds: {{ $root.Values.probes.periodSeconds }}
+            timeoutSeconds: {{ $root.Values.probes.timeoutSeconds }}
+            failureThreshold: {{ $root.Values.probes.failureThreshold }}
           readinessProbe:
             httpGet:
               path: /health
-              port: 30000
+              port: {{ $root.Values.ports.decode.http }}
               scheme: HTTP
-            initialDelaySeconds: {{ .Values.probes.initialDelaySeconds }}
-            periodSeconds: {{ .Values.probes.periodSeconds }}
-            timeoutSeconds: {{ .Values.probes.timeoutSeconds }}
-            failureThreshold: {{ .Values.probes.failureThreshold }}
+            initialDelaySeconds: {{ $root.Values.probes.initialDelaySeconds }}
+            periodSeconds: {{ $root.Values.probes.periodSeconds }}
+            timeoutSeconds: {{ $root.Values.probes.timeoutSeconds }}
+            failureThreshold: {{ $root.Values.probes.failureThreshold }}
           volumeMounts:
-            {{- include "sglang-1p1d.workerVolumeMounts" . | nindent 12 }}
+            {{- include "sglang-1p1d.workerVolumeMounts" $root | nindent 12 }}
       volumes:
-        {{- include "sglang-1p1d.workerVolumes" . | nindent 8 }}
+        {{- include "sglang-1p1d.workerVolumes" $root | nindent 8 }}
+{{- end }}

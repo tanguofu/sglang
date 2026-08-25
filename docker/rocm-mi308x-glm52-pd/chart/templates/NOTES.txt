@@ -1,13 +1,19 @@
-3P1D GDR + Mooncake L3 worker image: {{ .Values.workerImage }}
+{{ include "sglang-1p1d.name" . }}  2P2D live snapshot (hostNetwork, worker host IPs)
 Public gateway: https://{{ .Values.gateway.hostname }} (HTTPRoute → router :{{ .Values.router.port }})
 In-cluster router: http://{{ include "sglang-1p1d.name" . }}-router.{{ .Release.Namespace }}:{{ .Values.router.port }}
-Prefills:
-{{- range $i, $p := .Values.prefills }}
-  - P{{ $i }} {{ $p.ip }} ({{ $p.nodeName }})
-{{- end }}
-Decode: {{ .Values.decodeIP }}
-Mooncake master: {{ .Values.mooncake.master.hostIP }}:{{ .Values.mooncake.master.port }}
-HiCache: enabled={{ .Values.hicache.enabled }} ratio={{ .Values.hicache.ratio }} backend={{ .Values.hicache.storageBackend }}
 
-Upgrade:
-  helm upgrade --install {{ .Release.Name }} docker/rocm-mi308x-glm52-pd/chart -n {{ .Release.Namespace }} --force-conflicts
+Prefills (http={{ .Values.ports.prefill.http }} bootstrap={{ .Values.ports.prefill.bootstrap }}):
+{{- range $i, $p := .Values.prefills }}
+  - P{{ $i }} http://{{ $p.ip }}:{{ $.Values.ports.prefill.http }}  node={{ $p.nodeName }}
+{{- end }}
+Decodes (http={{ .Values.ports.decode.http }} bootstrap={{ .Values.ports.decode.bootstrap }}):
+{{- range $i, $d := .Values.decodes }}
+  - D{{ $i }} http://{{ $d.ip }}:{{ $.Values.ports.decode.http }}  node={{ $d.nodeName }}
+{{- end }}
+Mooncake master: {{ include "sglang-1p1d.mooncakeMasterAddr" . }}
+Router: node={{ .Values.router.nodeName }} hostNetwork={{ .Values.router.hostNetwork }}
+
+From-scratch restore (set the live API key; STS field-manager conflicts need --force-conflicts):
+  helm upgrade --install {{ .Release.Name }} docker/rocm-mi308x-glm52-pd/chart \
+    -n {{ .Release.Namespace }} --force-conflicts \
+    --set apiKey=sk-...

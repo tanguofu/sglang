@@ -1,10 +1,14 @@
-# GLM-5.2 MI308X 1P1D — measured kernel / PD scheme
+# GLM-5.2 MI308X 2P2D — live snapshot 2026-08-25
 #
-#   helm upgrade --install sglang-1p1d \
-#     docker/rocm-mi308x-glm52-pd/chart \
-#     -n kube-system -f docker/rocm-mi308x-glm52-pd/chart/values.yaml
+# Restores the running kube-system/sglang-1p1d cluster (hostNetwork, GDR,
+# DSA tilelang, NEXTN, Mooncake L3). Router talks to worker host IPs.
 #
-# Image bakes GDR peermem + L2 flush + HIP/PD patches. No /data/mooncake-patched overlay.
+#   helm upgrade --install sglang-1p1d docker/rocm-mi308x-glm52-pd/chart \
+#     -n kube-system --force-conflicts \
+#     --set apiKey=sk-...
+#
+# Do not helm-install a second PD release. Image bakes GDR peermem + L2 flush;
+# prefill still runs /data/mooncake-patched/patch_evict_backup.py if present.
 
 nameOverride: sglang-1p1d
 
@@ -14,23 +18,39 @@ imagePullPolicy: Always
 imagePullSecrets:
   - tencent-registry
 
+# Set at install time. Never commit the live key.
 apiKey: sk-REPLACE_WITH_YOUR_API_KEY
 modelName: glm-5.2
 modelPath: /data/model/glm52-fp8
 
-# 3P1D: P on 144/152/172, D stays on 132 (GDR-validated).
+# P and D are on different nodes so they all bind :30000 / :8998.
 prefills:
-  - nodeName: node-NODE_PREFILL_0_IP
-    ip: "NODE_PREFILL_0_IP"
-  - nodeName: node-NODE_PREFILL_1_IP
-    ip: "NODE_PREFILL_1_IP"
-  - nodeName: node-NODE_DECODE_1_IP
-    ip: "NODE_DECODE_1_IP"
-decodeNode: node-NODE_DECODE_0_IP
-decodeIP: "NODE_DECODE_0_IP"
+  - nodeName: node-21.151.225.144
+    ip: 21.151.225.144
+  - nodeName: node-21.151.225.152
+    ip: 21.151.225.152
+decodes:
+  - nodeName: node-21.151.225.132
+    ip: 21.151.225.132
+  - nodeName: node-21.151.225.172
+    ip: 21.151.225.172
+
+ports:
+  prefill:
+    http: 30000
+    bootstrap: 8998
+  decode:
+    http: 30000
+    bootstrap: 8998
+  router:
+    http: 30001
+    metrics: 19096
+  mooncake:
+    rpc: 50051
+    metrics: 9003
 
 # Prefill-only HiCache. ratio 4 previously OOM'd ~2TB host KV on TP8.
-# L1=GPU radix, L2=host (ratio 1), L3=Mooncake DRAM pool shared across 3P.
+# L1=GPU radix, L2=host (ratio 1), L3=Mooncake DRAM pool shared across prefills.
 hicache:
   enabled: true
   ratio: 1
@@ -39,13 +59,13 @@ hicache:
   memLayout: page_first_direct
   writePolicy: write_through_selective
 
-# Master on decode node (hostNetwork). Prefills contribute GLOBAL_SEGMENT_SIZE
-# each (TP ranks split that total). Metadata is P2P, no extra HTTP service.
+# Master colocated with decode-0 (hostNetwork). Prefills must use the host IP,
+# not the ClusterIP — Mooncake RDMA talks to 21.151.225.132:50051.
 mooncake:
   master:
     enabled: true
-    nodeName: node-NODE_DECODE_0_IP
-    hostIP: "NODE_DECODE_0_IP"
+    nodeName: node-21.151.225.132
+    ip: 21.151.225.132
     port: 50051
     metricsPort: 9003
     evictionHighWatermark: "0.95"
@@ -53,16 +73,15 @@ mooncake:
   metadataServer: P2PHANDSHAKE
   mmapArenaPoolSize: "4gb"
 
-# Router / LiteLLM run on TKE eklet (not a GPU node).
+# Live router is hostNetwork on the decode-0 GPU node (not eklet).
 router:
-  nodeName: kn-d5n6h6fp
+  nodeName: node-21.151.225.132
+  hostNetwork: true
   port: 30001
   metricsPort: 19096
-  # 163840 gen @ ~90 tok/s is ~30 min; long thinks can restart and exceed 1h.
   cbTimeoutSecs: 60
 
 ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
-bootstrapPort: "8998"
 
 gateway:
   hostname: glm52-pd-1p1d.jmpti.woa.com
@@ -70,14 +89,15 @@ gateway:
   parentNamespace: ti-cloud
   parentGateway: eg-tke
 
-# Host /data is model weights only. Runtime conn.py / engine.so overlays are off.
 hostPathData: /data
 allowHostPathOverlay: "0"
 
 workerEnv:
-  # 300s: 200K cold prefill (~200s) 期间 dummy health request 排队超过 60s 会假阳性 503,
-  # router 误判 unhealthy 导致 warm 请求路由到无 cache 的 prefill (304s vs 2.4s)
+  # 300s: 200K cold prefill (~200s) dummy health queued >60s was a false 503.
   SGLANG_HEALTH_CHECK_TIMEOUT: "300"
+  SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT: "600"
+  SGLANG_DISAGGREGATION_WAITING_TIMEOUT: "1800"
+  SGLANG_MOONCAKE_SEND_AUX_TCP: "1"
   MOONCAKE_PROTOCOL: rdma
   MC_GID_INDEX: "3"
   HIP_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
@@ -106,8 +126,6 @@ workerEnv:
   MC_DISABLE_HIP_TRANSPORT: "1"
   SGLANG_PD_HOST_STAGING: "0"
   # MoE tuned config: aiter glm5_1 CSV with cu_num rewritten 304->80 (MI308X reports 80 CU).
-  # Without this, all MoE GEMMs fall back to default heuristics (20-40% slower).
-  # Generate on each node: awk -F, 'NR>1{$2=80; print}' OFS=, < glm5_1 source > /data/aiter_configs/...cu80.csv
   AITER_CONFIG_FMOE: /data/aiter_configs/a8w8_blockscale_tuned_fmoe_glm5_1_cu80.csv
 
 commonArgs:
@@ -118,7 +136,6 @@ commonArgs:
   - --pp-size 1
   - --trust-remote-code
   - --host 0.0.0.0
-  - --port 30000
   - --context-length 1048576
   - --tool-call-parser glm47
   - --reasoning-parser glm45
@@ -128,7 +145,7 @@ commonArgs:
   - --dsa-decode-backend tilelang
   - --enable-aiter-allreduce-fusion
   - --enable-fused-qk-norm-rope
-  - --schedule-conservativeness 0.5
+  - --schedule-conservativeness 0.8
   - --kv-cache-dtype fp8_e4m3
   - --max-running-requests 32
   - --disaggregation-transfer-backend mooncake
@@ -138,9 +155,7 @@ commonArgs:
 
 prefill:
   extraEnv:
-    SGLANG_MOONCAKE_SEND_AUX_TCP: "1"
     SGLANG_HICACHE_HOST_ALLOCATOR: default
-    MOONCAKE_MASTER: "NODE_DECODE_0_IP:50051"
     MOONCAKE_TE_META_DATA_SERVER: P2PHANDSHAKE
     MOONCAKE_GLOBAL_SEGMENT_SIZE: "64gb"
     MC_MMAP_ARENA_POOL_SIZE: "4gb"
@@ -159,9 +174,9 @@ prefill:
       amd.com/gpu: "8"
       cpu: "360"
       memory: 1800Gi
-  watchdogNote: "HiCache ratio 1 + Mooncake L3. Do not set ratio 4 (OOM ~2TB host KV on TP8)."
 
 decode:
+  extraEnv: {}
   args:
     - --mem-fraction-static 0.92
     - --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32
@@ -171,7 +186,6 @@ decode:
     - --speculative-num-draft-tokens 4
     - --speculative-eagle-topk 1
     - --num-continuous-decode-steps 4
-    - --schedule-conservativeness 0.8
     - --stream-interval 2
     - --skip-server-warmup
     - --watchdog-timeout 1800

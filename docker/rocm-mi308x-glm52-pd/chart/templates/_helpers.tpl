@@ -14,18 +14,23 @@ eks.tke.cloud.tencent.com/resolv-conf: |
 tke.cloud.tencent.com/pod-type: eklet
 {{- end -}}
 
+{{- define "sglang-1p1d.mooncakeMasterAddr" -}}
+{{ .Values.mooncake.master.ip }}:{{ .Values.mooncake.master.port }}
+{{- end -}}
+
 {{- define "sglang-1p1d.workerEnv" -}}
-{{- $hostIP := .hostIP -}}
 {{- $extra := .extra | default dict -}}
 {{- range $k, $v := .root.Values.workerEnv }}
 - name: {{ $k }}
   value: {{ $v | quote }}
 {{- end }}
 - name: SGLANG_HOST_IP
-  value: {{ $hostIP | quote }}
+  value: {{ .hostIP | quote }}
 {{- if .mooncakeLocal }}
 - name: MOONCAKE_LOCAL_HOSTNAME
-  value: {{ $hostIP | quote }}
+  value: {{ .hostIP | quote }}
+- name: MOONCAKE_MASTER
+  value: {{ include "sglang-1p1d.mooncakeMasterAddr" .root | quote }}
 {{- end }}
 {{- range $k, $v := $extra }}
 - name: {{ $k }}
@@ -41,6 +46,32 @@ tke.cloud.tencent.com/pod-type: eklet
 {{- end -}}
 {{- end -}}
 
+{{- define "sglang-1p1d.decodeStsName" -}}
+{{- if eq (int .index) 0 -}}
+{{ include "sglang-1p1d.name" .root }}-decode
+{{- else -}}
+{{ include "sglang-1p1d.name" .root }}-decode-{{ .index }}
+{{- end -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.podFQDN" -}}
+{{ .pod }}.{{ .svc }}.{{ .ns }}.svc.cluster.local
+{{- end -}}
+
+{{- define "sglang-1p1d.prefillFQDN" -}}
+{{- $sts := include "sglang-1p1d.prefillStsName" . -}}
+{{- include "sglang-1p1d.podFQDN" (dict "pod" (printf "%s-0" $sts) "svc" $sts "ns" .root.Release.Namespace) -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.decodeFQDN" -}}
+{{- $sts := include "sglang-1p1d.decodeStsName" . -}}
+{{- include "sglang-1p1d.podFQDN" (dict "pod" (printf "%s-0" $sts) "svc" $sts "ns" .root.Release.Namespace) -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.mooncakeMasterDNS" -}}
+{{ include "sglang-1p1d.name" . }}-mooncake-master.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.mooncake.master.port }}
+{{- end -}}
+
 {{- define "sglang-1p1d.hicacheArgs" -}}
 {{- if .Values.hicache.enabled }} --enable-hierarchical-cache --hicache-ratio {{ .Values.hicache.ratio }} --hicache-storage-backend {{ .Values.hicache.storageBackend }} --hicache-storage-prefetch-policy {{ .Values.hicache.prefetchPolicy }} --hicache-mem-layout {{ .Values.hicache.memLayout }} --hicache-write-policy {{ .Values.hicache.writePolicy }}{{- end -}}
 {{- end -}}
@@ -48,7 +79,7 @@ tke.cloud.tencent.com/pod-type: eklet
 {{- define "sglang-1p1d.launchArgs" -}}
 {{- $root := .root -}}
 {{- range $root.Values.commonArgs }} {{ . }}{{- end -}}
-{{- range .extra }} {{ . }}{{- end }} --disaggregation-ib-device {{ $root.Values.ibDevice | quote }} --disaggregation-bootstrap-port {{ $root.Values.bootstrapPort }}
+{{- range .extra }} {{ . }}{{- end }} --port {{ .port }} --disaggregation-ib-device {{ $root.Values.ibDevice | quote }} --disaggregation-bootstrap-port {{ .bootstrapPort }}
 {{- end -}}
 
 {{- define "sglang-1p1d.workerVolumes" -}}

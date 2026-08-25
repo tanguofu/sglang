@@ -1,39 +1,65 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ include "sglang-1p1d.name" . }}-prefill
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "sglang-1p1d.labels" . | nindent 4 }}
-    app.kubernetes.io/component: prefill
-spec:
-  type: ClusterIP
-  clusterIP: None
-  selector:
-    app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
-    app.kubernetes.io/component: prefill
-  ports:
-    - name: http
-      port: 30000
-      targetPort: 30000
-      protocol: TCP
+{{- $root := . }}
+{{- range $i, $_ := .Values.prefills }}
+{{- $sts := include "sglang-1p1d.prefillStsName" (dict "root" $root "index" $i) }}
+{{- $component := "prefill" }}
+{{- if gt (int $i) 0 }}
+{{- $component = printf "prefill-%d" (int $i) }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "sglang-1p1d.name" . }}-decode
-  namespace: {{ .Release.Namespace }}
+  name: {{ $sts }}
+  namespace: {{ $root.Release.Namespace }}
   labels:
-    {{- include "sglang-1p1d.labels" . | nindent 4 }}
-    app.kubernetes.io/component: decode
+    {{- include "sglang-1p1d.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+    pd-role: prefill
 spec:
   type: ClusterIP
   clusterIP: None
   selector:
-    app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
-    app.kubernetes.io/component: decode
+    app.kubernetes.io/name: {{ include "sglang-1p1d.name" $root }}
+    app.kubernetes.io/component: {{ $component }}
   ports:
     - name: http
-      port: 30000
-      targetPort: 30000
+      port: {{ $root.Values.ports.prefill.http }}
+      targetPort: {{ $root.Values.ports.prefill.http }}
       protocol: TCP
+    - name: bootstrap
+      port: {{ $root.Values.ports.prefill.bootstrap }}
+      targetPort: {{ $root.Values.ports.prefill.bootstrap }}
+      protocol: TCP
+{{- end }}
+{{- range $i, $_ := .Values.decodes }}
+{{- $sts := include "sglang-1p1d.decodeStsName" (dict "root" $root "index" $i) }}
+{{- $component := "decode" }}
+{{- if gt (int $i) 0 }}
+{{- $component = printf "decode-%d" (int $i) }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $sts }}
+  namespace: {{ $root.Release.Namespace }}
+  labels:
+    {{- include "sglang-1p1d.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+    pd-role: decode
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: {{ include "sglang-1p1d.name" $root }}
+    app.kubernetes.io/component: {{ $component }}
+  ports:
+    - name: http
+      port: {{ $root.Values.ports.decode.http }}
+      targetPort: {{ $root.Values.ports.decode.http }}
+      protocol: TCP
+    - name: bootstrap
+      port: {{ $root.Values.ports.decode.bootstrap }}
+      targetPort: {{ $root.Values.ports.decode.bootstrap }}
+      protocol: TCP
+{{- end }}

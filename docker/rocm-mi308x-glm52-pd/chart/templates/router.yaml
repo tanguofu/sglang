@@ -10,7 +10,10 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
@@ -21,9 +24,8 @@ spec:
         app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
         app.kubernetes.io/component: router
         pd-role: router
-      annotations:
-        {{- include "sglang-1p1d.ekletAnnotations" . | nindent 8 }}
     spec:
+      hostNetwork: {{ .Values.router.hostNetwork | default true }}
       dnsPolicy: ClusterFirst
       nodeName: {{ .Values.router.nodeName }}
       restartPolicy: Always
@@ -44,10 +46,12 @@ spec:
               echo "=== SGLang PD Router ==="
               exec python3 -m sglang_router.launch_router \
                 --pd-disaggregation \
-                {{- range .Values.prefills }}
-                --prefill http://{{ .ip }}:30000 {{ $.Values.bootstrapPort }} \
+                {{- range $i, $p := .Values.prefills }}
+                --prefill http://{{ $p.ip }}:{{ $.Values.ports.prefill.http }} {{ $.Values.ports.prefill.bootstrap }} \
                 {{- end }}
-                --decode http://{{ .Values.decodeIP }}:30000 \
+                {{- range $i, $d := .Values.decodes }}
+                --decode http://{{ $d.ip }}:{{ $.Values.ports.decode.http }} \
+                {{- end }}
                 --host 0.0.0.0 --port {{ .Values.router.port }} \
                 --prometheus-port {{ .Values.router.metricsPort }} \
                 --model-path {{ .Values.modelPath }} \
@@ -72,11 +76,9 @@ spec:
           resources:
             limits:
               memory: 8Gi
-              tke.cloud.tencent.com/eni-ip: "1"
             requests:
               cpu: "4"
               memory: 4Gi
-              tke.cloud.tencent.com/eni-ip: "1"
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -91,8 +93,8 @@ spec:
               scheme: HTTP
             initialDelaySeconds: 60
             periodSeconds: 30
-            timeoutSeconds: 10
-            failureThreshold: 5
+            timeoutSeconds: 30
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /health
@@ -100,7 +102,7 @@ spec:
               scheme: HTTP
             initialDelaySeconds: 30
             periodSeconds: 15
-            timeoutSeconds: 10
+            timeoutSeconds: 30
             failureThreshold: 5
 ---
 apiVersion: v1

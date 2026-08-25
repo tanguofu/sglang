@@ -42,7 +42,7 @@ spec:
           args:
             - |
               set -euo pipefail
-              echo "=== mooncake_master rpc=:{{ .Values.mooncake.master.port }} on {{ .Values.mooncake.master.hostIP }} ==="
+              echo "=== mooncake_master rpc=:{{ .Values.mooncake.master.port }} on {{ .Values.mooncake.master.ip }} ==="
               exec mooncake_master \
                 --rpc_address=0.0.0.0 \
                 --rpc_port={{ .Values.mooncake.master.port }} \
