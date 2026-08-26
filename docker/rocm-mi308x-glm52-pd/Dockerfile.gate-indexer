@@ -1,19 +1,23 @@
 # Incremental worker image: bake the verified BF16 gate/indexer overlay
-# onto v0525-wave1. Full rebuild still uses Dockerfile.
+# onto v0525-wave1, and enable fused DSA top-k on ROCm under PD disaggregation.
+# Full rebuild still uses Dockerfile.
 #
 # Build (from repo root):
 #   docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile.gate-indexer \
-#     -t mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0825-gate-indexer .
+#     -t mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk .
 
 FROM mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1
 
 LABEL gate-indexer-overlay="v1"
+LABEL fused-topk-roc="v1"
 LABEL rollback="mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1"
 
 COPY docker/rocm-mi308x-glm52-pd/patches/mi308x_gfx942_bf16_gate_indexer.csv \
      /sgl-workspace/aiter/aiter/configs/model_configs/mi308x_gfx942_bf16_tuned_gemm.csv
 COPY docker/rocm-mi308x-glm52-pd/scripts/gen_bf16_gate_indexer.py \
      /opt/aiter-scripts/gen_bf16_gate_indexer.py
+COPY docker/rocm-mi308x-glm52-pd/patches/post1/enable_fused_topk_rocm.py \
+     /tmp/enable_fused_topk_rocm.py
 
 RUN python3 -c "\
 from pathlib import Path; \
@@ -22,3 +26,9 @@ n=sum(1 for _ in p.open())-1; \
 assert n==135, n; \
 assert Path('/opt/aiter-scripts/gen_bf16_gate_indexer.py').is_file(); \
 print('[OK] baked gate/indexer overlay rows', n)"
+
+RUN python3 /tmp/enable_fused_topk_rocm.py \
+        /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/utils.py \
+    && grep -q '(is_cuda() or is_hip())' \
+        /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/utils.py \
+    && echo '[OK] fused DSA top-k enabled on ROCm'
