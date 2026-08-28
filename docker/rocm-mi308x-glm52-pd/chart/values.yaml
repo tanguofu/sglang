@@ -14,8 +14,8 @@
 
 nameOverride: sglang-1p1d
 
-workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0825-gate-indexer
-routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0516-batch1-tok
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk
+routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0827-pot-loads
 imagePullPolicy: Always
 imagePullSecrets:
   - tencent-registry
@@ -90,18 +90,21 @@ mooncake:
     standalonePrefill: false
 
 # Live router is hostNetwork on the decode-0 GPU node (not eklet).
-# cache_aware + balance-abs-threshold 0 pinned all traffic to P1/D0:
-# worker.load() stays 0 so imbalance never fires; shared system prompt
-# ties min-load to the first worker. Decode has no HiCache — do not
-# cache_aware-route it. round_robin spreads 2P2D; L3 shares prefixes.
+# Must tolerate dedicated=sglang-1pd-A-group:NoSchedule (chart hard-codes Exists).
+#
+# v0827-pot-loads parses loads[].num_total_tokens and skips scrape -1.
+# 2 workers => PoT always compares both and sends new traffic to the
+# lighter one. cache_aware pinned P1/D0 here. Decode has no GPU HiCache.
+# Cross-P prefix reuse is Mooncake L3. Do not rebuild workers for this.
 router:
   nodeName: node-21.151.225.132
   hostNetwork: true
   port: 30001
   metricsPort: 19096
   cbTimeoutSecs: 60
-  prefillPolicy: round_robin
-  decodePolicy: round_robin
+  prefillPolicy: power_of_two
+  decodePolicy: power_of_two
+  balanceAbsThreshold: 0
 
 ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
 

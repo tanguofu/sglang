@@ -26,7 +26,7 @@ spec:
         pd-role: router
     spec:
       hostNetwork: {{ .Values.router.hostNetwork | default true }}
-      dnsPolicy: ClusterFirst
+      dnsPolicy: ClusterFirstWithHostNet
       nodeName: {{ .Values.router.nodeName }}
       restartPolicy: Always
       terminationGracePeriodSeconds: 30
@@ -34,6 +34,12 @@ spec:
         {{- range .Values.imagePullSecrets }}
         - name: {{ . }}
         {{- end }}
+      # GPU nodes are tainted dedicated=sglang-1pd-*-group:NoSchedule.
+      # nodeName skips the scheduler but kubelet still admits on taints.
+      # Missing this is what left hostNetwork pods in NodePorts and
+      # spawned the leftover storm. Same as mooncake-master / workers.
+      tolerations:
+        - operator: Exists
       containers:
         - name: router
           image: {{ .Values.routerImage }}
@@ -62,6 +68,7 @@ spec:
                 --health-success-threshold 2 \
                 --prefill-policy {{ .Values.router.prefillPolicy | default "round_robin" }} \
                 --decode-policy {{ .Values.router.decodePolicy | default "round_robin" }} \
+                --balance-abs-threshold {{ .Values.router.balanceAbsThreshold | default 0 }} \
                 --cb-timeout-duration-secs {{ .Values.router.cbTimeoutSecs | default 60 }} \
                 --log-level info
           env:
