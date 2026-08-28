@@ -1,15 +1,17 @@
 # Incremental worker image: bake the verified BF16 gate/indexer overlay
-# onto v0525-wave1, and enable fused DSA top-k on ROCm under PD disaggregation.
+# onto v0525-wave1, enable fused DSA top-k on ROCm under PD disaggregation,
+# and relax HiCache JIT kernel alignment to 64 bytes for GLM-5.2 MLA (576).
 # Full rebuild still uses Dockerfile.
 #
 # Build (from repo root):
 #   docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile.gate-indexer \
-#     -t mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk .
+#     -t mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit .
 
 FROM mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1
 
 LABEL gate-indexer-overlay="v1"
 LABEL fused-topk-roc="v1"
+LABEL hicache-jit-576="v1"
 LABEL rollback="mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1"
 
 COPY docker/rocm-mi308x-glm52-pd/patches/mi308x_gfx942_bf16_gate_indexer.csv \
@@ -18,6 +20,8 @@ COPY docker/rocm-mi308x-glm52-pd/scripts/gen_bf16_gate_indexer.py \
      /opt/aiter-scripts/gen_bf16_gate_indexer.py
 COPY docker/rocm-mi308x-glm52-pd/patches/post1/enable_fused_topk_rocm.py \
      /tmp/enable_fused_topk_rocm.py
+COPY docker/rocm-mi308x-glm52-pd/patches/post1/enable_hicache_jit_576.py \
+     /tmp/enable_hicache_jit_576.py
 
 RUN python3 -c "\
 from pathlib import Path; \
@@ -32,3 +36,10 @@ RUN python3 /tmp/enable_fused_topk_rocm.py \
     && grep -q '(is_cuda() or is_hip())' \
         /sgl-workspace/sglang/python/sglang/srt/layers/attention/dsa/utils.py \
     && echo '[OK] fused DSA top-k enabled on ROCm'
+
+RUN python3 /tmp/enable_hicache_jit_576.py \
+    && grep -q 'kBytes % 64' \
+        /sgl-workspace/sglang/python/sglang/kernels/jit/csrc/kvcacheio/hicache.cuh \
+    && grep -q 'element_size % 64' \
+        /sgl-workspace/sglang/python/sglang/kernels/ops/kvcache/hicache.py \
+    && echo '[OK] HiCache JIT kernel relaxed to 64-byte alignment'

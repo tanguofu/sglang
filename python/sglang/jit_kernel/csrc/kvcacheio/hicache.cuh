@@ -81,10 +81,11 @@ SGL_DEVICE void store_nc(uint4* __restrict__ dst, const uint4& value) {
 
 template <int64_t kBytes, uint32_t kNumThreads>
 SGL_DEVICE auto load_vec(const void* __restrict__ src) {
-  static_assert(kBytes % 128 == 0, "kBytes must be multiple of 128 bytes");
-  static_assert(128 % kNumThreads == 0, "kNumThreads must divide 128 bytes");
-  constexpr uint32_t kLoopCount = kBytes / 128;
-  using Package = details::PackageType<128 / kNumThreads>;
+  // 64-byte granularity: 128 excluded GLM-5.2 MLA (576%128=64).
+  static_assert(kBytes % 64 == 0, "kBytes must be multiple of 64 bytes");
+  static_assert(64 % kNumThreads == 0, "kNumThreads must divide 64 bytes");
+  constexpr uint32_t kLoopCount = kBytes / 64;
+  using Package = details::PackageType<64 / kNumThreads>;
   using Storage = details::LocalStorage<Package, kLoopCount>;
 
   const auto src_packed = static_cast<const Package*>(src);
