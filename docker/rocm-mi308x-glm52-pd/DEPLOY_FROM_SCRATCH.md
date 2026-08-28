@@ -53,7 +53,7 @@ python3 docker/rocm-mi308x-glm52-pd/scripts/merge_decode_fmoe_256_8.py $dst
 ```yaml
 # 镜像（已 push 到 mirror）
 workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0825-gate-indexer
-routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0516-batch1-tok
+routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0827-pot-loads
 
 # 节点 IP（替换成实际 IP）
 prefills:

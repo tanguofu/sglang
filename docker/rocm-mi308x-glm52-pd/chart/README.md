@@ -1,6 +1,6 @@
 # GLM-5.2 MI308X 2P2D Helm chart
 
-Live snapshot of `kube-system/sglang-1p1d` as of 2026-08-25 (chart 0.3.7, worker `v0825-gate-indexer`). Two TP8 prefills + two TP8 decodes, GDR PD, DSA tilelang + FlyDSL MQA, NEXTN, Mooncake L3 HiCache. `page_size=64`, prefill L2 ratio 2, Mooncake store sidecars, router `round_robin`.
+Live snapshot of `kube-system/sglang-1p1d` as of 2026-08-25 (chart 0.3.7, worker `v0825-gate-indexer`). Two TP8 prefills + two TP8 decodes, GDR PD, DSA tilelang + FlyDSL MQA, NEXTN, Mooncake L3 HiCache. `page_size=64`, prefill L2 ratio 2, Mooncake store sidecars, router `power_of_two` (`v0827-pot-loads`).
 
 Use this chart to rebuild the **current** cluster from zero. Worker discovery is the live scheme: **hostNetwork + node host IPs** (not STS DNS). Prefill and decode all bind `:30000` / `:8998` because they sit on different nodes.
 
@@ -26,7 +26,7 @@ Router args (matches live):
 
 `MOONCAKE_MASTER=21.151.225.132:50051` (host IP, not ClusterIP). `SGLANG_HOST_IP` / `MOONCAKE_LOCAL_HOSTNAME` are the worker host IPs.
 
-Router policies: `--prefill-policy round_robin --decode-policy round_robin`. Do not use `cache_aware` on this 2P2D — it stuck all load on P1/D0 (`load()` never increments, shared system prompt ties). Decode has no HiCache. Cross-prefill prefix reuse is Mooncake L3.
+Router policies: `--prefill-policy power_of_two --decode-policy power_of_two` on `v0827-pot-loads`. That image sums `/v1/loads` `loads[].num_total_tokens` (workers omit `aggregate`) and does not cache scrape `-1`. Do not use `cache_aware` — shared system prompt pinned all load to P1/D0, and decode has no GPU HiCache. Cross-prefill prefix reuse is Mooncake L3.
 
 Public HTTPRoute: `https://glm52-pd-1p1d.jmpti.woa.com` → Service `sglang-1p1d-router:30001`.
 
@@ -40,7 +40,7 @@ helm upgrade --install sglang-1p1d docker/rocm-mi308x-glm52-pd/chart \
   --set apiKey=sk-...
 ```
 
-Do not commit the live API key. Do not `helm install` a second PD release. Do not set `--hicache-ratio 4` (OOM ~2TB host KV on TP8). Scale the router to 0 before a bounce, then back to 1 with `nodeName` pinned — a surge replica can land on eklet.
+Do not commit the live API key. Do not `helm install` a second PD release. Do not set `--hicache-ratio 4` (OOM ~2TB host KV on TP8). Scale the router to 0 before a bounce, then back to 1 with `nodeName` pinned and `tolerations: [{operator: Exists}]` — GPU nodes are tainted; a hostNetwork pod without that toleration fails kubelet `NodePorts` and leaves zombie replicas.
 
 Each GPU node needs `/data/model/glm52-fp8` and `/data/aiter_configs/a8w8_blockscale_tuned_fmoe_glm5_1_cu80.csv` (cu_num=80 **and** decode tiles `expert=256,topk=8` for token 1..128; see `scripts/merge_decode_fmoe_256_8.py`). Prefill will try `/data/mooncake-patched/patch_evict_backup.py` (v2) and `patch_prefetch_log.py` and continue if they are missing.
 
@@ -83,7 +83,7 @@ A per-node master would partition L3 and make cross-P prefix sharing impossible.
 ## Images
 
 - Workers / mooncake: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0825-gate-indexer`
-- Router: `mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0516-batch1-tok`
+- Router: `mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0827-pot-loads`
 - Rollback workers: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0525-wave1`
 
-`v0825-gate-indexer` is `v0525-wave1` plus the thin BF16 gate/indexer overlay (`N=32/256 K=6144`, 135 rows) and `/opt/aiter-scripts/gen_bf16_gate_indexer.py`. Wave 1 (`v0525-wave1`): FlyDSL gfx942 MQA logits, HIP `Event.wait()`, decode MoE CSV 256/8. Chart unsets `SGLANG_DSA_HIP_DISABLE_PRESHUFFLE` so both P and D use `page_size=64`. Router is Recreate + `round_robin`.
+`v0825-gate-indexer` is `v0525-wave1` plus the thin BF16 gate/indexer overlay (`N=32/256 K=6144`, 135 rows) and `/opt/aiter-scripts/gen_bf16_gate_indexer.py`. Wave 1 (`v0525-wave1`): FlyDSL gfx942 MQA logits, HIP `Event.wait()`, decode MoE CSV 256/8. Chart unsets `SGLANG_DSA_HIP_DISABLE_PRESHUFFLE` so both P and D use `page_size=64`. Router is Recreate + `power_of_two` on both P and D (`v0827-pot-loads`).

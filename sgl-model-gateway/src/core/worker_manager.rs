@@ -209,24 +209,84 @@ impl WorkerManager {
         url: &str,
         api_key: Option<&str>,
     ) -> isize {
-        let load_url = format!("{}/v1/loads?include=core", url);
-        let mut req = client.get(&load_url).timeout(REQUEST_TIMEOUT);
+        // Current workers omit server-side aggregate and only emit
+        // loads[].num_total_tokens. Older engines still have /get_load.
+        let v1 = format!("{}/v1/loads?include=core", url);
+        if let Some(json) = Self::fetch_json(client, &v1, api_key).await {
+            if let Some(n) = Self::extract_token_load(&json) {
+                return n;
+            }
+        }
+
+        let legacy = format!("{}/get_load", url);
+        if let Some(json) = Self::fetch_json(client, &legacy, api_key).await {
+            if let Some(n) = Self::extract_token_load(&json) {
+                return n;
+            }
+        }
+
+        -1
+    }
+
+    async fn fetch_json(
+        client: &reqwest::Client,
+        url: &str,
+        api_key: Option<&str>,
+    ) -> Option<Value> {
+        let mut req = client.get(url).timeout(REQUEST_TIMEOUT);
         if let Some(key) = api_key {
             req = req.bearer_auth(key);
         }
-
         match req.send().await {
-            Ok(r) if r.status().is_success() => match r.json::<Value>().await {
-                Ok(json) => json
-                    .get("aggregate")
-                    .and_then(|a| a.get("total_tokens"))
-                    .and_then(|v| v.as_i64())
-                    .map(|n| n as isize)
-                    .unwrap_or(-1),
-                _ => -1,
-            },
-            _ => -1,
+            Ok(r) if r.status().is_success() => r.json::<Value>().await.ok(),
+            _ => None,
         }
+    }
+
+    /// Token occupancy used by power_of_two. Prefers aggregate when present
+    /// (older workers), otherwise sums per-rank fields from /v1/loads or
+    /// the legacy /get_load array. Returns None so the caller can skip the
+    /// cache and let PoT fall back to in-flight request counts.
+    fn extract_token_load(json: &Value) -> Option<isize> {
+        if let Some(n) = json
+            .get("aggregate")
+            .and_then(|a| a.get("total_tokens"))
+            .and_then(Self::json_nonneg_i64)
+        {
+            return Some(n);
+        }
+
+        if let Some(loads) = json.get("loads").and_then(|v| v.as_array()) {
+            if let Some(n) = Self::sum_rank_tokens(loads) {
+                return Some(n);
+            }
+        }
+
+        if let Some(arr) = json.as_array() {
+            return Self::sum_rank_tokens(arr);
+        }
+
+        None
+    }
+
+    fn json_nonneg_i64(v: &Value) -> Option<isize> {
+        v.as_i64().filter(|&n| n >= 0).map(|n| n as isize)
+    }
+
+    fn sum_rank_tokens(loads: &[Value]) -> Option<isize> {
+        let mut total: i64 = 0;
+        let mut found = false;
+        for load in loads {
+            let n = load
+                .get("num_total_tokens")
+                .and_then(|v| v.as_i64())
+                .or_else(|| load.get("num_tokens").and_then(|v| v.as_i64()));
+            if let Some(n) = n.filter(|&n| n >= 0) {
+                total += n;
+                found = true;
+            }
+        }
+        found.then_some(total as isize)
     }
 
     pub async fn get_engine_metrics(
@@ -358,7 +418,12 @@ impl LoadMonitor {
 
             let mut loads = HashMap::new();
             for load_info in result.loads {
-                loads.insert(load_info.worker, load_info.load);
+                // -1 means scrape/parse failed. Do not cache it: PoT treats
+                // Some(-1) as a real token load and never falls back to
+                // worker.load(), which makes 2-worker PD look random.
+                if load_info.load >= 0 {
+                    loads.insert(load_info.worker, load_info.load);
+                }
             }
 
             if !loads.is_empty() {
@@ -390,5 +455,53 @@ impl Drop for LoadMonitor {
                 handle.abort();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorkerManager;
+    use serde_json::json;
+
+    #[test]
+    fn extract_token_load_prefers_aggregate() {
+        let json = json!({
+            "aggregate": { "total_tokens": 12 },
+            "loads": [{ "num_total_tokens": 99 }]
+        });
+        assert_eq!(WorkerManager::extract_token_load(&json), Some(12));
+    }
+
+    #[test]
+    fn extract_token_load_sums_v1_loads_without_aggregate() {
+        // Live 0.5.17.dev workers omit aggregate (see test_v1_loads_aggregate).
+        let json = json!({
+            "version": "0.5.17.dev",
+            "loads": [
+                { "dp_rank": 0, "num_total_tokens": 50878, "num_used_tokens": 23616 },
+                { "dp_rank": 1, "num_total_tokens": 100 }
+            ]
+        });
+        assert_eq!(WorkerManager::extract_token_load(&json), Some(50978));
+    }
+
+    #[test]
+    fn extract_token_load_reads_legacy_get_load_array() {
+        let json = json!([
+            { "dp_rank": 0, "num_reqs": 0, "num_tokens": 542656 }
+        ]);
+        assert_eq!(WorkerManager::extract_token_load(&json), Some(542656));
+    }
+
+    #[test]
+    fn extract_token_load_rejects_missing_or_negative() {
+        assert_eq!(WorkerManager::extract_token_load(&json!({})), None);
+        assert_eq!(
+            WorkerManager::extract_token_load(&json!({
+                "aggregate": { "total_tokens": -1 },
+                "loads": []
+            })),
+            None
+        );
     }
 }
