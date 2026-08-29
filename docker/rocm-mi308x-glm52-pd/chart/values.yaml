@@ -14,7 +14,7 @@
 
 nameOverride: sglang-1p1d
 
-workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit
 routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0827-pot-loads
 imagePullPolicy: Always
 imagePullSecrets:
@@ -135,6 +135,10 @@ workerEnv:
   SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT: "600"
   SGLANG_DISAGGREGATION_WAITING_TIMEOUT: "1800"
   SGLANG_MOONCAKE_SEND_AUX_TCP: "1"
+  # FlyDSL MQA logits kernel variant: mfma_r4_w4 is 38-65% faster than the
+  # default mfma_r2_w4 for GLM-5.2 DSA (index_topk=2048 sparse window).
+  # Prefill throughput 901->1490 tok/s on 1M input. Verified max_diff=0.0.
+  FLYDSL_FP8_MQA_LOGITS_VARIANT: mfma_r4_w4
   MOONCAKE_PROTOCOL: rdma
   MC_GID_INDEX: "3"
   HIP_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
