@@ -28,7 +28,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: {{ include "sglang-1p1d.name" $root }}
-        app.kubernetes.io/component: {{ $component }}
+        app.kubernetes.io/component: prefill
         pd-role: prefill
         prefill-index: "{{ $i }}"
     spec:
