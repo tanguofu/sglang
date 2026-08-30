@@ -937,9 +937,9 @@ class Indexer(MultiPlatformOp):
                 dtype=torch.float32,
             )
             deepgemm_fp8_paged_mqa_logits(
-                q_fp8,
+                q_fp8[:q_offset],
                 kv_cache_fp8,
-                weights,
+                weights[:q_offset],
                 logits,
                 seqlens_32,
                 block_tables,
@@ -974,9 +974,9 @@ class Indexer(MultiPlatformOp):
             )
 
         # NOTE(dark): logits should be cleaned in topk_transform
-        topk_result = metadata.topk_transform(logits, self.index_topk)
+        topk_result = metadata.topk_transform(logits[:q_offset], self.index_topk)
         # Restore possible padding exist in the hidden states.
-        if not _is_hip and q_offset < q_fp8.shape[0]:
+        if q_offset < q_fp8.shape[0]:
             pad_len = q_fp8.shape[0] - q_offset
             padding = torch.full(
                 (pad_len, topk_result.shape[1]),

@@ -91,6 +91,7 @@ RUN set -eux; \
     python3 /tmp/post1-patches/serving_responses_pd.py     $S/srt/entrypoints/openai/serving_responses.py; \
     python3 /tmp/post1-patches/conn_host_staging.py        $S/srt/disaggregation/mooncake/conn.py; \
     python3 /tmp/post1-patches/apply_live_runtime.py       $S; \
+    python3 /tmp/post1-patches/dp8ep8_mtp_fix.py          $S; \
     echo "[GLM-5.2] patches + GDR L2 flush baked into post1 source"
 
 # Verify all 11 ported patches are present in the patched source.
@@ -126,6 +127,12 @@ assert idx.count('flydsl_fp8_mqa_logits') >= 2, 'wave1-flydsl-sites'; \
 assert idx.count('WAVE1: FlyDSL gfx942 MQA logits') == 2, 'wave1-flydsl-marker'; \
 assert 'self.publish_ready.synchronize()' not in r('srt/managers/overlap_utils.py'), 'wave1-hip-wait'; \
 assert 'Event.wait() regresses TPOT' not in r('srt/managers/overlap_utils.py'), 'wave1-no-mi355-sync'; \
+assert '_idle_spec_rows_per_seq' in r('srt/layers/attention/dsa_backend.py'), 'dp8ep8-idle-spec'; \
+assert 'rows_per_seq = _idle_spec_rows_per_seq(forward_batch)' in r('srt/layers/attention/dsa_backend.py'), 'dp8ep8-idle-expansion'; \
+assert 'q_fp8[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-q-slice'; \
+assert 'weights[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-weights-slice'; \
+assert 'logits[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-topk-slice'; \
+assert 'if q_offset < q_fp8.shape[0]:' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-padding-restore'; \
 print('[OK] All 11 ported patches + 2 base patches + WAVE1 flydsl/hip-wait verified')"
 
 # ============================================================
