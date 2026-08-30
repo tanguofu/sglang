@@ -23,7 +23,7 @@ def patch_backend() -> str:
     src = BACKEND.read_text()
     changed = False
 
-    helper_anchor = "# Reuse this workspace buffer across all DSA backend instances"
+    helper_anchor = "@dataclass(frozen=True)\nclass DSAFlashMLAMetadata:"
     helper = '''def _idle_spec_rows_per_seq(forward_batch: ForwardBatch) -> int:
     """Query rows carried by each padded sequence of an idle DP-attention rank."""
     if not forward_batch.forward_mode.is_idle():
@@ -73,8 +73,9 @@ def patch_indexer() -> str:
     src = INDEXER.read_text()
     changed = False
 
-    replacements = [
+    call_replacements = [
         (
+            # Newer trees call deepgemm_fp8_paged_mqa_logits directly.
             "            deepgemm_fp8_paged_mqa_logits(\n"
             "                q_fp8,\n"
             "                kv_cache_fp8,\n"
@@ -85,10 +86,28 @@ def patch_indexer() -> str:
             "                weights[:q_offset],\n",
         ),
         (
+            # v0.5.17 calls the HIP kernel through the aiter wrapper.
+            "            logits = aiter_paged_mqa_logits(\n"
+            "                q_fp8,\n"
+            "                kv_cache_fp8,\n"
+            "                weights,\n",
+            "            logits = aiter_paged_mqa_logits(\n"
+            "                q_fp8[:q_offset],\n"
+            "                kv_cache_fp8,\n"
+            "                weights[:q_offset],\n",
+        ),
+    ]
+    if not any(new in src for _, new in call_replacements):
+        matches = [(old, new) for old, new in call_replacements if old in src]
+        assert matches, "dp8ep8_mtp_fix: dsa_indexer MQA call anchor missing"
+        old, new = matches[0]
+        src = src.replace(old, new, 1)
+        changed = True
+
+    replacements = [
+        (
             "        topk_result = metadata.topk_transform(logits, self.index_topk)",
-            "        topk_result = metadata.topk_transform(\n"
-            "            logits[:q_offset], self.index_topk\n"
-            "        )",
+            "        topk_result = metadata.topk_transform(logits[:q_offset], self.index_topk)",
         ),
         (
             "        if not _is_hip and q_offset < q_fp8.shape[0]:",
