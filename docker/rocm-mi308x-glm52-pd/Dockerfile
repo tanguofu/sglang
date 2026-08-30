@@ -92,6 +92,7 @@ RUN set -eux; \
     python3 /tmp/post1-patches/conn_host_staging.py        $S/srt/disaggregation/mooncake/conn.py; \
     python3 /tmp/post1-patches/apply_live_runtime.py       $S; \
     python3 /tmp/post1-patches/dp8ep8_mtp_fix.py          $S; \
+    python3 /tmp/post1-patches/enable_paged_flydsl.py     $S/srt/layers/attention/dsa/dsa_indexer.py; \
     echo "[GLM-5.2] patches + GDR L2 flush baked into post1 source"
 
 # Verify all 11 ported patches are present in the patched source.
@@ -133,6 +134,9 @@ assert 'q_fp8[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8e
 assert 'weights[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-weights-slice'; \
 assert 'logits[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-topk-slice'; \
 assert 'if q_offset < q_fp8.shape[0]:' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-padding-restore'; \
+assert 'SGLANG_DSA_PAGED_FLYDSL' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl'; \
+assert 'variant="mfma_r4_w4"' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-r4-w4'; \
+assert 'ks=row_starts' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-topk'; \
 print('[OK] All 11 ported patches + 2 base patches + WAVE1 flydsl/hip-wait verified')"
 
 # ============================================================
