@@ -135,7 +135,7 @@ assert 'weights[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp
 assert 'logits[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-topk-slice'; \
 assert 'if q_offset < q_fp8.shape[0]:' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-padding-restore'; \
 assert 'SGLANG_DSA_PAGED_FLYDSL' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl'; \
-assert 'variant="mfma_r4_w4"' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-r4-w4'; \
+assert 'variant=\"mfma_r4_w4\"' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-r4-w4'; \
 assert 'ks=row_starts' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-topk'; \
 print('[OK] All 11 ported patches + 2 base patches + WAVE1 flydsl/hip-wait verified')"
 
