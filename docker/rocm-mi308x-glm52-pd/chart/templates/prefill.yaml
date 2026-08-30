@@ -17,13 +17,13 @@ metadata:
     pd-role: prefill
     prefill-index: "{{ $i }}"
 spec:
-  serviceName: {{ include "sglang-1p1d.prefillStsName" (dict "root" $root "index" $i) }}
+  serviceName: {{ include "sglang-1p1d.prefillStsName" (dict "root" $root "index" 0) }}
   replicas: 1
   podManagementPolicy: OrderedReady
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "sglang-1p1d.name" $root }}
-      app.kubernetes.io/component: {{ $component }}
+      app.kubernetes.io/component: prefill
   template:
     metadata:
       labels:
