@@ -22,8 +22,8 @@ imagePullSecrets:
 
 # Set at install time. Never commit the live key.
 apiKey: sk-REPLACE_WITH_YOUR_API_KEY
-modelName: glm-5.2
-modelPath: /data/model/glm52-fp8
+modelName: glm-5.3
+modelPath: /data/model/glm53-fp8
 
 # P and D are on different nodes so they all bind :30000 / :8998.
 prefills:
@@ -57,7 +57,7 @@ ports:
 # existing-but-never-getting. prefetch_threshold 1 token (default 256).
 hicache:
   enabled: true
-  ratio: 2
+  ratio: 1
   storageBackend: mooncake
   prefetchPolicy: wait_complete
   memLayout: page_first_direct
@@ -70,7 +70,7 @@ hicache:
 mooncake:
   master:
     enabled: true
-    nodeName: node-21.151.225.132
+    nodeName: node-21.151.225.152
     ip: 21.151.225.132
     port: 50051
     metricsPort: 9003
@@ -97,14 +97,15 @@ mooncake:
 # lighter one. cache_aware pinned P1/D0 here. Decode has no GPU HiCache.
 # Cross-P prefix reuse is Mooncake L3. Do not rebuild workers for this.
 router:
-  nodeName: node-21.151.225.132
+  nodeName: node-21.151.225.152
   hostNetwork: true
   port: 30001
   metricsPort: 19096
   cbTimeoutSecs: 60
-  prefillPolicy: power_of_two
+  prefillPolicy: cache_aware
   decodePolicy: power_of_two
-  balanceAbsThreshold: 0
+  balanceAbsThreshold: 16
+  balanceRelThreshold: 1.5
 
 ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
 
@@ -171,9 +172,9 @@ workerEnv:
   AITER_CONFIG_FMOE: /data/aiter_configs/a8w8_blockscale_tuned_fmoe_glm5_1_cu80.csv
 
 commonArgs:
-  - --model-path /data/model/glm52-fp8
+  - --model-path /data/model/glm53-fp8
   - --model-impl sglang
-  - --served-model-name glm-5.2
+  - --served-model-name glm-5.3
   - --tp-size 8
   - --pp-size 1
   - --trust-remote-code
