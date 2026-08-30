@@ -1,0 +1,41 @@
+# One-decode canary overlay. Apply after chart/values.yaml:
+#   helm upgrade --install sglang-1p1d docker/rocm-mi308x-glm52-pd/chart \
+#     -n kube-system -f docker/rocm-mi308x-glm52-pd/chart/values.yaml \
+#     -f docker/rocm-mi308x-glm52-pd/chart/values-dp8ep8-canary.yaml \
+#     --set apiKey="$SGLANG_API_KEY" --force-conflicts
+decode:
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk
+
+decodes:
+  - nodeName: node-21.151.225.132
+    ip: 21.151.225.132
+  - nodeName: node-21.151.225.172
+    ip: 21.151.225.172
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0830-dp8ep8-mtp-fix
+    extraEnv:
+      SGLANG_MORI_NUM_MAX_DISPATCH_TOKENS_PER_RANK: "128"
+      MORI_SHMEM_MODE: ISOLATION
+    args:
+      - --mem-fraction-static 0.85
+      - --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32 40 48 56 64
+      - --cuda-graph-max-bs-decode 64
+      - --dp-size 8
+      - --ep-size 8
+      - --enable-dp-attention
+      - --enable-dp-lm-head
+      - --moe-a2a-backend mori
+      - --moe-dense-tp-size 1
+      - --deepep-mode low_latency
+      - --disable-shared-experts-fusion
+      - --chunked-prefill-size 2048
+      - --schedule-conservativeness 0.24
+      - --max-running-requests 64
+      - --speculative-algorithm NEXTN
+      - --speculative-num-steps 3
+      - --speculative-num-draft-tokens 4
+      - --speculative-eagle-topk 1
+      - --stream-interval 2
+      - --skip-server-warmup
+      - --watchdog-timeout 1800
+      - --load-balance-method follow_bootstrap_room
+      - --disaggregation-mode decode

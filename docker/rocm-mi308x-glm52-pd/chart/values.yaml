@@ -197,6 +197,7 @@ commonArgs:
   - --log-level info
 
 prefill:
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit
   extraEnv:
     SGLANG_HICACHE_HOST_ALLOCATOR: default
     MOONCAKE_TE_META_DATA_SERVER: P2PHANDSHAKE
@@ -219,6 +220,7 @@ prefill:
       memory: 1800Gi
 
 decode:
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk
   extraEnv: {}
   args:
     - --mem-fraction-static 0.92

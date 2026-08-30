@@ -1,5 +1,6 @@
 {{- $root := . }}
 {{- range $i, $p := .Values.prefills }}
+{{- $workerImage := $p.workerImage | default $root.Values.prefill.workerImage | default $root.Values.workerImage }}
 {{- $component := "prefill" }}
 {{- if gt (int $i) 0 }}
 {{- $component = printf "prefill-%d" (int $i) }}
@@ -46,7 +47,7 @@ spec:
         - operator: Exists
       initContainers:
         - name: env-check
-          image: {{ $root.Values.workerImage }}
+          image: {{ $workerImage }}
           imagePullPolicy: {{ $root.Values.imagePullPolicy }}
           command: ["/bin/bash", "-c"]
           args:
@@ -58,7 +59,7 @@ spec:
             {{- include "sglang-1p1d.workerVolumeMounts" $root | nindent 12 }}
       containers:
         - name: sglang
-          image: {{ $root.Values.workerImage }}
+          image: {{ $workerImage }}
           imagePullPolicy: {{ $root.Values.imagePullPolicy }}
           command: ["/bin/bash", "-c"]
           args:
