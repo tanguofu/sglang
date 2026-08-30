@@ -22,8 +22,16 @@ branch_replacement = '''        row_starts = None
 
             indexer_seq_lens = metadata.get_indexer_seq_len()
             indexer_seq_lens_cpu = metadata.get_indexer_seq_len_cpu()
-            seq_len_sum = int(indexer_seq_lens_cpu.sum().item())
-            max_indexer_seq_len = int(indexer_seq_lens_cpu.max().item())
+            if indexer_seq_lens_cpu is not None:
+                seq_len_sum = int(indexer_seq_lens_cpu.sum().item())
+                max_indexer_seq_len = int(indexer_seq_lens_cpu.max().item())
+            else:
+                # CUDA graph capture may not carry a CPU mirror. seq_lens_sum is
+                # precomputed before capture, and the padded block-table width is
+                # a safe upper bound for the gather kernel.
+                assert forward_batch.seq_lens_sum is not None
+                seq_len_sum = int(forward_batch.seq_lens_sum)
+                max_indexer_seq_len = max_seq_len
             k_fp8, k_scale = get_token_to_kv_pool().get_index_k_scale_buffer(
                 layer_id,
                 indexer_seq_lens,

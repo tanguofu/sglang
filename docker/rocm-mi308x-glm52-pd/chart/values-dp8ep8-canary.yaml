@@ -11,7 +11,7 @@ decodes:
     ip: 21.151.225.132
   - nodeName: node-21.151.225.172
     ip: 21.151.225.172
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0830-dp8ep8-mtp-paged-flydsl
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0831-dp8ep8-mtp-paged-flydsl-v2
     extraEnv:
       SGLANG_MORI_NUM_MAX_DISPATCH_TOKENS_PER_RANK: "128"
       MORI_SHMEM_MODE: ISOLATION
