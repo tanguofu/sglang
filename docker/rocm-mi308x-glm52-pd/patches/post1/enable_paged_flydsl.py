@@ -21,6 +21,8 @@ branch_replacement = '''        row_starts = None
             )
 
             indexer_seq_lens = metadata.get_indexer_seq_len()
+            if indexer_seq_lens is None:
+                indexer_seq_lens = metadata.get_seqlens_int32()
             indexer_seq_lens_cpu = metadata.get_indexer_seq_len_cpu()
             if indexer_seq_lens_cpu is not None:
                 seq_len_sum = int(indexer_seq_lens_cpu.sum().item())
