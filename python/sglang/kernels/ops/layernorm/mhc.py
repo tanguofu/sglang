@@ -1850,6 +1850,7 @@ def _mhc_fused_pre_kernel(
     comb = comb_acc * rsqrt * s2 + tl.reshape(base_comb, (HC, HC))
 
     # Row softmax (stabilised) + col normalize
+    comb = tl.where(comb > float("-inf"), comb, 0.0)
     row_max = tl.max(comb, axis=1)
     comb = tl.exp(comb - row_max[:, None])
     row_sum = tl.sum(comb, axis=1)
@@ -2003,7 +2004,7 @@ def _mhc_pre_dispatch(
             return post_mix, comb_mix, layer_input, norm_weight is not None
 
     if _use_triton_mhc():
-        return _mhc_triton_pre(
+        post_mix, comb_mix, layer_input = _mhc_triton_pre(
             residual=residual,
             fn=fn,
             hc_scale=hc_scale,
@@ -2013,7 +2014,10 @@ def _mhc_pre_dispatch(
             hc_sinkhorn_eps=hc_sinkhorn_eps,
             hc_post_mult_value=hc_post_mult_value,
             sinkhorn_repeat=sinkhorn_repeat,
-        ), norm_weight is not None
+        )
+        # The Triton kernel does not fuse the trailing out_norm; report
+        # norm_fused=False so the caller applies it explicitly.
+        return post_mix, comb_mix, layer_input, False
 
     if not _use_tilelang_mhc_pre():
         post_mix, comb_mix, layer_input = _mhc_pre_torch(
