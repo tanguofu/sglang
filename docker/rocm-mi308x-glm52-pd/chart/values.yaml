@@ -1,4 +1,4 @@
-# GLM-5.2 MI308X 2P2D — live snapshot 2026-08-25 (v0825-gate-indexer)
+# GLM-5.3 MI308X 2P2D — live snapshot 2026-09-01
 #
 # Restores the running kube-system/sglang-1p1d cluster (hostNetwork, GDR,
 # DSA tilelang + FlyDSL MQA, NEXTN, Mooncake L3). Router talks to worker host IPs.
@@ -52,7 +52,7 @@ ports:
     metrics: 9003
 
 # Prefill-only HiCache. ratio 4 previously OOM'd ~2TB host KV on TP8.
-# L1=GPU radix, L2=host (ratio 2 ≈ 992GB/node), L3=Mooncake DRAM pool.
+# L1=GPU radix, L2=host (ratio 1), L3=Mooncake DRAM pool.
 # wait_complete: PD must not start compute before L3 GET; timeout was
 # existing-but-never-getting. prefetch_threshold 1 token (default 256).
 hicache:
@@ -65,13 +65,14 @@ hicache:
   extraConfig:
     prefetch_threshold: 1
 
-# Master colocated with decode-0 (hostNetwork). Prefills must use the host IP,
-# not the ClusterIP — Mooncake RDMA talks to 21.151.225.132:50051.
+# Shared Mooncake master. Workers resolve the Service DNS so a master restart
+# or reschedule does not require hardcoding a new host IP.
+# RDMA data path is P2P; only the TCP control plane uses this address.
 mooncake:
   master:
     enabled: true
     nodeName: node-21.151.225.152
-    ip: 21.151.225.132
+    ip: 21.151.225.152
     port: 50051
     metricsPort: 9003
     evictionHighWatermark: "0.95"
@@ -89,7 +90,7 @@ mooncake:
     # keeps in-process store; sidecars still donate extra DRAM.
     standalonePrefill: false
 
-# Live router is hostNetwork on the decode-0 GPU node (not eklet).
+# Live router is hostNetwork on the prefill-1 GPU node (not eklet).
 # Must tolerate dedicated=sglang-1pd-A-group:NoSchedule (chart hard-codes Exists).
 #
 # v0827-pot-loads parses loads[].num_total_tokens and skips scrape -1.
@@ -101,6 +102,8 @@ router:
   hostNetwork: true
   port: 30001
   metricsPort: 19096
+  # Empty inherits .Values.decodes. power_of_two requires at least two entries.
+  decodes: []
   cbTimeoutSecs: 60
   prefillPolicy: cache_aware
   decodePolicy: power_of_two
@@ -221,13 +224,21 @@ prefill:
 
 decode:
   workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk
+  # Native paged FlyDSL now supports page_size=1 and AITER preshuffle
+  # page_size=16/32/64. Keep it disabled by default so a canary can opt in.
+  pagedFlydsl:
+    enabled: false
   extraEnv: {}
   args:
     - --mem-fraction-static 0.92
     - --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32
     - --cuda-graph-max-bs-decode 32
     - --speculative-algorithm NEXTN
-    - --speculative-num-steps 3
+    # steps=2 (not 3) is the validated pairing for NEXTN on this build —
+    # helm rev10 measured quality 10/10 and better throughput than steps=3.
+    # Keep num-draft-tokens at 4: the rev10 validation used steps=2 + draft=4,
+    # and accept_len on steps=3 was only ~2.6 of 4 drafted tokens.
+    - --speculative-num-steps 2
     - --speculative-num-draft-tokens 4
     - --speculative-eagle-topk 1
     - --num-continuous-decode-steps 4

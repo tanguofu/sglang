@@ -1,3 +1,10 @@
+{{- $decodes := .Values.router.decodes }}
+{{- if not $decodes }}
+{{- $decodes = .Values.decodes }}
+{{- end }}
+{{- if and (eq .Values.router.decodePolicy "power_of_two") (lt (len $decodes) 2) }}
+{{- fail "router.decodePolicy=power_of_two requires at least two router.decodes" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -55,7 +62,7 @@ spec:
                 {{- range $i, $p := .Values.prefills }}
                 --prefill http://{{ $p.ip }}:{{ $.Values.ports.prefill.http }} {{ $.Values.ports.prefill.bootstrap }} \
                 {{- end }}
-                {{- range $i, $d := .Values.decodes }}
+                {{- range $i, $d := $decodes }}
                 --decode http://{{ $d.ip }}:{{ $.Values.ports.decode.http }} \
                 {{- end }}
                 --host 0.0.0.0 --port {{ .Values.router.port }} \

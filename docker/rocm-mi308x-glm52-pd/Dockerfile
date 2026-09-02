@@ -135,13 +135,15 @@ assert 'weights[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp
 assert 'logits[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-topk-slice'; \
 assert 'if q_offset < q_fp8.shape[0]:' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-padding-restore'; \
 assert 'SGLANG_DSA_PAGED_FLYDSL' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl'; \
-assert 'variant=\"mfma_r4_w4\"' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-r4-w4'; \
-assert 'ks=row_starts' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-topk'; \
+assert 'flydsl_fp8_paged_mqa_logits' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-native'; \
+assert 'paged_flydsl_variant = \"mfma_r4_w4\"' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-r4-w4'; \
+assert 'page_size=page_size' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-page-size'; \
+assert 'preshuffle=_use_aiter_preshuffle' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-preshuffle'; \
 print('[OK] All 11 ported patches + 2 base patches + WAVE1 flydsl/hip-wait verified')"
 
 # ============================================================
 # Layer 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)
-# + Triton fp8_mqa_logits FN→FNUZ fix + BLOCK_KV=64 fallback
+# + Triton fp8_mqa_logits FN→FNUZ fix + BLOCK_KV=128
 # ============================================================
 COPY docker/rocm-mi308x-glm52/patches/flydsl/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/flydsl/kernels/fp8_mqa_logits.py
 COPY docker/rocm-mi308x-glm52/patches/flydsl/__init__.py /sgl-workspace/aiter/aiter/ops/flydsl/__init__.py

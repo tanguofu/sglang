@@ -13,10 +13,10 @@ import urllib.request
 from typing import Any
 
 ROUTER = "http://sglang-1p1d-router.kube-system:30001"
-MODEL = "glm-5.2"
+MODEL = "glm-5.3"
 STAMP = str(int(time.time()))
 OUT = "/data/bench_longctx_align.json"
-TOK_PATH = "/data/model/glm52-fp8"
+TOK_PATH = "/data/model/glm53-fp8"
 
 FILLER = (
     "人工智能是计算机科学的一个分支，它致力于研究、开发用于模拟、延伸和扩展人类智能的理论、方法、技术及应用系统。"

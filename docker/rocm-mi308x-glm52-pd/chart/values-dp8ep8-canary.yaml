@@ -11,11 +11,15 @@ decodes:
     ip: 21.151.225.132
   - nodeName: node-21.151.225.172
     ip: 21.151.225.172
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0831-dp8ep8-mtp-paged-flydsl-v3
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0831-dp8ep8-mtp-paged-flydsl-v4
+    pagedFlydsl:
+      enabled: false
     extraEnv:
       SGLANG_MORI_NUM_MAX_DISPATCH_TOKENS_PER_RANK: "128"
       MORI_SHMEM_MODE: ISOLATION
-      SGLANG_DSA_PAGED_FLYDSL: "1"
+      # Keep the DP8+EP8 canary on AITER while the TP8 canary validates the
+      # page_size=64 preshuffle FlyDSL path.
+      SGLANG_DSA_PAGED_FLYDSL: "0"
     args:
       - --mem-fraction-static 0.85
       - --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32 40 48 56 64
@@ -35,8 +39,12 @@ decodes:
       - --speculative-num-steps 3
       - --speculative-num-draft-tokens 4
       - --speculative-eagle-topk 1
+      - --num-continuous-decode-steps 4
       - --stream-interval 2
       - --skip-server-warmup
       - --watchdog-timeout 1800
       - --load-balance-method follow_bootstrap_room
       - --disaggregation-mode decode
+
+# Router inherits .Values.decodes. power_of_two requires at least two decodes;
+# the chart fails rendering if a canary override tries to list only one.

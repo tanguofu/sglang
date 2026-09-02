@@ -15,7 +15,7 @@ tke.cloud.tencent.com/pod-type: eklet
 {{- end -}}
 
 {{- define "sglang-1p1d.mooncakeMasterAddr" -}}
-{{ .Values.mooncake.master.ip }}:{{ .Values.mooncake.master.port }}
+{{- include "sglang-1p1d.mooncakeMasterDNS" . -}}
 {{- end -}}
 
 {{- define "sglang-1p1d.workerEnv" -}}
@@ -70,6 +70,17 @@ tke.cloud.tencent.com/pod-type: eklet
 
 {{- define "sglang-1p1d.mooncakeMasterDNS" -}}
 {{ include "sglang-1p1d.name" . }}-mooncake-master.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.mooncake.master.port }}
+{{- end -}}
+
+{{- define "sglang-1p1d.aiterScriptsEnabled" -}}
+{{- $enabled := .Values.aiterBf16Gemm.enabled -}}
+{{- range .Values.decodes -}}
+{{- $pagedFlydsl := .pagedFlydsl | default $.Values.decode.pagedFlydsl -}}
+{{- if $pagedFlydsl.enabled -}}
+{{- $enabled = true -}}
+{{- end -}}
+{{- end -}}
+{{- $enabled -}}
 {{- end -}}
 
 {{- define "sglang-1p1d.hicacheArgs" -}}
@@ -141,7 +152,7 @@ tke.cloud.tencent.com/pod-type: eklet
   hostPath:
     path: /dev/infiniband
     type: Directory
-{{- if .Values.aiterBf16Gemm.enabled }}
+{{- if eq (include "sglang-1p1d.aiterScriptsEnabled" .) "true" }}
 - name: aiter-scripts
   configMap:
     name: {{ include "sglang-1p1d.name" . }}-aiter-scripts
@@ -160,7 +171,7 @@ tke.cloud.tencent.com/pod-type: eklet
   mountPath: /dev/dri
 - name: dev-infiniband
   mountPath: /dev/infiniband
-{{- if .Values.aiterBf16Gemm.enabled }}
+{{- if eq (include "sglang-1p1d.aiterScriptsEnabled" .) "true" }}
 - name: aiter-scripts
   mountPath: /opt/aiter-scripts
   readOnly: true
@@ -188,6 +199,12 @@ python3 /opt/aiter-scripts/gen_bf16_gate_indexer.py install \
   --host-csv {{ .Values.aiterBf16Gemm.hostCsv | quote }} \
   --image-csv {{ .Values.aiterBf16Gemm.imageCsv | quote }}
 {{- end }}
+{{- end -}}
+
+{{- define "sglang-1p1d.pagedFlydslInstall" -}}
+echo "--- native paged FlyDSL overlay (guarded, decode-only) ---"
+python3 /opt/aiter-scripts/patch_paged_flydsl_native.py \
+  --flydsl-src /opt/aiter-scripts
 {{- end -}}
 
 {{- define "sglang-1p1d.securityContext" -}}

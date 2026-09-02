@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cache affinity + L3 check for 3P1D.
+"""Cache affinity + L3 check for 2P2D.
 
 Never hits /v1/responses.
   A) unique 64K: P0 cold, P0 warm (GPU radix), P1 same blob (Mooncake L3)
@@ -15,14 +15,13 @@ import urllib.request
 
 ROUTER = "http://sglang-1p1d-router.kube-system:30001"
 API_KEY = "sk-REPLACE_WITH_YOUR_API_KEY"
-MODEL = "glm-5.2"
-TOK_PATH = "/data/model/glm52-fp8"
+MODEL = "glm-5.3"
+TOK_PATH = "/data/model/glm53-fp8"
 OUT = "/data/bench_cache_affinity.json"
 SALT = str(int(time.time()))
 PREFILLS = {
     "p0": "http://NODE_PREFILL_0_IP:30000",
     "p1": "http://NODE_PREFILL_1_IP:30000",
-    "p2": "http://NODE_DECODE_1_IP:30000",
 }
 
 FILLER = (

@@ -1,4 +1,4 @@
-{{- if .Values.aiterBf16Gemm.enabled }}
+{{- if eq (include "sglang-1p1d.aiterScriptsEnabled" .) "true" }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,4 +10,12 @@ metadata:
 data:
   gen_bf16_gate_indexer.py: |
 {{ .Files.Get "files/gen_bf16_gate_indexer.py" | indent 4 }}
+  patch_paged_flydsl_native.py: |
+{{ .Files.Get "files/patch_paged_flydsl_native.py" | indent 4 }}
+  enable_paged_flydsl.py: |
+{{ .Files.Get "files/enable_paged_flydsl.py" | indent 4 }}
+  flydsl_fp8_mqa_logits.py: |
+{{ .Files.Get "files/flydsl_fp8_mqa_logits.py" | indent 4 }}
+  flydsl_init.py: |
+{{ .Files.Get "files/flydsl_init.py" | indent 4 }}
 {{- end }}
