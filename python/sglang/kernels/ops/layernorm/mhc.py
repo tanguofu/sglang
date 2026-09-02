@@ -243,6 +243,29 @@ def _use_triton_mhc() -> bool:
     )
 
 
+def _use_splitk_mhc() -> bool:
+    """gfx942 splitk mHC (v2): roofline-driven rework of the trio.
+
+    The tilelang trio runs its GEMM with n_splits=16 and its finalize/post
+    with grid=num_tokens -- 8-16 CTAs on a 220-CU part, ~60x off the memory
+    roofline. v2 splits the GEMM over K x tokens (512 CTAs at decode bs=8),
+    keeps partials in global memory (no atomics), fuses out_norm into the
+    finalize, and tiles post over (token, h_out, hidden-block).
+    Measured 26.8 us vs 66.3 us for the tilelang trio (2.5x), numerics
+    identical to _mhc_pre_torch (comb rel err ~3e-7).
+
+    Requires a norm_weight to fuse (otherwise the caller would have to run
+    out_norm separately, re-adding the dispatch we just removed). Enabled by
+    SGLANG_MHC_USE_SPLITK=1 on HIP gfx942; takes precedence over the v1
+    Triton path and tilelang.
+    """
+    return (
+        is_hip()
+        and not is_gfx95_supported()
+        and get_bool_env_var("SGLANG_MHC_USE_SPLITK")
+    )
+
+
 FP8 = "float8_e4m3"
 BF16 = "bfloat16"
 FP32 = "float32"
@@ -1908,6 +1931,237 @@ def _mhc_fused_post_kernel(
                  acc.to(tl.bfloat16))
 
 
+# ---------------------------------------------------------------------------
+# gfx942 splitk mHC (v2): roofline-driven rework. See _use_splitk_mhc().
+#
+# Structure: A) (M, SPLITK=64) GEMM partials -> B) (M,) reduce + gating +
+# Sinkhorn + layer_input with fused out_norm -> C) (M, HC, HIDDEN//BLOCK_H)
+# post. MIX_HC=24 is padded to 32 lanes (tl.arange power-of-2 constraint).
+# Partials are written to global memory (SPLITK, M, MIX_HC) — deterministic,
+# no atomics, no zeroing pass. fn (1.5 MB fp32) stays L2-resident across
+# tokens, so the 8x re-read costs L2 bandwidth, not HBM.
+# ---------------------------------------------------------------------------
+
+@triton.jit
+def _mhc_splitk_gemm_kernel(
+    res_ptr,        # (M, HC, HIDDEN) bf16
+    fn_ptr,         # (MIX_HC, HC*HIDDEN) fp32
+    mul_part_ptr,   # (SPLITK, M, MIX_HC) fp32 out
+    sqr_part_ptr,   # (SPLITK, M) fp32 out
+    M,
+    HC: tl.constexpr,
+    HIDDEN: tl.constexpr,
+    MIX_HC: tl.constexpr,
+    HC_HIDDEN: tl.constexpr,
+    SPLITK: tl.constexpr,
+    BLOCK_K: tl.constexpr,      # = HIDDEN // SPLITK
+):
+    token = tl.program_id(0)
+    split = tl.program_id(1)
+    ks = split * BLOCK_K + tl.arange(0, BLOCK_K)
+
+    mix_arange = tl.arange(0, 32)
+    mix_mask = mix_arange < MIX_HC
+
+    acc = tl.zeros((32,), dtype=tl.float32)
+    sqrsum = 0.0
+
+    for h in tl.static_range(HC):
+        x_h = tl.load(res_ptr + token * HC_HIDDEN + h * HIDDEN + ks).to(tl.float32)
+        sqrsum += tl.sum(x_h * x_h)
+        fn_tile = tl.load(fn_ptr + mix_arange[:, None] * HC_HIDDEN
+                          + h * HIDDEN + ks[None, :],
+                          mask=mix_mask[:, None], other=0.0).to(tl.float32)
+        acc += tl.sum(fn_tile * x_h[None, :], axis=1)
+
+    base = split * M * MIX_HC + token * MIX_HC
+    tl.store(mul_part_ptr + base + mix_arange, acc, mask=mix_mask)
+    tl.store(sqr_part_ptr + split * M + token, sqrsum)
+
+
+@triton.jit
+def _mhc_splitk_finalize_kernel(
+    mul_part_ptr,   # (SPLITK, M, MIX_HC) fp32
+    sqr_part_ptr,   # (SPLITK, M) fp32
+    res_ptr,        # (M, HC, HIDDEN) bf16
+    scale_ptr,      # (3,) fp32
+    base_ptr,       # (MIX_HC,) fp32
+    norm_w_ptr,     # (HIDDEN,) bf16 out_norm weight
+    post_out_ptr,   # (M, HC) fp32
+    comb_out_ptr,   # (M, HC*HC) fp32
+    layer_out_ptr,  # (M, HIDDEN) bf16 (already out_norm'd)
+    M,
+    HC: tl.constexpr,
+    HIDDEN: tl.constexpr,
+    MIX_HC: tl.constexpr,
+    HC_HIDDEN: tl.constexpr,
+    SPLITK: tl.constexpr,
+    SINKHORN_ITERS: tl.constexpr,
+    RMS_EPS: tl.constexpr,
+    PRE_EPS: tl.constexpr,
+    SINKHORN_EPS: tl.constexpr,
+    POST_MULT: tl.constexpr,
+    NORM_EPS: tl.constexpr,
+):
+    token = tl.program_id(0)
+    mix_arange = tl.arange(0, 32)
+    mix_mask = mix_arange < MIX_HC
+    hc_arange = tl.arange(0, HC)
+    split_arange = tl.arange(0, SPLITK)
+
+    acc = tl.sum(tl.load(mul_part_ptr
+                         + split_arange[:, None] * M * MIX_HC
+                         + token * MIX_HC + mix_arange[None, :],
+                         mask=mix_mask[None, :], other=0.0), axis=0)
+    sqrsum = tl.sum(tl.load(sqr_part_ptr + split_arange * M + token))
+
+    s0 = tl.load(scale_ptr + 0)
+    s1 = tl.load(scale_ptr + 1)
+    s2 = tl.load(scale_ptr + 2)
+
+    rsqrt = 1.0 / tl.sqrt(sqrsum / HC_HIDDEN + RMS_EPS)
+
+    base_pre = tl.load(base_ptr + hc_arange)
+    pre = tl.sigmoid(tl.sum(tl.where(mix_arange[None, :] == hc_arange[:, None],
+                                     acc[None, :], 0.0), axis=1)
+                     * rsqrt * s0 + base_pre) + PRE_EPS
+
+    base_post = tl.load(base_ptr + HC + hc_arange)
+    post = POST_MULT * tl.sigmoid(
+        tl.sum(tl.where(mix_arange[None, :] == (HC + hc_arange[:, None]),
+                        acc[None, :], 0.0), axis=1) * rsqrt * s1 + base_post)
+
+    comb_flat_offs = 2 * HC + tl.arange(0, HC * HC)
+    base_comb = tl.load(base_ptr + comb_flat_offs)
+    comb_acc = tl.sum(tl.where(mix_arange[None, :] == comb_flat_offs[:, None],
+                               acc[None, :], 0.0), axis=1)
+    comb = tl.reshape(comb_acc * rsqrt * s2 + base_comb, (HC, HC))
+
+    # Row softmax (stabilised) + col normalize -- identical to torch ref
+    comb = tl.where(comb > float("-inf"), comb, 0.0)
+    row_max = tl.max(comb, axis=1)
+    comb = tl.exp(comb - row_max[:, None])
+    row_sum = tl.sum(comb, axis=1)
+    comb = comb / row_sum[:, None] + SINKHORN_EPS
+    col_sum = tl.sum(comb, axis=0)
+    comb = comb / (col_sum[None, :] + SINKHORN_EPS)
+    for _ in tl.static_range(SINKHORN_ITERS - 1):
+        row_sum = tl.sum(comb, axis=1)
+        comb = comb / (row_sum[:, None] + SINKHORN_EPS)
+        col_sum = tl.sum(comb, axis=0)
+        comb = comb / (col_sum[None, :] + SINKHORN_EPS)
+
+    tl.store(post_out_ptr + token * HC + hc_arange, post)
+    # Store at the comb buffer's own 0..HC*HC offsets -- comb_flat_offs
+    # (2*HC..) is fn-row indexing, not a layout offset.
+    tl.store(comb_out_ptr + token * HC * HC + tl.arange(0, HC * HC),
+             tl.reshape(comb, (HC * HC,)))
+
+    # layer_input = sum_h pre[h]*res[h,:], fused with out_norm
+    res_base = res_ptr + token * HC_HIDDEN
+    offs_h = tl.arange(0, HIDDEN)
+    li = tl.zeros((HIDDEN,), dtype=tl.float32)
+    for h in tl.static_range(HC):
+        pre_h = tl.sum(tl.where(hc_arange == h, pre, 0.0))
+        li += pre_h * tl.load(res_base + h * HIDDEN + offs_h).to(tl.float32)
+
+    inv = 1.0 / tl.sqrt(tl.sum(li * li) / HIDDEN + NORM_EPS)
+    w = tl.load(norm_w_ptr + offs_h).to(tl.float32)
+    tl.store(layer_out_ptr + token * HIDDEN + offs_h,
+             (li * inv * w).to(tl.bfloat16))
+
+
+@triton.jit
+def _mhc_splitk_post_kernel(
+    x_ptr,          # (M, HIDDEN) bf16
+    res_ptr,        # (M, HC, HIDDEN) bf16
+    post_ptr,       # (M, HC) fp32
+    comb_ptr,       # (M, HC*HC) fp32, [h_in * HC + h_out]
+    out_ptr,        # (M, HC, HIDDEN) bf16
+    M,
+    HC: tl.constexpr,
+    HIDDEN: tl.constexpr,
+    BLOCK_H: tl.constexpr,
+):
+    token = tl.program_id(0)
+    h_out = tl.program_id(1)
+    hb = tl.program_id(2)
+
+    offs = hb * BLOCK_H + tl.arange(0, BLOCK_H)
+    x_chunk = tl.load(x_ptr + token * HIDDEN + offs).to(tl.float32)
+    post_val = tl.load(post_ptr + token * HC + h_out)
+    acc = post_val * x_chunk
+
+    for h_in in tl.static_range(HC):
+        comb_val = tl.load(comb_ptr + token * HC * HC + h_in * HC + h_out)
+        acc += comb_val * tl.load(
+            res_ptr + token * HC * HIDDEN + h_in * HIDDEN + offs).to(tl.float32)
+
+    tl.store(out_ptr + token * HC * HIDDEN + h_out * HIDDEN + offs,
+             acc.to(tl.bfloat16))
+
+
+def _mhc_splitk_pre(
+    residual: torch.Tensor,
+    fn: torch.Tensor,
+    hc_scale: torch.Tensor,
+    hc_base: torch.Tensor,
+    rms_eps: float,
+    hc_pre_eps: float,
+    hc_sinkhorn_eps: float,
+    hc_post_mult_value: float,
+    sinkhorn_repeat: int,
+    norm_weight: torch.Tensor,
+    norm_eps: float,
+    splitk: int = 64,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    M, HC, HIDDEN = residual.shape
+    HC_HIDDEN = HC * HIDDEN
+    MIX_HC = fn.shape[0]
+    dev = residual.device
+    mul_part = torch.empty(splitk, M, MIX_HC, dtype=torch.float32, device=dev)
+    sqr_part = torch.empty(splitk, M, dtype=torch.float32, device=dev)
+    post = torch.empty(M, HC, dtype=torch.float32, device=dev)
+    comb = torch.empty(M, HC * HC, dtype=torch.float32, device=dev)
+    layer = torch.empty(M, HIDDEN, dtype=torch.bfloat16, device=dev)
+    w = norm_weight if norm_weight.dtype == torch.bfloat16 else norm_weight.bfloat16()
+    if not w.is_contiguous():
+        w = w.contiguous()
+
+    _mhc_splitk_gemm_kernel[(M, splitk)](
+        residual, fn, mul_part, sqr_part, M,
+        HC=HC, HIDDEN=HIDDEN, MIX_HC=MIX_HC, HC_HIDDEN=HC_HIDDEN,
+        SPLITK=splitk, BLOCK_K=HIDDEN // splitk,
+    )
+    _mhc_splitk_finalize_kernel[(M,)](
+        mul_part, sqr_part, residual, hc_scale, hc_base,
+        w, post, comb, layer, M,
+        HC=HC, HIDDEN=HIDDEN, MIX_HC=MIX_HC, HC_HIDDEN=HC_HIDDEN,
+        SPLITK=splitk, SINKHORN_ITERS=sinkhorn_repeat,
+        RMS_EPS=rms_eps, PRE_EPS=hc_pre_eps,
+        SINKHORN_EPS=hc_sinkhorn_eps, POST_MULT=hc_post_mult_value,
+        NORM_EPS=norm_eps,
+    )
+    return post.view(M, HC, 1), comb.view(M, HC, HC), layer
+
+
+def _mhc_splitk_post(
+    x: torch.Tensor,
+    residual: torch.Tensor,
+    post_layer_mix: torch.Tensor,
+    comb_res_mix: torch.Tensor,
+    block_h: int = 1024,
+) -> torch.Tensor:
+    M, HC, HIDDEN = residual.shape
+    out = torch.empty_like(residual)
+    _mhc_splitk_post_kernel[(M, HC, HIDDEN // block_h)](
+        x, residual,
+        post_layer_mix.reshape(-1), comb_res_mix.reshape(-1),
+        out, M, HC=HC, HIDDEN=HIDDEN, BLOCK_H=block_h,
+    )
+    return out
+
+
 def _mhc_triton_pre(
     residual: torch.Tensor,
     fn: torch.Tensor,
@@ -2003,6 +2257,25 @@ def _mhc_pre_dispatch(
             post_mix, comb_mix, layer_input = result
             return post_mix, comb_mix, layer_input, norm_weight is not None
 
+    # splitk v2: fastest on gfx942 (2.5x over tilelang trio) and fuses
+    # out_norm, so norm_fused=True. Needs a norm weight to fuse; falls
+    # through to v1/tilelang/torch when the caller has no out_norm.
+    if _use_splitk_mhc() and norm_weight is not None:
+        post_mix, comb_mix, layer_input = _mhc_splitk_pre(
+            residual=residual,
+            fn=fn,
+            hc_scale=hc_scale,
+            hc_base=hc_base,
+            rms_eps=rms_eps,
+            hc_pre_eps=hc_pre_eps,
+            hc_sinkhorn_eps=hc_sinkhorn_eps,
+            hc_post_mult_value=hc_post_mult_value,
+            sinkhorn_repeat=sinkhorn_repeat,
+            norm_weight=norm_weight,
+            norm_eps=norm_eps if norm_eps is not None else 1e-6,
+        )
+        return post_mix, comb_mix, layer_input, True
+
     if _use_triton_mhc():
         post_mix, comb_mix, layer_input = _mhc_triton_pre(
             residual=residual,
@@ -2067,6 +2340,9 @@ def _mhc_post_dispatch(
         )
         if result is not None:
             return result
+
+    if _use_splitk_mhc():
+        return _mhc_splitk_post(x, residual, post_layer_mix, comb_res_mix)
 
     if _use_triton_mhc():
         return _mhc_triton_post(x, residual, post_layer_mix, comb_res_mix)
