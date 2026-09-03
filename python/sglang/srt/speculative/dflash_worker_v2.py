@@ -2069,6 +2069,17 @@ class DFlashWorkerV2(BaseSpecWorker):
                     f"seq_lens={batch.seq_lens[:2].tolist() if hasattr(batch, 'seq_lens') else '?'}",
                     flush=True,
                 )
+                if 6 <= self._accept_dbg <= 14:
+                    logits0 = logits_output.next_token_logits[: int(self.block_size)]
+                    top5 = torch.topk(torch.softmax(logits0.float(), dim=-1), 5, dim=-1)
+                    for pos in range(int(self.block_size)):
+                        ids = top5.indices[pos].tolist()
+                        ps = [round(p, 4) for p in top5.values[pos].tolist()]
+                        print(
+                            f"[top5-dbg] step={self._accept_dbg} pos={pos} "
+                            f"argmax={tp0[pos]} top5={list(zip(ids, ps))}",
+                            flush=True,
+                        )
             if self._use_triton_accept_bonus:
                 try:
                     (
