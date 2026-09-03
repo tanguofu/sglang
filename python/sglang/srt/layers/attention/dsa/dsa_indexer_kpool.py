@@ -1001,10 +1001,11 @@ class IndexerKPool(MultiPlatformOp):
                 print(
                     f"[topk-dbg] call#{self._topk_dbg} "
                     f"seqlens[:16]={seqlens_32[:16].tolist()} "
-                    f"pool_seqlens[:16]={pool_seqlens[:16].tolist()} "
+                    f"pool_seqlens[:8]={pool_seqlens[:8].tolist()} "
+                    f"topk_rows={tuple(topk_result.shape)} "
                     f"topk[:2]={[r[:12].tolist() for r in topk_result[:2]]} "
-                    f"pt1_rows={page_table_1.shape[0]} "
-                    f"pt1[:2]={[r[:12].tolist() for r in page_table_1[:2]]}",
+                    f"pt1={None if page_table_1 is None else tuple(page_table_1.shape)} "
+                    f"pt1[:2]={[r[:12].tolist() for r in (page_table_1[:2] if page_table_1 is not None else [])]}",
                     flush=True,
                 )
             except Exception as _e:
