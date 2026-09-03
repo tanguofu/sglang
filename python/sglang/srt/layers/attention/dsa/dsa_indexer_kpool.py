@@ -991,6 +991,24 @@ class IndexerKPool(MultiPlatformOp):
             topk_offsets=topk_offsets,
             out_rows=num_q_padded if num_q_padded != n_real else None,
         )
+        import os as _os
+
+        if _os.environ.get("SGLANG_KPOOL_DEBUG") and (
+            getattr(self, "_topk_dbg", 0) < 2
+        ):
+            self._topk_dbg = getattr(self, "_topk_dbg", 0) + 1
+            try:
+                print(
+                    f"[topk-dbg] call#{self._topk_dbg} "
+                    f"seqlens[:16]={seqlens_32[:16].tolist()} "
+                    f"pool_seqlens[:16]={pool_seqlens[:16].tolist()} "
+                    f"topk[:2]={[r[:12].tolist() for r in topk_result[:2]]} "
+                    f"pt1_rows={page_table_1.shape[0]} "
+                    f"pt1[:2]={[r[:12].tolist() for r in page_table_1[:2]]}",
+                    flush=True,
+                )
+            except Exception as _e:
+                print(f"[topk-dbg] dump failed: {_e}", flush=True)
         return topk_result
 
     def _should_chunk_mqa_logits(
