@@ -1080,6 +1080,24 @@ class DeepseekSparseAttnBackend(
             )
 
         if forward_mode.is_target_verify():
+            import os as _os
+
+            if _os.environ.get("SGLANG_KPOOL_DEBUG") and (
+                not hasattr(self, "_kpool_dbg_count")
+                or self._kpool_dbg_count < 2
+            ):
+                self._kpool_dbg_count = getattr(self, "_kpool_dbg_count", 0) + 1
+                oc = forward_batch.out_cache_loc
+                print(
+                    f"[kpool-dbg] verify step seq_lens[:4]="
+                    f"{forward_batch.seq_lens[:4].tolist()} "
+                    f"write_start=seq_lens (no offset) "
+                    f"next_n={self.speculative_num_draft_tokens} "
+                    f"out_cache_loc[:{self.speculative_num_draft_tokens * 2}]="
+                    f"{oc[: self.speculative_num_draft_tokens * 2].tolist()} "
+                    f"req_pool={forward_batch.req_pool_indices[:2].tolist()}",
+                    flush=True,
+                )
             return init_kpool_write_plan(
                 metadata,
                 forward_batch,
