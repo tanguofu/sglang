@@ -458,16 +458,13 @@ class DFlashWorkerV2(BaseSpecWorker):
             self.model_runner.attn_backend,
             "update_mamba_state_after_mtp_verify",
         )
-        import os as _os
-
-        if _os.environ.get("SGLANG_KPOOL_DEBUG"):
-            print(
-                f"[mamba-gate] mambaish={'None' if _mambaish is None else type(_mambaish).__name__} "
-                f"backend={type(self.model_runner.attn_backend).__name__} "
-                f"has_update={hasattr(self.model_runner.attn_backend, 'update_mamba_state_after_mtp_verify')} "
-                f"need_commit={self._need_mamba_verify_commit}",
-                flush=True,
-            )
+        print(
+            f"[mamba-gate] mambaish={'None' if _mambaish is None else type(_mambaish).__name__} "
+            f"backend={type(self.model_runner.attn_backend).__name__} "
+            f"has_update={hasattr(self.model_runner.attn_backend, 'update_mamba_state_after_mtp_verify')} "
+            f"need_commit={self._need_mamba_verify_commit}",
+            flush=True,
+        )
 
     def init_cuda_graphs(self):
         capture_decode_cuda_graph = (
