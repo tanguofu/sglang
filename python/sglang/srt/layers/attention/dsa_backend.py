@@ -1223,7 +1223,7 @@ class DeepseekSparseAttnBackend(
             import os as _os
 
             if _os.environ.get("SGLANG_KPOOL_DEBUG") and (
-                getattr(self, "_kpool_dbg2", 0) < 3
+                getattr(self, "_kpool_dbg2", 0) < 40
             ):
                 self._kpool_dbg2 = getattr(self, "_kpool_dbg2", 0) + 1
                 print(
