@@ -2057,7 +2057,7 @@ class DFlashWorkerV2(BaseSpecWorker):
             import os as _os
 
             if _os.environ.get("SGLANG_KPOOL_DEBUG") and (
-                getattr(self, "_accept_dbg", 0) < 10
+                getattr(self, "_accept_dbg", 0) < 300
             ):
                 self._accept_dbg = getattr(self, "_accept_dbg", 0) + 1
                 cand0 = candidates[0].tolist()
