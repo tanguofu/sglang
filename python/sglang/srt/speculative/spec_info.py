@@ -193,6 +193,17 @@ class SpeculativeAlgorithm(Enum):
             return build_dspark_disagg_draft_input(
                 batch, last_tokens_tensor, future_map
             )
+        if self.is_dflash_family():
+            # Missing wiring fixed 2026-09-03: the helper existed but was never
+            # called, so a prebuilt disagg decode batch carried spec_info=None
+            # and crashed in spec_prepare_for_decode. Mirrors eagle/dspark.
+            from sglang.srt.speculative.dflash_disaggregation import (
+                build_dflash_family_disagg_draft_input,
+            )
+
+            return build_dflash_family_disagg_draft_input(
+                batch, last_tokens_tensor, future_map
+            )
         return None
 
     def need_topk(self) -> bool:
