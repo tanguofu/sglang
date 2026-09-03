@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Optional, Union
 
 import torch
@@ -41,6 +42,10 @@ if TYPE_CHECKING:
     from sglang.srt.layers.attention.verify_mask import VerifyMask
 
 logger = logging.getLogger(__name__)
+
+# POC probe (2026-09-03): does target-verify hybrid metadata describe padded
+# physical rows? SGLANG_KPOOL_PROBE=1 prints qsl rows vs mamba-index rows.
+_HYBRID_PROBE_ON = os.environ.get("SGLANG_KPOOL_PROBE") == "1"
 
 
 class MambaAttnBackendBase(AttentionBackend):
@@ -242,6 +247,30 @@ class MambaAttnBackendBase(AttentionBackend):
                     ) = self._init_track_ssm_indices(mamba_cache_indices, forward_batch)
         else:
             raise ValueError(f"Invalid forward mode: {forward_batch.forward_mode=}")
+
+        if _HYBRID_PROBE_ON and forward_batch.forward_mode.is_target_verify():
+            # Dedupe by shape signature so a whole bench fits in the log.
+            _seen = getattr(MambaAttnBackendBase, "_probe_seen", None)
+            if _seen is None:
+                _seen = set()
+                MambaAttnBackendBase._probe_seen = _seen
+            _sig = (
+                forward_batch.input_ids.shape[0],
+                getattr(forward_batch, "num_token_non_padded_cpu", None),
+                getattr(forward_batch.spec_info, "draft_token_num", None),
+                None if query_start_loc is None else query_start_loc.shape[0],
+                mamba_cache_indices.shape[0],
+                bs,
+            )
+            if _sig not in _seen and len(_seen) < 200:
+                _seen.add(_sig)
+                print(
+                    f"[hybrid-probe] physical_rows={_sig[0]} real_tokens={_sig[1]} "
+                    f"draft={_sig[2]} qsl_rows={_sig[3]} "
+                    f"mamba_idx_rows={_sig[4]} bs={_sig[5]} "
+                    f"orig_bs={getattr(forward_batch, '_original_batch_size', None)}",
+                    flush=True,
+                )
 
         return ForwardMetadata(
             query_start_loc=query_start_loc,

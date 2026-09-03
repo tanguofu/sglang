@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import torch
@@ -47,7 +48,13 @@ from sglang.srt.model_executor.forward_context import (
     get_token_to_kv_pool,
 )
 from sglang.srt.model_executor.runner import get_is_capture_mode
+from sglang.srt.distributed.parallel_state import get_tensor_model_parallel_rank
 from sglang.srt.runtime_context import get_parallel, get_server_args
+
+# POC probe (2026-09-03): is the DSA KPool target-verify writer fed MLP-sync
+# padded physical rows? Set SGLANG_KPOOL_PROBE=1 to print, per verify step,
+# the physical token rows against the logical num_token_non_padded_cpu.
+_KPOOL_PROBE_ON = os.environ.get("SGLANG_KPOOL_PROBE") == "1"
 
 if TYPE_CHECKING:
     from sglang.srt.mem_cache.memory_pool import DSATokenToKVPool
@@ -1574,6 +1581,36 @@ class IndexerKPool(MultiPlatformOp):
         buf = pool.get_index_k_with_scale_buffer(layer_id=layer_id)
 
         def _compress_write() -> None:
+            if _KPOOL_PROBE_ON and not get_is_capture_mode():
+                # Dedupe by shape signature: a verify step hits 45 indexer
+                # layers, so a plain counter would burn its budget in ~3 steps
+                # and never show the range of batch shapes a bench produces.
+                _seen = getattr(_forward_cuda_target_verify, "_probe_seen", None)
+                if _seen is None:
+                    _seen = set()
+                    _forward_cuda_target_verify._probe_seen = _seen
+                _sig = (
+                    key.shape[0],
+                    getattr(forward_batch, "num_token_non_padded_cpu", None),
+                    num_draft_tokens,
+                    tuple(plan.req.shape),
+                    tuple(plan.write_loc.shape),
+                )
+                if (
+                    _sig not in _seen
+                    and len(_seen) < 200
+                    and get_tensor_model_parallel_rank() == 0
+                ):
+                    _seen.add(_sig)
+                    print(
+                        f"[kpool-probe] layer={layer_id} N={num_draft_tokens} "
+                        f"key_rows={_sig[0]} real_tokens={_sig[1]} "
+                        f"plan_req={_sig[3]} write_loc={_sig[4]} "
+                        f"out_cache_loc={tuple(forward_batch.out_cache_loc.shape)} "
+                        f"orig_num_tokens={getattr(forward_batch, '_original_num_tokens', None)} "
+                        f"orig_bs={getattr(forward_batch, '_original_batch_size', None)}",
+                        flush=True,
+                    )
             kpool_write_tail_and_maybe_compress(
                 pool=pool,
                 buf=buf,

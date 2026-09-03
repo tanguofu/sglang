@@ -2157,6 +2157,21 @@ class DFlashWorkerV2(BaseSpecWorker):
 
         if self._need_mamba_verify_commit:
             assert seq_lens_pre_verify is not None
+            import os as _os
+
+            if _os.environ.get("SGLANG_KPOOL_DEBUG") and (
+                getattr(self, "_mamba_dbg", 0) < 8
+            ):
+                self._mamba_dbg = getattr(self, "_mamba_dbg", 0) + 1
+                mti = getattr(batch, "mamba_track_indices", None)
+                print(
+                    f"[mamba-dbg] #{self._mamba_dbg} commit_lens[:2]="
+                    f"{commit_lens[:2].tolist()} "
+                    f"seq_lens_pre[:2]={seq_lens_pre_verify[:2].tolist()} "
+                    f"mamba_track_indices={'None' if mti is None else mti[:2].tolist()} "
+                    f"has_mamba_steps={batch.mamba_steps_to_track is not None if hasattr(batch, 'mamba_steps_to_track') else 'n/a'}",
+                    flush=True,
+                )
             self._update_target_mamba_state_after_verify(
                 batch=batch,
                 seq_lens_pre_verify=seq_lens_pre_verify,

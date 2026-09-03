@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Optional, Tuple, Union
 
 import torch
@@ -33,6 +34,10 @@ from sglang.srt.utils.custom_op import register_custom_op
 
 if TYPE_CHECKING:
     from sglang.srt.model_executor.forward_batch_info import ForwardBatch
+
+# POC probe (2026-09-03): does a target-verify forward reach KDA with MLP-sync
+# padded physical rows? SGLANG_KPOOL_PROBE=1 prints physical vs logical rows.
+_KPOOL_PROBE_ON = os.environ.get("SGLANG_KPOOL_PROBE") == "1"
 
 
 class RadixLinearAttention(nn.Module):
@@ -83,6 +88,30 @@ class RadixLinearAttention(nn.Module):
         a: torch.Tensor,
         b: torch.Tensor,
     ) -> torch.Tensor:
+        if _KPOOL_PROBE_ON and forward_batch.forward_mode.is_target_verify():
+            # Dedupe by shape signature: 34 KDA layers per step would burn a
+            # plain counter before the bench reaches varied batch shapes.
+            _seen = getattr(RadixLinearAttention.forward, "_probe_seen", None)
+            if _seen is None:
+                _seen = set()
+                RadixLinearAttention.forward._probe_seen = _seen
+            _sig = (
+                mixed_qkv.shape[0],
+                getattr(forward_batch, "num_token_non_padded_cpu", None),
+                getattr(
+                    getattr(forward_batch, "spec_info", None),
+                    "draft_token_num",
+                    None,
+                ),
+            )
+            if _sig not in _seen and len(_seen) < 200:
+                _seen.add(_sig)
+                print(
+                    f"[kda-probe] layer={self.layer_id} "
+                    f"physical_rows={_sig[0]} real_tokens={_sig[1]} draft={_sig[2]} "
+                    f"orig_num_tokens={getattr(forward_batch, '_original_num_tokens', None)}",
+                    flush=True,
+                )
         if (
             forward_batch.forward_mode.is_extend()
             and get_tc_piecewise_forward_context() is not None
