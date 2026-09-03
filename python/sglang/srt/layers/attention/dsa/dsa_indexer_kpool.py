@@ -1542,7 +1542,13 @@ class IndexerKPool(MultiPlatformOp):
         enable_dual_stream: bool,
         return_indices: bool = True,
     ) -> Optional[torch.Tensor]:
-        assert is_cuda(), "DSA kpool target_verify is CUDA-only"
+        # LIFTED 2026-09-02 (gfx942): the old assert blocked HIP outright, but
+        # every op in this function has a HIP path — act_quant is imported
+        # from the tilelang kernel on HIP (see forward_cuda), kpool write is
+        # pure Triton (kpool_fp8_index.py), and _get_topk_paged selects
+        # aiter_paged_mqa_logits when is_hip(). The assert was conservative,
+        # not a real op gap. Keep NPU blocked (unverified).
+        assert is_cuda() or is_hip(), "DSA kpool target_verify is CUDA/HIP-only"
         plan = metadata.attn_metadata.kpool_write_plan
         assert plan is not None, "DSA kpool target_verify requires kpool_write_plan"
         num_draft_tokens = plan.num_draft_tokens
