@@ -1229,12 +1229,14 @@ class DeepseekSparseAttnBackend(
             if (
                 _os.environ.get("SGLANG_KPOOL_DEBUG")
                 and not get_is_capture_mode()
-                and getattr(self, "_kpool_dbg2", 0) < 12
+                and getattr(self, "_kpool_dbg2", 0) < 64
             ):
                 self._kpool_dbg2 = getattr(self, "_kpool_dbg2", 0) + 1
                 print(
-                    f"[kpool-dbg2] REPLAY verify seq_lens[:4]={seq_lens[:4].tolist()} "
-                    f"write_start[:4]={write_start[:4].tolist()} "
+                    f"[kpool-dbg2] #{self._kpool_dbg2} REPLAY verify "
+                    f"seq_lens[:8]={seq_lens[:8].tolist()} "
+                    f"write_start={write_start[:4].tolist()} "
+                    f"bs={write_start.shape[0]} "
                     f"next_n={self.speculative_num_draft_tokens} "
                     f"req_pool[:2]={req_pool_indices[:2].tolist()}",
                     flush=True,
