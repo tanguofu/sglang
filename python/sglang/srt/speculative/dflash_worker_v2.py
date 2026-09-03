@@ -2054,6 +2054,21 @@ class DFlashWorkerV2(BaseSpecWorker):
             target_predict = torch.argmax(logits_output.next_token_logits, dim=-1).view(
                 bs, int(self.block_size)
             )
+            import os as _os
+
+            if _os.environ.get("SGLANG_KPOOL_DEBUG") and (
+                getattr(self, "_accept_dbg", 0) < 10
+            ):
+                self._accept_dbg = getattr(self, "_accept_dbg", 0) + 1
+                cand0 = candidates[0].tolist()
+                tp0 = target_predict[0].tolist()
+                print(
+                    f"[accept-dbg] #{self._accept_dbg} cand={cand0} "
+                    f"target_predict={tp0} "
+                    f"match={int(sum(c == t for c, t in zip(cand0[1:], tp0[:-1])))} "
+                    f"seq_lens={batch.seq_lens[:2].tolist() if hasattr(batch, 'seq_lens') else '?'}",
+                    flush=True,
+                )
             if self._use_triton_accept_bonus:
                 try:
                     (
