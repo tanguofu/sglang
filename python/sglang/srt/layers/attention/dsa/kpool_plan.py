@@ -745,6 +745,21 @@ def update_kpool_write_plan(
     is_v2 = forward_mode.is_draft_extend_v2()
     if not (is_verify or is_decode or is_v2):
         return
+    import os as _os
+
+    if (
+        _os.environ.get("SGLANG_KPOOL_DEBUG")
+        and is_verify
+        and getattr(update_kpool_write_plan, "_dbg", 0) < 3
+    ):
+        update_kpool_write_plan._dbg = getattr(update_kpool_write_plan, "_dbg", 0) + 1
+        print(
+            f"[plan-dbg] #{update_kpool_write_plan._dbg} verify "
+            f"write_start[:8]={write_start[:8].tolist()} "
+            f"req_pool[:2]={req_pool_indices[:2].tolist()} "
+            f"N={num_draft_tokens} pool_size={pool_size}",
+            flush=True,
+        )
 
     plan = metadata.kpool_write_plan
     assert plan is not None, "kpool_write_plan must be allocated before update"
