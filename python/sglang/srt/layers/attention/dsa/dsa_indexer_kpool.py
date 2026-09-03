@@ -55,6 +55,7 @@ from sglang.srt.runtime_context import get_parallel, get_server_args
 # padded physical rows? Set SGLANG_KPOOL_PROBE=1 to print, per verify step,
 # the physical token rows against the logical num_token_non_padded_cpu.
 _KPOOL_PROBE_ON = os.environ.get("SGLANG_KPOOL_PROBE") == "1"
+_PROBE_LOG = os.environ.get("SGLANG_KPOOL_PROBE_LOG", "/data/kpool_probe.log")
 
 if TYPE_CHECKING:
     from sglang.srt.mem_cache.memory_pool import DSATokenToKVPool
@@ -1602,15 +1603,19 @@ class IndexerKPool(MultiPlatformOp):
                     and get_tensor_model_parallel_rank() == 0
                 ):
                     _seen.add(_sig)
-                    print(
-                        f"[kpool-probe] layer={layer_id} N={num_draft_tokens} "
-                        f"key_rows={_sig[0]} real_tokens={_sig[1]} "
-                        f"plan_req={_sig[3]} write_loc={_sig[4]} "
-                        f"out_cache_loc={tuple(forward_batch.out_cache_loc.shape)} "
-                        f"orig_num_tokens={getattr(forward_batch, '_original_num_tokens', None)} "
-                        f"orig_bs={getattr(forward_batch, '_original_batch_size', None)}",
-                        flush=True,
-                    )
+                    # Write to a file, not stdout: sglang's TP worker
+                    # subprocesses do not reliably surface print() in the
+                    # container log, and a silent probe looks like "path not
+                    # taken", which would be the wrong conclusion.
+                    with open(_PROBE_LOG, "a") as _pf:
+                        _pf.write(
+                            f"[kpool-probe] layer={layer_id} N={num_draft_tokens} "
+                            f"key_rows={_sig[0]} real_tokens={_sig[1]} "
+                            f"plan_req={_sig[3]} write_loc={_sig[4]} "
+                            f"out_cache_loc={tuple(forward_batch.out_cache_loc.shape)} "
+                            f"orig_num_tokens={getattr(forward_batch, '_original_num_tokens', None)} "
+                            f"orig_bs={getattr(forward_batch, '_original_batch_size', None)}\n"
+                        )
             kpool_write_tail_and_maybe_compress(
                 pool=pool,
                 buf=buf,

@@ -453,12 +453,21 @@ class DFlashWorkerV2(BaseSpecWorker):
 
     def init_attention_backends(self):
         self._draft_worker.init_attention_backends()
-        self._need_mamba_verify_commit = mambaish_config(
-            self.model_runner.model_config
-        ) is not None and hasattr(
+        _mambaish = mambaish_config(self.model_runner.model_config)
+        self._need_mamba_verify_commit = _mambaish is not None and hasattr(
             self.model_runner.attn_backend,
             "update_mamba_state_after_mtp_verify",
         )
+        import os as _os
+
+        if _os.environ.get("SGLANG_KPOOL_DEBUG"):
+            print(
+                f"[mamba-gate] mambaish={'None' if _mambaish is None else type(_mambaish).__name__} "
+                f"backend={type(self.model_runner.attn_backend).__name__} "
+                f"has_update={hasattr(self.model_runner.attn_backend, 'update_mamba_state_after_mtp_verify')} "
+                f"need_commit={self._need_mamba_verify_commit}",
+                flush=True,
+            )
 
     def init_cuda_graphs(self):
         capture_decode_cuda_graph = (

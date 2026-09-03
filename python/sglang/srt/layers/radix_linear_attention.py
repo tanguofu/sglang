@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 # POC probe (2026-09-03): does a target-verify forward reach KDA with MLP-sync
 # padded physical rows? SGLANG_KPOOL_PROBE=1 prints physical vs logical rows.
 _KPOOL_PROBE_ON = os.environ.get("SGLANG_KPOOL_PROBE") == "1"
+_PROBE_LOG = os.environ.get("SGLANG_KPOOL_PROBE_LOG", "/data/kpool_probe.log")
 
 
 class RadixLinearAttention(nn.Module):
@@ -106,12 +107,12 @@ class RadixLinearAttention(nn.Module):
             )
             if _sig not in _seen and len(_seen) < 200:
                 _seen.add(_sig)
-                print(
-                    f"[kda-probe] layer={self.layer_id} "
-                    f"physical_rows={_sig[0]} real_tokens={_sig[1]} draft={_sig[2]} "
-                    f"orig_num_tokens={getattr(forward_batch, '_original_num_tokens', None)}",
-                    flush=True,
-                )
+                with open(_PROBE_LOG, "a") as _pf:
+                    _pf.write(
+                        f"[kda-probe] layer={self.layer_id} "
+                        f"physical_rows={_sig[0]} real_tokens={_sig[1]} draft={_sig[2]} "
+                        f"orig_num_tokens={getattr(forward_batch, '_original_num_tokens', None)}\n"
+                    )
         if (
             forward_batch.forward_mode.is_extend()
             and get_tc_piecewise_forward_context() is not None

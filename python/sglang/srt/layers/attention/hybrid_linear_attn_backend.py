@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 # POC probe (2026-09-03): does target-verify hybrid metadata describe padded
 # physical rows? SGLANG_KPOOL_PROBE=1 prints qsl rows vs mamba-index rows.
 _HYBRID_PROBE_ON = os.environ.get("SGLANG_KPOOL_PROBE") == "1"
+_PROBE_LOG = os.environ.get("SGLANG_KPOOL_PROBE_LOG", "/data/kpool_probe.log")
 
 
 class MambaAttnBackendBase(AttentionBackend):
@@ -264,13 +265,13 @@ class MambaAttnBackendBase(AttentionBackend):
             )
             if _sig not in _seen and len(_seen) < 200:
                 _seen.add(_sig)
-                print(
-                    f"[hybrid-probe] physical_rows={_sig[0]} real_tokens={_sig[1]} "
-                    f"draft={_sig[2]} qsl_rows={_sig[3]} "
-                    f"mamba_idx_rows={_sig[4]} bs={_sig[5]} "
-                    f"orig_bs={getattr(forward_batch, '_original_batch_size', None)}",
-                    flush=True,
-                )
+                with open(_PROBE_LOG, "a") as _pf:
+                    _pf.write(
+                        f"[hybrid-probe] physical_rows={_sig[0]} real_tokens={_sig[1]} "
+                        f"draft={_sig[2]} qsl_rows={_sig[3]} "
+                        f"mamba_idx_rows={_sig[4]} bs={_sig[5]} "
+                        f"orig_bs={getattr(forward_batch, '_original_batch_size', None)}\n"
+                    )
 
         return ForwardMetadata(
             query_start_loc=query_start_loc,
