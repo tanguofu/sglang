@@ -993,19 +993,23 @@ class IndexerKPool(MultiPlatformOp):
         )
         import os as _os
 
-        if _os.environ.get("SGLANG_KPOOL_DEBUG") and (
-            getattr(self, "_topk_dbg", 0) < 2
+        from sglang.srt.model_executor.runner_utils.capture_mode import (
+            get_is_capture_mode,
+        )
+
+        if (
+            _os.environ.get("SGLANG_KPOOL_DEBUG")
+            and not get_is_capture_mode()
+            and getattr(self, "_topk_dbg", 0) < 3
         ):
             self._topk_dbg = getattr(self, "_topk_dbg", 0) + 1
             try:
                 print(
-                    f"[topk-dbg] call#{self._topk_dbg} "
-                    f"seqlens[:16]={seqlens_32[:16].tolist()} "
+                    f"[topk-dbg] REPLAY#{self._topk_dbg} "
+                    f"seqlens[:8]={seqlens_32[:8].tolist()} "
                     f"pool_seqlens[:8]={pool_seqlens[:8].tolist()} "
                     f"topk_rows={tuple(topk_result.shape)} "
-                    f"topk[:2]={[r[:12].tolist() for r in topk_result[:2]]} "
-                    f"pt1={None if page_table_1 is None else tuple(page_table_1.shape)} "
-                    f"pt1[:2]={[r[:12].tolist() for r in (page_table_1[:2] if page_table_1 is not None else [])]}",
+                    f"topk[:2]={[r[:12].tolist() for r in topk_result[:2]]}",
                     flush=True,
                 )
             except Exception as _e:
