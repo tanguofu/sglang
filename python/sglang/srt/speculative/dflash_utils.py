@@ -819,6 +819,22 @@ def compute_dflash_correct_drafts_and_bonus(
             block_size,
             BLOCK=triton.next_power_of_2(max(block_size - 1, 1)),
         )
+        import os as _os
+
+        if _os.environ.get("SGLANG_KPOOL_DEBUG"):
+            n = getattr(compute_dflash_correct_drafts_and_bonus, "_dbg", 0)
+            if n < 12:
+                compute_dflash_correct_drafts_and_bonus._dbg = n + 1
+                cand0 = candidates[0].tolist()
+                tp0 = target_predict[0].tolist()
+                nc = num_correct_drafts[0].item()
+                bn = bonus_tokens[0].item()
+                print(
+                    f"[accept-dbg] #{n} cand={cand0} target_predict={tp0} "
+                    f"correct_len={nc} bonus={bn} "
+                    f"committed={cand0[:nc+1]+[bn]}",
+                    flush=True,
+                )
         return num_correct_drafts, bonus_tokens
 
     matches = candidates[:, 1:] == target_predict[:, :-1]
