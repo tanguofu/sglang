@@ -753,13 +753,13 @@ def update_kpool_write_plan(
         and getattr(update_kpool_write_plan, "_dbg", 0) < 3
     ):
         update_kpool_write_plan._dbg = getattr(update_kpool_write_plan, "_dbg", 0) + 1
-        print(
-            f"[plan-dbg] #{update_kpool_write_plan._dbg} verify "
-            f"write_start[:8]={write_start[:8].tolist()} "
-            f"req_pool[:2]={req_pool_indices[:2].tolist()} "
-            f"N={num_draft_tokens} pool_size={pool_size}",
-            flush=True,
-        )
+        with open("/data/tools/kpool_debug.log", "a") as _f:
+            _f.write(
+                f"[plan-dbg] #{update_kpool_write_plan._dbg} verify "
+                f"write_start[:8]={write_start[:8].tolist()} "
+                f"req_pool[:2]={req_pool_indices[:2].tolist()} "
+                f"N={num_draft_tokens} pool_size={pool_size}\n"
+            )
 
     plan = metadata.kpool_write_plan
     assert plan is not None, "kpool_write_plan must be allocated before update"
