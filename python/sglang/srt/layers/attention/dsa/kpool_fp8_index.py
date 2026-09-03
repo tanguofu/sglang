@@ -428,8 +428,16 @@ def expand_pooled_groups_to_topk(
     pool_size: int,
     page_table: torch.Tensor | None = None,
     topk_offsets: torch.Tensor | None = None,
+    token_limit: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Expand selected full-pool ids to a strict-width token topk tensor."""
+    """Expand selected full-pool ids to a strict-width token topk tensor.
+
+    token_limit (optional, per row): causal boundary on logical token ids —
+    expanded positions >= limit are masked to -1. Required for the DFLASH
+    target-verify path: pool aggregates may contain same-block draft tokens
+    at positions beyond a row's causal boundary, and attending to them (their
+    main-KV slots are reused by later drafts) silently corrupts output.
+    """
     assert group_ids.ndim == 2
     assert group_valid.shape == group_ids.shape
     assert topk % pool_size == 0
@@ -445,6 +453,9 @@ def expand_pooled_groups_to_topk(
         .expand(-1, -1, pool_size)
         .reshape(group_ids.shape[0], topk)
     )
+
+    if token_limit is not None:
+        valid = valid & (token_ids < token_limit.to(torch.int64)[:, None])
 
     if page_table is not None:
         assert page_table.ndim == 2
@@ -764,6 +775,7 @@ def _topk_from_pooled_history_logits_unfused(
         pool_size=pool_size,
         page_table=page_table_for_rows,
         topk_offsets=topk_offsets,
+        token_limit=seq_lens,
     )
     if seq_lens is None:
         result = expanded
