@@ -1220,6 +1220,18 @@ class DeepseekSparseAttnBackend(
             # Target verify: write_start == seq_lens exactly; the plan kernel
             # casts on load, so skip the per-replay int32 alloc + conversion.
             write_start = seq_lens
+            import os as _os
+
+            if _os.environ.get("SGLANG_KPOOL_DEBUG") and (
+                getattr(self, "_kpool_dbg2", 0) < 3
+            ):
+                self._kpool_dbg2 = getattr(self, "_kpool_dbg2", 0) + 1
+                print(
+                    f"[kpool-dbg2] verify seq_lens[:4]={seq_lens[:4].tolist()} "
+                    f"write_start[:4]={write_start[:4].tolist()} "
+                    f"next_n={self.speculative_num_draft_tokens}",
+                    flush=True,
+                )
         update_kpool_write_plan(
             metadata,
             write_start=write_start,
