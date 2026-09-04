@@ -17,7 +17,7 @@ from sglang.srt.layers.attention.dsa.kpool_fp8_index import (
 from sglang.srt.layers.attention.dsa.utils import dsa_use_prefill_cp
 from sglang.srt.model_executor.forward_context import get_req_to_token_pool
 from sglang.srt.runtime_context import get_parallel
-from sglang.srt.utils import is_cuda
+from sglang.srt.utils import is_cuda, is_hip
 
 if TYPE_CHECKING:
     from sglang.srt.layers.attention.dsa.dsa_topk_backend import TopkTransformMethod
@@ -559,7 +559,7 @@ def _compute_pool_schedule_metadata(
     *,
     slots_per_page: int,
 ) -> Optional[torch.Tensor]:
-    if not is_cuda():
+    if not (is_cuda() or is_hip()):
         return None
     deep_gemm = _get_deep_gemm()
     if deep_gemm is None:
@@ -583,7 +583,7 @@ def init_pooled_paged_mqa_metadata(
 ) -> DSAMetadata:
     if (
         not _is_kpool_layout_enabled(pool_size, real_page_size)
-        or not is_cuda()
+        or not (is_cuda() or is_hip())
         or not forward_mode.is_decode_or_idle()
     ):
         return metadata
@@ -623,7 +623,7 @@ def update_pooled_paged_mqa_metadata(
 ) -> None:
     if (
         not _is_kpool_layout_enabled(pool_size, real_page_size)
-        or not is_cuda()
+        or not (is_cuda() or is_hip())
         or not forward_mode.is_decode_or_idle()
     ):
         return
@@ -738,7 +738,7 @@ def update_kpool_write_plan(
     effective_n_per_batch: Optional[torch.Tensor] = None,
     include_deep_gemm_schedule: bool = True,
 ) -> None:
-    if not _is_kpool_layout_enabled(pool_size, real_page_size) or not is_cuda():
+    if not _is_kpool_layout_enabled(pool_size, real_page_size) or not (is_cuda() or is_hip()):
         return
     is_verify = forward_mode.is_target_verify()
     is_decode = forward_mode.is_decode_or_idle()
