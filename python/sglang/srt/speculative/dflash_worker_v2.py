@@ -2075,6 +2075,25 @@ class DFlashWorkerV2(BaseSpecWorker):
                     f"seq_lens={batch.seq_lens[:2].tolist() if hasattr(batch, 'seq_lens') else '?'}",
                     flush=True,
                 )
+                # selector diagnostic: is the target's token in the draft's
+                # top-16 candidate set at each position? Splits draft-forward
+                # bugs (target not in candidates) from selector-walk bugs
+                # (target in candidates but not chosen).
+                if 6 <= self._accept_dbg <= 14 and hasattr(
+                    self, "candidate_out"
+                ):
+                    cids = self.candidate_out[0]
+                    for t in range(min(7, cids.shape[0])):
+                        tgt = tp0[t + 1] if t + 1 < len(tp0) else None
+                        ch = cand0[t + 1] if t + 1 < len(cand0) else None
+                        in_set = tgt in cids[t].tolist() if tgt is not None else None
+                        top1 = cids[t][0].item() if cids[t].numel() else None
+                        print(
+                            f"[cand-dbg] step={self._accept_dbg} pos={t+1} "
+                            f"chosen={ch} target={tgt} in_top16={in_set} "
+                            f"cand_top1={top1}",
+                            flush=True,
+                        )
                 if 6 <= self._accept_dbg <= 14:
                     logits0 = logits_output.next_token_logits[: int(self.block_size)]
                     top5 = torch.topk(torch.softmax(logits0.float(), dim=-1), 5, dim=-1)
