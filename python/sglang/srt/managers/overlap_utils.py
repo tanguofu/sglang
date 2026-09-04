@@ -469,11 +469,12 @@ class FutureMap:
                 # forward publish; a stale consume means a publish went missing.
                 assert self._publish_fresh, "resolve without a fresh forward publish"
                 self._publish_fresh = False
-            if _is_hip:
-                # Temporary workaround: Event.wait() regresses TPOT on AMD MI355.
-                self.publish_ready.synchronize()
-            else:
-                self.publish_ready.wait()
+            # MI308X (gfx942) profiled 2026-09-04: hipEventSynchronize here
+            # blocked the CPU ~13ms per spec step while the GPU sat idle (the
+            # publish event had already completed), turning every DFLASH2
+            # step into 90% idle. The MI355 workaround above does not apply
+            # to gfx942 - use the GPU-side stream wait like CUDA.
+            self.publish_ready.wait()
         batch.seq_lens = self.new_seq_lens_buf[fi]
 
         if not self.needs_cpu_seq_lens:
