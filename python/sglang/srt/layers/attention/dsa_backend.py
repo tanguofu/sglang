@@ -465,14 +465,7 @@ class DeepseekSparseAttnBackend(
         )
         self.dsa_index_topk = get_dsa_index_topk(hf_config)
         self.dsa_index_kpool = get_dsa_index_kpool(hf_config)
-        # 2026-09-05 (MI308X profiled): forcing this True for kpool>1 made
-        # FutureMap run a BLOCKING seq_lens D2H every spec step - measured
-        # 12.6ms CPU stall while the GPU idled (spec step 90% idle). The
-        # graph-replay decode/verify/draft path never reads the host mirror
-        # (see the comment at the class attr); the eager out-graph fallback
-        # self-serves a .cpu() when the mirror is absent. Only extend/prefill
-        # genuinely needs host lens, and that path carries its own.
-        self.needs_cpu_seq_lens = False
+        self.needs_cpu_seq_lens = self.dsa_index_kpool > 1
         # The fused metadata kernels are already the standard path for
         # kpool<=1 backends; this flag extends them to page-aligned KPool
         # geometries with pool-aligned topk.
@@ -1311,14 +1304,9 @@ class DeepseekSparseAttnBackend(
         forward_batch: ForwardBatch,
         in_capture: bool = False,
     ):
-        # needs_cpu_seq_lens=False (see __init__) nulls the host mirror on
-        # spec-v2 relay batches; the eager fallback self-serves a blocking
-        # .cpu() here - it only runs off the captured-bs grid, never in the
-        # steady spec loop.
-        if forward_batch.seq_lens_cpu is not None:
-            seq_lens_cpu = forward_batch.seq_lens_cpu if not in_capture else forward_batch.seq_lens.cpu()
-        else:
-            seq_lens_cpu = forward_batch.seq_lens.cpu()
+        seq_lens_cpu = (
+            forward_batch.seq_lens.cpu() if in_capture else forward_batch.seq_lens_cpu
+        )
         self._apply_cuda_graph_metadata(
             bs=forward_batch.batch_size,
             req_pool_indices=forward_batch.req_pool_indices,
