@@ -1186,7 +1186,23 @@ def aiter_w8a8_block_fp8_linear(
             _ck_safe_m is not None and input_2d.shape[0] > _ck_safe_m
         )
     else:
-        use_triton = True
+        # gfx942: sglang hardcodes Triton for all a8w8-blockscale GEMMs on
+        # non-gfx95 ROCm. But the aiter CK kernels (selected per-shape from
+        # AITER_CONFIG_GEMM_A8W8_BLOCKSCALE) are ~2.8x faster on the
+        # dense/shared-expert FP8 GEMMs. Route to CK when a tuned config
+        # exists; unlisted shapes keep Triton. Patched by aiter-gemm-route-shim
+        # (see chart files/ for the full rationale).
+        from aiter.ops.gemm_op_a8w8 import get_CKGEMM_config as _ckcfg
+        from aiter.jit.core import AITER_CONFIGS as _ac
+        import os as _os
+        _c = _ckcfg(
+            input_2d.shape[0], n, k,
+            _ac.AITER_CONFIG_GEMM_A8W8_BLOCKSCALE_FILE,
+        )
+        use_triton = _c is None
+        if _c is None and _os.environ.get('GLM53_LOG_A8W8_MISS'):
+            with open('/data/aiter_configs/a8w8_miss.log', 'a') as _f:
+                _f.write(f"{input_2d.shape[0]},{n},{k}\n")
 
     # if input_scale not None, input is quanted
     if input_scale is not None:

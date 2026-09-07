@@ -219,11 +219,15 @@ def _use_deep_gemm_hc_prenorm() -> bool:
 
 
 def _use_tilelang_mhc_pre() -> bool:
-    return envs.SGLANG_OPT_USE_TILELANG_MHC_PRE.get() and not is_hip()
+    # Upstream blocks this on HIP. tilelang already serves the DSA
+    # decode/prefill paths on this stack, so the gate looks
+    # conservative, not a hard incompatibility. Still opt-in via the
+    # env var, so turning it off restores upstream behaviour exactly.
+    return bool(envs.SGLANG_OPT_USE_TILELANG_MHC_PRE.get())
 
 
 def _use_tilelang_mhc_post() -> bool:
-    return envs.SGLANG_OPT_USE_TILELANG_MHC_POST.get() and not is_hip()
+    return bool(envs.SGLANG_OPT_USE_TILELANG_MHC_POST.get())
 
 
 def _use_triton_mhc() -> bool:
@@ -1010,7 +1014,8 @@ def mhc_pre(
         if num_tokens <= 2048:
             assert n_splits == 1
             if hc_hidden_size == 16384:
-                hidden_block = 256
+                # gfx942 shared-memory fit; see this shim's docstring.
+                hidden_block = 128
             elif hc_hidden_size == 28672:
                 hidden_block = 128
             else:
@@ -1067,6 +1072,7 @@ def mhc_pre(
                 gemm_out_sqrsum.squeeze(0),
                 hc_mult3,
                 hc_mult * hidden_size,
+                hidden_block=128,  # gfx942 shared-memory fit
             )
             gemm_last_dim = hc_mult3
             big_fuse_n_splits = n_splits
@@ -1623,6 +1629,7 @@ def mhc_fused_post_pre(
                 gemm_out_sqrsum_1d,
                 hc_mult3,
                 hc_hidden_size,
+                hidden_block=128,  # gfx942 shared-memory fit
             )
             gemm_out_mul = gemm_out_mul_2d.unsqueeze(0)
             gemm_out_sqrsum = gemm_out_sqrsum_1d.unsqueeze(0)
