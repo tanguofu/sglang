@@ -4057,6 +4057,20 @@ class Scheduler(
                 idle &= len(self.disagg_decode_transfer_queue.queue) == 0
                 if self.decode_offload_manager is not None:
                     idle &= len(self.decode_offload_manager.ongoing_offload) == 0
+        else:
+            # HEALTH_CHECK_PATCH: disagg queues v2
+            # for_health_check=True: treat non-empty disagg queues as "not idle"
+            # (busy = healthy) ONLY for DECODE mode. Decode's prealloc/transfer
+            # queues indicate active handshake/transfer work — the server is alive
+            # and processing, so skip health check to avoid blocking on
+            # process_decode_queue's synchronous handshake/collective ops.
+            # PREFILL mode is NOT patched: bootstrap/inflight queues are network
+            # operations that don't block the GPU — checking them would falsely
+            # skip health checks when the server is actually idle.
+            if self.disaggregation_mode == DisaggregationMode.DECODE:
+                if self.disagg_decode_prealloc_queue is not None:
+                    idle &= len(self.disagg_decode_prealloc_queue.queue) == 0
+                    idle &= len(self.disagg_decode_transfer_queue.queue) == 0
 
             # HiSparse: staging requests transitioning prefill -> decode
             if self.enable_hisparse:

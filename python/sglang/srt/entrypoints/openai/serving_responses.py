@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from contextlib import AsyncExitStack
 from http import HTTPStatus
@@ -72,6 +73,7 @@ from sglang.srt.entrypoints.openai.utils import to_openai_style_logprobs
 from sglang.srt.function_call.function_call_parser import FunctionCallParser
 from sglang.srt.function_call.json_array_parser import JsonArrayParser
 from sglang.srt.managers.io_struct import GenerateReqInput
+from sglang.srt.disaggregation.utils import DisaggregationMode
 from sglang.srt.parser.reasoning_parser import ReasoningParser
 from sglang.srt.utils import random_uuid
 
@@ -80,6 +82,15 @@ if TYPE_CHECKING:
     from sglang.srt.parser.template_manager import TemplateManager
 
 logger = logging.getLogger(__name__)
+
+# codex expects created_at as i64; the openai SDK promotes it to float,
+# producing e.g. "created_at":1784036849.0 which codex fails to deserialize.
+_CREATED_AT_FLOAT_RE = re.compile(r'"created_at":(\d+)\.0\b')
+
+
+def _fix_created_at_int(json_str: str) -> str:
+    """Strip .0 from created_at float values so codex (i64) can deserialize."""
+    return _CREATED_AT_FLOAT_RE.sub(r'"created_at":\1', json_str)
 
 
 class _MediaInputValidationError(ValueError):
@@ -459,6 +470,10 @@ class OpenAIServingResponses(OpenAIServingChat):
                         # background+stream streams on this connection, so don't detach.
                         background=request.background and not request.stream,
                         require_reasoning=require_reasoning,
+                        bootstrap_host=request.bootstrap_host,
+                        bootstrap_port=request.bootstrap_port,
+                        bootstrap_room=request.bootstrap_room,
+                        disagg_prefill_dp_rank=request.disagg_prefill_dp_rank,
                     )
 
                     generator = self._generate_with_builtin_tools(
@@ -569,7 +584,7 @@ class OpenAIServingResponses(OpenAIServingChat):
         chat_request = ChatCompletionRequest(
             model=request.model,
             messages=messages,
-            stream=request.stream,
+            stream=bool(request.stream),
             tools=chat_tools or None,
             tool_choice=(
                 self._chat_tool_choice(request.effective_tool_choice())
@@ -1477,7 +1492,7 @@ class OpenAIServingResponses(OpenAIServingChat):
             event_type = getattr(event, "type", "unknown")
             return (
                 f"event: {event_type}\n"
-                f"data: {event.model_dump_json(indent=None)}\n\n"
+                f"data: {_fix_created_at_int(event.model_dump_json(indent=None))}\n\n"
             )
 
         current_content_index = 0
@@ -1907,7 +1922,7 @@ class OpenAIServingResponses(OpenAIServingChat):
             event_type = getattr(event, "type", "unknown")
             return (
                 f"event: {event_type}\n"
-                f"data: {event.model_dump_json(indent=None)}\n\n"
+                f"data: {_fix_created_at_int(event.model_dump_json(indent=None))}\n\n"
             )
 
         # The streaming Response* event models echo ``tools`` through a
@@ -2518,6 +2533,11 @@ class OpenAIServingResponses(OpenAIServingChat):
                 context.append_output(res)
                 # NOTE(woosuk): The stop condition is handled by the engine.
                 yield context
+
+            # In PD prefill mode, the prefill worker only does one forward
+            # pass and transfers KV; it must not loop waiting for tool calls.
+            if self.tokenizer_manager.server_args.disaggregation_mode == DisaggregationMode.PREFILL.value:
+                break
 
             if not context.need_builtin_tool_call():
                 # The model did not ask for a tool call, so we're done.

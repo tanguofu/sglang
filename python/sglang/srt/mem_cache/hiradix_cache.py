@@ -625,7 +625,8 @@ class HiRadixCache(RadixCache):
                 if operation.storage_hit_count < self.prefetch_threshold:
                     # not to prefetch if not enough benefits
                     self._revoke_pending_prefetch(req_id)
-                    logger.debug(
+                    logger.info(
+                        # FIX(prefetch-log)
                         f"Revoking prefetch for request {req_id} due to insufficient hits ({operation.storage_hit_count})."
                     )
                     continue

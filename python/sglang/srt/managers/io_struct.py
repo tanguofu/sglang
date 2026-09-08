@@ -486,6 +486,12 @@ class GenerateReqInput:
             self.top_logprobs_num = 0
         if not self.token_ids_logprob:  # covers both None and []
             self.token_ids_logprob = None
+        if isinstance(self.bootstrap_host, list):
+            self.bootstrap_host = self.bootstrap_host[0] if self.bootstrap_host else None
+        if isinstance(self.bootstrap_port, list):
+            self.bootstrap_port = self.bootstrap_port[0] if self.bootstrap_port else None
+        if isinstance(self.bootstrap_room, list):
+            self.bootstrap_room = self.bootstrap_room[0] if self.bootstrap_room else None
         if self.return_sampling_mask is None:
             self.return_sampling_mask = False
 

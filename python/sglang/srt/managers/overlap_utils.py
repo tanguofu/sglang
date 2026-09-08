@@ -426,11 +426,7 @@ class FutureMap:
                 # forward publish; a stale consume means a publish went missing.
                 assert self._publish_fresh, "resolve without a fresh forward publish"
                 self._publish_fresh = False
-            if _is_hip:
-                # Temporary workaround: Event.wait() regresses TPOT on AMD MI355.
-                self.publish_ready.synchronize()
-            else:
-                self.publish_ready.wait()
+            self.publish_ready.wait()
         batch.seq_lens = self.new_seq_lens_buf[fi]
 
         if not self.needs_cpu_seq_lens:

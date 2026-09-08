@@ -1904,7 +1904,7 @@ class AiterAttnBackend(AttentionBackend):
             and layer.qk_head_dim == layer.v_head_dim
         )
 
-    def forward_extend(
+    def forward_extend(  # _dsa_kwargs_compat
         self,
         q: torch.Tensor,
         k: torch.Tensor,
@@ -1920,6 +1920,7 @@ class AiterAttnBackend(AttentionBackend):
             forward_batch.out_cache_loc
             if not layer.is_cross_attention
             else forward_batch.encoder_out_cache_loc
+        **kwargs,
         )
 
         k_descale = None
@@ -2445,7 +2446,7 @@ class AiterAttnBackend(AttentionBackend):
 
             return o.view(-1, layer.tp_q_head_num * layer.head_dim)
 
-    def forward_decode(
+    def forward_decode(  # _dsa_kwargs_compat
         self,
         q: torch.Tensor,
         k: torch.Tensor,
@@ -2476,7 +2477,8 @@ class AiterAttnBackend(AttentionBackend):
                     v,
                     k_descale,
                     v_descale,
-                )
+                **kwargs,
+        )
             # Only use SWA-specific kv cache write (reshape_and_cache_flash) when
             # both unified attention and sliding window kv pool are active.
             # Non-SWA models (e.g. Qwen3-VL) enabled via SGLANG_USE_AITER_UNIFIED_ATTN

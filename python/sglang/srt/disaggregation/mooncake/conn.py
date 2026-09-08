@@ -279,8 +279,49 @@ class MooncakeKVManager(CommonKVManager):
         self.engine = get_mooncake_transfer_engine()
 
     def register_buffer_to_engine(self):
-        # Batch register KV data buffers
-        if self.kv_args.kv_data_ptrs and self.kv_args.kv_data_lens:
+        # Decode-only host staging. Prefill keeps GPU kv_data_ptrs;
+        # D2H is done in _transfer_data (FIX(prefill-d2h-host-staging)).
+        _mode = getattr(self.disaggregation_mode, "value", self.disaggregation_mode)
+        _is_decode = str(_mode).lower() == "decode"
+        if os.environ.get("SGLANG_PD_HOST_STAGING") == "1" and _is_decode:
+            import ctypes
+
+            hip_lib = ctypes.CDLL("libamdhip64.so")
+            self._host_staging_buffers = []
+            self._host_staging_ptrs = []
+            self._host_staging_lens = []
+            self._gpu_ptrs = []
+            for ptr, length in zip(
+                self.kv_args.kv_data_ptrs, self.kv_args.kv_data_lens
+            ):
+                host_ptr = ctypes.c_void_p()
+                alloc_ret = hip_lib.hipMallocHost(
+                    ctypes.byref(host_ptr), ctypes.c_size_t(length)
+                )
+                if alloc_ret != 0:
+                    logger.error(f"hipMallocHost failed: ret={alloc_ret}, len={length}")
+                    host_ptr = ctypes.c_void_p(ptr)
+                self._host_staging_buffers.append(host_ptr)
+                self._host_staging_ptrs.append(host_ptr.value)
+                self._host_staging_lens.append(length)
+                self._gpu_ptrs.append(ptr)
+            if self._host_staging_ptrs:
+                self.engine.batch_register(
+                    self._host_staging_ptrs, self._host_staging_lens
+                )
+                self.kv_args.kv_data_ptrs = list(self._host_staging_ptrs)
+                self._gpu_to_host_map = {}
+                for gpu_ptr, host_ptr, length in zip(
+                    self._gpu_ptrs, self._host_staging_ptrs, self._host_staging_lens
+                ):
+                    self._gpu_to_host_map[gpu_ptr] = (host_ptr, length)
+                logger.info(
+                    f"Host staging: registered {len(self._host_staging_ptrs)} "
+                    f"host buffers for KV data (total "
+                    f"{sum(self._host_staging_lens)} bytes), "
+                    f"replaced kv_data_ptrs with host addresses"
+                )
+        elif self.kv_args.kv_data_ptrs and self.kv_args.kv_data_lens:
             self.engine.batch_register(
                 self.kv_args.kv_data_ptrs, self.kv_args.kv_data_lens
             )
@@ -301,20 +342,73 @@ class MooncakeKVManager(CommonKVManager):
         if self.kv_args.kv_data_ptrs:
             self.engine.batch_deregister(self.kv_args.kv_data_ptrs)
 
-        if self.kv_args.aux_data_ptrs:
-            self.engine.batch_deregister(self.kv_args.aux_data_ptrs)
 
-        for ptrs in self.kv_args.state_data_ptrs or []:
-            if ptrs:
-                self.engine.batch_deregister(ptrs)
+    def _copy_host_to_gpu(self, kv_indices=None):
+        """Copy transferred KV pages from host staging to GPU.
 
-        if hasattr(self, "connection_pool"):
-            with self.connection_lock:
-                self.connection_pool.clear()
+        Never copies the full pool: a tens-of-GB hipMemcpy DMA can
+        invalidate bnxt_re IOMMU mappings and kill RDMA QPs.
+        Missing kv_indices skips the copy rather than falling back.
+        """
+        import ctypes
 
-    # ------------------------------------------------------------------
-    # Staging buffer methods (all delegate to staging_handler.py)
-    # ------------------------------------------------------------------
+        hip_lib = ctypes.CDLL("libamdhip64.so")
+        gpu_id = getattr(self.kv_args, "gpu_id", 0)
+        hip_lib.hipSetDevice(ctypes.c_int(gpu_id))
+
+        if kv_indices is None or len(kv_indices) == 0:
+            logger.warning(
+                "_copy_host_to_gpu: skip copy — no kv_indices "
+                "(refusing full-pool hipMemcpy that kills bnxt_re QPs)"
+            )
+            return
+
+        page_size = self.kv_args.page_size
+        kv_item_lens = self.kv_args.kv_item_lens
+
+        indices = sorted(set(int(i) for i in kv_indices))
+        groups = []
+        start = indices[0]
+        end = indices[0] + 1
+        for idx in indices[1:]:
+            if idx == end:
+                end = idx + 1
+            else:
+                groups.append((start, end - start))
+                start = idx
+                end = idx + 1
+        groups.append((start, end - start))
+
+        total_copied = 0
+        for buf_idx, (host_ptr, gpu_ptr) in enumerate(
+            zip(self._host_staging_ptrs, self._gpu_ptrs)
+        ):
+            if buf_idx >= len(kv_item_lens):
+                continue
+            item_len = kv_item_lens[buf_idx]
+            if item_len == 0:
+                continue
+            for start_idx, count in groups:
+                offset = start_idx * page_size * item_len
+                length = count * page_size * item_len
+                ret = hip_lib.hipMemcpy(
+                    ctypes.c_void_p(int(gpu_ptr) + offset),
+                    ctypes.c_void_p(int(host_ptr) + offset),
+                    ctypes.c_size_t(length),
+                    ctypes.c_int(1),  # hipMemcpyHostToDevice
+                )
+                if ret != 0:
+                    logger.error(
+                        f"_copy_host_to_gpu: hipMemcpy failed ret={ret} "
+                        f"buf={buf_idx} offset={offset} len={length} dev={gpu_id}"
+                    )
+                total_copied += length
+        logger.info(
+            f"_copy_host_to_gpu: selective copy {total_copied} bytes "
+            f"for {len(indices)} pages ({len(groups)} groups) dev={gpu_id}"
+        )
+
+
 
     def register_staging_room_bootstrap(self, room, bootstrap_infos, receiver):
         self._staging_ctx.room_bootstrap[room] = bootstrap_infos
@@ -614,6 +708,60 @@ class MooncakeKVManager(CommonKVManager):
             return 0
 
         src_addrs, dst_addrs, lengths = zip(*transfer_blocks)
+        # FIX(gdr-l2-flush): cheap coherence for true GDR (no 23GB D2H).
+        if os.environ.get("SGLANG_PD_HOST_STAGING") != "1":
+            try:
+                from sglang.srt.disaggregation.mooncake.gdr_l2_flush import (
+                    ensure_read_sink,
+                    rdma_read_flush,
+                    writeback,
+                )
+            except ImportError:
+                import sys as _sys
+                if "/data/mooncake-patched" not in _sys.path:
+                    _sys.path.insert(0, "/data/mooncake-patched")
+                from gdr_l2_flush import ensure_read_sink, rdma_read_flush, writeback
+
+            gpu_id = getattr(self.kv_args, "gpu_id", 0)
+            if not writeback(gpu_id):
+                logger.error("_transfer_data: GDR L2 writeback failed dev=%s", gpu_id)
+            ret = self.engine.batch_transfer_sync(
+                mooncake_session_id, list(src_addrs), list(dst_addrs), list(lengths)
+            )
+            if ret == 0 and dst_addrs and lengths:
+                sink = ensure_read_sink(self.engine, gpu_id)
+                last_len = int(lengths[-1])
+                flush_src = int(dst_addrs[-1]) + max(last_len, 8) - 8
+                flush_src &= ~7
+                if sink:
+                    try:
+                        flush_ret = rdma_read_flush(
+                            self.engine, mooncake_session_id, sink, flush_src, 8
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "_transfer_data: GDR RDMA READ flush raised: %s", e
+                        )
+                        flush_ret = -1
+                    if flush_ret != 0:
+                        logger.error(
+                            "_transfer_data: GDR RDMA READ flush ret=%s "
+                            "dst=0x%x dev=%s",
+                            flush_ret,
+                            flush_src,
+                            gpu_id,
+                        )
+                    else:
+                        logger.info(
+                            "_transfer_data: GDR flush wb+READ 8B dst=0x%x "
+                            "blocks=%s bytes=%s dev=%s",
+                            flush_src,
+                            len(lengths),
+                            sum(int(x) for x in lengths),
+                            gpu_id,
+                        )
+            return ret
+
         return self.engine.batch_transfer_sync(
             mooncake_session_id, list(src_addrs), list(dst_addrs), list(lengths)
         )
@@ -2205,6 +2353,28 @@ class MooncakeKVSender(CommonKVSender):
             if status in (KVPoll.Success, KVPoll.Failed):
                 self.conclude_state = status
                 self.trace_ctx.trace_req_finish()
+                if (
+                    status == KVPoll.Success
+                    and os.environ.get("SGLANG_PD_HOST_STAGING") != "1"
+                ):
+                    # FIX(gdr-l2-flush): invalidate decode L2 after GDR WRITE.
+                    try:
+                        from sglang.srt.disaggregation.mooncake.gdr_l2_flush import (
+                            invalidate,
+                        )
+                    except ImportError:
+                        import sys as _sys
+                        if "/data/mooncake-patched" not in _sys.path:
+                            _sys.path.insert(0, "/data/mooncake-patched")
+                        from gdr_l2_flush import invalidate
+
+                    gpu_id = getattr(self.kv_mgr.kv_args, "gpu_id", 0)
+                    if not invalidate(gpu_id):
+                        logger.error(
+                            "poll: GDR L2 invalidate failed room=%s dev=%s",
+                            self.bootstrap_room,
+                            gpu_id,
+                        )
             elif status == KVPoll.Bootstrapping:
                 timeout_result = self._check_bootstrap_timeout()
                 if timeout_result is not None:

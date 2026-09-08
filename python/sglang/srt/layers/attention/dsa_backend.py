@@ -167,6 +167,16 @@ def _to_2d_context_lens(seqlens_32: torch.Tensor, batch_size: int) -> torch.Tens
     return seqlens_32.contiguous().view(-1, 1)
 
 
+def _idle_spec_rows_per_seq(forward_batch: ForwardBatch) -> int:
+    """Query rows carried by each padded sequence of an idle DP-attention rank."""
+    if not forward_batch.forward_mode.is_idle():
+        return 1
+    spec_info = forward_batch.spec_info
+    if spec_info is None:
+        return 1
+    return max(1, spec_info.num_tokens_per_req)
+
+
 @dataclass(frozen=True)
 class DSAFlashMLAMetadata:
     """Metadata only needed by FlashMLA"""
@@ -829,6 +839,19 @@ class DeepseekSparseAttnBackend(
         indexer_seq_lens = forward_batch.seq_lens
 
         if forward_batch.forward_mode.is_decode_or_idle():
+            rows_per_seq = _idle_spec_rows_per_seq(forward_batch)
+            if rows_per_seq > 1:
+                batch_size = batch_size * rows_per_seq
+                cache_seqlens_int32 = cache_seqlens_int32.repeat_interleave(
+                    rows_per_seq
+                )
+                cu_seqlens_k = compute_cu_seqlens(cache_seqlens_int32)
+                page_table = page_table.repeat_interleave(rows_per_seq, dim=0)
+                indexer_seq_lens = indexer_seq_lens.repeat_interleave(rows_per_seq)
+                if indexer_seq_lens_cpu is not None:
+                    indexer_seq_lens_cpu = indexer_seq_lens_cpu.repeat_interleave(
+                        rows_per_seq
+                    )
             extend_seq_lens_cpu = [1] * batch_size
             max_seqlen_q = 1
             cu_seqlens_q = self.get_device_int32_arange(batch_size + 1)
@@ -1956,12 +1979,12 @@ class DeepseekSparseAttnBackend(
         kv_cache = self.token_to_kv_pool.get_key_buffer(layer.layer_id)
 
         if q_rope is not None:
-            q_nope = q.view(-1, layer.tp_q_head_num, layer.v_head_dim)
-            q_rope = q_rope.view(
+            q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
+            q_rope = q_rope.reshape(
                 -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
             )
         else:
-            q_all = q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim)
+            q_all = q.contiguous().reshape(-1, layer.tp_q_head_num, layer.head_dim)
             q_nope = q_all[:, :, : layer.v_head_dim]
             q_rope = q_all[:, :, layer.v_head_dim :]
 
@@ -2238,8 +2261,8 @@ class DeepseekSparseAttnBackend(
         # Do absorbed multi-latent attention
         kv_cache = self.token_to_kv_pool.get_key_buffer(layer.layer_id)
         if q_rope is not None:
-            q_nope = q.view(-1, layer.tp_q_head_num, layer.v_head_dim)
-            q_rope = q_rope.view(
+            q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
+            q_rope = q_rope.reshape(
                 -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
             )
             # Caller passed split q_nope / q_rope; we'll need to concat below if
@@ -2249,7 +2272,7 @@ class DeepseekSparseAttnBackend(
             # Caller passed already-concatenated q (q_all = q). Reuse it directly
             # via a zero-copy view; the impl-specific blocks below will skip the
             # otherwise redundant concat_mla_absorb_q_general call.
-            q_all = q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim)
+            q_all = q.contiguous().reshape(-1, layer.tp_q_head_num, layer.head_dim)
             q_nope = q_all[:, :, : layer.v_head_dim]
             q_rope = q_all[:, :, layer.v_head_dim :]
 
@@ -3185,7 +3208,7 @@ class DeepseekSparseAttnBackend(
         kv_cache = k_cache.view(-1, self.real_page_size, self.kv_cache_dim).unsqueeze(1)
 
         if merge_query:
-            q_nope = q.view(-1, layer.tp_q_head_num, layer.v_head_dim)
+            q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
             q_rope_reshaped = q_rope.view(
                 -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
             )

@@ -47,6 +47,14 @@ from sglang.srt.utils.network import (
 logger = logging.getLogger(__name__)
 
 
+def as_bootstrap_room(room):
+    """Coerce PD-router bootstrap_room to a hashable scalar."""
+    if isinstance(room, (list, tuple)):
+        return room[0] if room else None
+    return room
+
+
+
 # Reuse a keep-alive session per bootstrap_addr for decode-side bootstrap queries
 # so we don't open a fresh TCP connection per query (that churns short-lived
 # sockets and can exhaust ephemeral ports under high concurrency). Thread-local
@@ -1071,7 +1079,7 @@ class CommonKVSender(BaseKVSender):
         req_has_disagg_prefill_dp_rank: bool = False,
     ):
         self.kv_mgr = mgr
-        self.bootstrap_room = bootstrap_room
+        self.bootstrap_room = as_bootstrap_room(bootstrap_room)
         self.aux_index = None
         self.bootstrap_server_url = bootstrap_addr
         self.conclude_state: Optional[KVPoll] = None
@@ -1254,7 +1262,7 @@ class CommonKVReceiver(BaseKVReceiver):
         bootstrap_addr: str,
         bootstrap_room: Optional[int] = None,
     ):
-        self.bootstrap_room = bootstrap_room
+        self.bootstrap_room = as_bootstrap_room(bootstrap_room)
         self.bootstrap_addr = bootstrap_addr
         self.kv_mgr = mgr
         self.conclude_state: Optional[KVPoll] = None
@@ -1513,7 +1521,8 @@ class CommonKVReceiver(BaseKVReceiver):
                             str(self.bootstrap_room).encode("ascii"),
                             self.kv_mgr.local_ip.encode("ascii"),
                             str(self.kv_mgr.rank_port).encode("ascii"),
-                        ]
+                        ],
+                        flags=zmq.NOBLOCK,
                     )
                 logger.debug(
                     f"Sent abort notification for room {self.bootstrap_room} "

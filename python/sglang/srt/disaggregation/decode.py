@@ -106,7 +106,15 @@ CLIP_MAX_NEW_TOKEN = envs.SGLANG_CLIP_MAX_NEW_TOKENS_ESTIMATION.get()
 
 def _bootstrap_addr(req: Req) -> str:
     # FIXME: make a property of a req
-    return NetworkAddress(req.bootstrap_host, req.bootstrap_port).to_host_port_str()
+    # FIX(bootstrap-list): normalize list-type bootstrap_host
+    # The PD router may send bootstrap_host as ["ip"] (list) for 1p1d.
+    host = req.bootstrap_host
+    if isinstance(host, list):
+        host = host[0] if host else None
+    port = req.bootstrap_port
+    if isinstance(port, list):
+        port = port[0] if port else None
+    return NetworkAddress(host, port).to_host_port_str()
 
 
 class DecodeReqToTokenPool:
@@ -2121,6 +2129,8 @@ class SchedulerDisaggregationDecodeMixin:
             if self._engine_paused:
                 continue
             self.process_decode_queue()
+            # Flush queued synthetic health replies even if PD transfer work prevents a batch.
+            self.maybe_send_health_check_signal()
 
             # Get the next batch to run
             plan = self.get_next_disagg_decode_batch_to_run(
@@ -2160,6 +2170,8 @@ class SchedulerDisaggregationDecodeMixin:
             if self._engine_paused:
                 continue
             self.process_decode_queue()
+            # Flush queued synthetic health replies even if PD transfer work prevents a batch.
+            self.maybe_send_health_check_signal()
 
             # Get the next batch to run
             plan = self.get_next_disagg_decode_batch_to_run(

@@ -379,6 +379,16 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
         weights = weights_raw * self.n_heads**-0.5
         return weights.unsqueeze(-1) * q_scale * self.softmax_scale
 
+    @property
+    def _k_norm_weight_f32(self) -> torch.Tensor:
+        w = self.k_norm.weight
+        return w.float() if w.dtype != torch.float32 else w
+
+    @property
+    def _k_norm_bias_f32(self) -> torch.Tensor:
+        b = self.k_norm.bias
+        return b.float() if b is not None and b.dtype != torch.float32 else b
+
     def _fused_k_weights(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         kw, _ = self.wk_weights_proj(x)
         return kw.split([self.head_dim, self.n_heads], dim=-1)
@@ -540,17 +550,22 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
             pool.invalidate_index_buffer_for_layer(layer_id)
         if hasattr(pool, "_is_layer_owned") and not pool._is_layer_owned(layer_id):
             return
+        # FIX(fused-store-length-guard): long-context safety on HIP
+        _max_ctx = 0
+        if forward_batch.seq_lens_cpu is not None and len(forward_batch.seq_lens_cpu) > 0:
+            _max_ctx = int(forward_batch.seq_lens_cpu.max().item())
         if (
             not _is_fp8_fnuz
             and out_cache_loc is not None
+            and _max_ctx <= 4096
             and can_use_dsa_fused_store(torch.bfloat16, out_cache_loc.dtype, page_size)
         ):
             fused_k_indexer_norm_rope_store(
                 key_raw,
                 pool.get_index_k_with_scale_buffer(layer_id=layer_id),
                 out_cache_loc,
-                self.k_norm.weight,
-                self.k_norm.bias,
+                self._k_norm_weight_f32,
+                self._k_norm_bias_f32,
                 self.k_norm.variance_epsilon,
                 self._indexer_cos_sin_cache,
                 positions,
@@ -561,8 +576,8 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
         # Fallback: separate K kernel + store kernel.
         key = fused_k_indexer_norm_rope(
             key_raw,
-            self.k_norm.weight,
-            self.k_norm.bias,
+            self._k_norm_weight_f32,
+            self._k_norm_bias_f32,
             self.k_norm.variance_epsilon,
             self._indexer_cos_sin_cache,
             positions,
@@ -825,11 +840,72 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
         assert len(weights.shape) == 3
         weights = weights.squeeze(2)
 
-        if self.paged_mqa_logits_backend.is_aiter():
+        if (
+            _is_hip
+            and get_bool_env_var("SGLANG_DSA_PAGED_FLYDSL")
+            and (
+                (page_size == 1 and not _use_aiter_preshuffle)
+                or (_use_aiter_preshuffle and page_size % 16 == 0)
+            )
+        ):
+            from aiter.ops.flydsl.kernels.fp8_mqa_logits import (
+                flydsl_fp8_paged_mqa_logits,
+            )
+
+            if next_n == 4:
+                paged_flydsl_variant = "mfma_r4_w4"
+            elif next_n == 2:
+                paged_flydsl_variant = "mfma_r2_w4"
+            else:
+                paged_flydsl_variant = "mfma_r1_w4"
+
+            num_blocks = kv_cache_fp8.shape[0]
+            kv_words = kv_cache_fp8.reshape(num_blocks, -1).view(torch.float32)
+            kv_scales = kv_words[:, page_size * 32:]
+            kv_flat = kv_cache_fp8.reshape(-1)
+            if _is_fp8_fnuz:
+                kv_flat = kv_flat.view(torch.float8_e4m3fnuz)
+            else:
+                kv_flat = kv_flat.view(torch.float8_e4m3fn)
+            seqlens_for_flydsl = (
+                seqlens_32.reshape(-1) if seqlens_32.dim() == 2 else seqlens_32
+            )
+            rows = q_fp8[:q_offset].shape[0]
+            tables = block_tables
+            if tables.shape[0] != rows:
+                if tables.shape[0] == 0 or rows % tables.shape[0] != 0:
+                    raise ValueError(
+                        f"paged FlyDSL block table rows mismatch: tables={tables.shape[0]}, q_rows={rows}"
+                    )
+                tables = tables.repeat_interleave(rows // tables.shape[0], dim=0)
+            if (
+                seqlens_for_flydsl.shape[0] != rows
+            ):
+                if seqlens_for_flydsl.shape[0] == 0 or rows % seqlens_for_flydsl.shape[0] != 0:
+                    raise ValueError(
+                        f"paged FlyDSL context length rows mismatch: context_lens={seqlens_for_flydsl.shape[0]}, q_rows={rows}"
+                    )
+                seqlens_for_flydsl = seqlens_for_flydsl.repeat_interleave(
+                    rows // seqlens_for_flydsl.shape[0]
+                )
+            logits = flydsl_fp8_paged_mqa_logits(
+                q_fp8[:q_offset],
+                kv_flat,
+                kv_scales,
+                weights[:q_offset],
+                seqlens_for_flydsl,
+                tables,
+                max_seq_len,
+                variant=paged_flydsl_variant,
+                page_size=page_size,
+                preshuffle=_use_aiter_preshuffle,
+            )
+            row_starts = None
+        elif self.paged_mqa_logits_backend.is_aiter():
             logits = aiter_paged_mqa_logits(
-                q_fp8,
+                q_fp8[:q_offset],
                 kv_cache_fp8,
-                weights,
+                weights[:q_offset],
                 seqlens_32,
                 block_tables,
                 max_seq_len,
@@ -884,9 +960,9 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
 
         # NOTE(dark): logits should be cleaned in topk_transform
         self._mask_init_and_local_tokens(logits, seqlens_32)
-        topk_result = metadata.topk_transform(logits, self.index_topk)
+        topk_result = metadata.topk_transform(logits[:q_offset], self.index_topk)
         # Restore possible padding exist in the hidden states.
-        if not _is_hip and q_offset < q_fp8.shape[0]:
+        if q_offset < q_fp8.shape[0]:
             pad_len = q_fp8.shape[0] - q_offset
             padding = torch.full(
                 (pad_len, topk_result.shape[1]),
@@ -1041,7 +1117,13 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
             assert q_fp8[:q_offset].shape[0] != 0
             with self._with_real_sm_count():
                 if _is_hip:
-                    from aiter.ops.triton.fp8_mqa_logits import fp8_mqa_logits
+                    # WAVE1: FlyDSL gfx942 MQA logits (Triton fallback)
+                    try:
+                        from aiter.ops.flydsl.kernels.fp8_mqa_logits import (
+                            flydsl_fp8_mqa_logits as fp8_mqa_logits,
+                        )
+                    except ImportError:
+                        from aiter.ops.triton.fp8_mqa_logits import fp8_mqa_logits
 
                     kv, scale = kv_fp8
                     # Match the CUDA deep_gemm path (clean_logits=False): the topk
@@ -1100,7 +1182,13 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
 
             with self._with_real_sm_count():
                 if _is_hip:
-                    from aiter.ops.triton.fp8_mqa_logits import fp8_mqa_logits
+                    # WAVE1: FlyDSL gfx942 MQA logits (Triton fallback)
+                    try:
+                        from aiter.ops.flydsl.kernels.fp8_mqa_logits import (
+                            flydsl_fp8_mqa_logits as fp8_mqa_logits,
+                        )
+                    except ImportError:
+                        from aiter.ops.triton.fp8_mqa_logits import fp8_mqa_logits
 
                     kv, scale = kv_fp8
                     # clean_logits=False: topk transform handles masking (see above)
@@ -1379,6 +1467,14 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
                     ke,
                     clean_logits=False,
                 )
+            # Guard against i32 index overflow in the FlyDSL/Triton MQA logits
+            # kernel: the kernel indexes logits with i32, so long-context
+            # prefill (k_offset > ~180k) wraps the i32 index and corrupts output.
+            INT32_MAX = 2147483647
+            bytes_per_row = self.index_topk * 4  # fp32 logits per row
+            i32_safe_rows = INT32_MAX // max(bytes_per_row, 1)
+            max_rows = min(max_rows, i32_safe_rows, q_offset)
+
             actual_seq_q = torch.tensor([actual_seq_q], dtype=torch.int32).to(
                 device="cuda", non_blocking=True
             )
@@ -1764,6 +1860,11 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
                 or forward_batch.forward_mode.is_target_verify()
                 or forward_batch.forward_mode.is_draft_extend_v2()
             ):
+                # FIX(breakable-target-verify): metadata None guard
+                if metadata is None:
+                    metadata = get_attn_backend().get_indexer_metadata(layer_id, forward_batch)
+                    if metadata is None:
+                        return None
                 topk_result = self._get_topk_paged(
                     forward_batch, layer_id, q_fp8, weights, metadata
                 )

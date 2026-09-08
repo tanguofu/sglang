@@ -828,11 +828,19 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
         if self.is_write_back:
             return False
         node.hit_count += 1
-        return (
-            self.enable_hicache
-            and not node.backuped
-            and node.hit_count >= self.write_through_threshold
-        )
+        if not (self.enable_hicache and not node.backuped):
+            return False
+        # FIX(big-node-backup): agent-context nodes (> threshold tokens) back
+        # up on the FIRST insert. write_through_selective's hit-count gate
+        # leaves turn-1's large prefix unbackuped; a turn-3 arrival inside the
+        # async backup window then cold-prefills 80s. Big nodes only — small
+        # chat prefixes keep the selective policy.
+        from sglang.srt.utils.common import get_int_env_var
+
+        big_node_tokens = get_int_env_var("SGLANG_HICACHE_BIG_NODE_TOKENS", 65536)
+        if big_node_tokens > 0 and len(node.key) >= big_node_tokens:
+            return True
+        return node.hit_count >= self.write_through_threshold
 
     def begin_insert(self, params: InsertParams) -> InsertStepResult:
         """Start the insert, running to its first barrier or completion."""
@@ -963,11 +971,20 @@ class UnifiedTreeCore(UnifiedTreeCoreInterface):
                 )
                 consumed_from = min(consumed_from, comp_consumed_from)
 
-            dup_start = max(0, state.params.prev_prefix_len - state.total_prefix_length)
-            if dup_start < consumed_from:
-                step_actions.append(
-                    FreeDeviceKV([value_slice[dup_start:consumed_from]])
+            # FIX(zombie-free): the walk can match beyond prev_prefix_len
+            # (another request extended the shared prefix path between this
+            # chunk's schedule and insert). Past that boundary the request's
+            # req_to_token row aliases the TREE nodes' slots — freeing them
+            # zombifies the tree nodes. Only free within the request-owned
+            # region, which starts strictly before prev_prefix_len.
+            if state.params.prev_prefix_len > state.total_prefix_length:
+                dup_start = (
+                    state.params.prev_prefix_len - state.total_prefix_length
                 )
+                if dup_start < consumed_from:
+                    step_actions.append(
+                        FreeDeviceKV([value_slice[dup_start:consumed_from]])
+                    )
 
         if self._inc_hit_count_and_check(node, state.params.chunked):
             step_actions.append(self._build_backup_kv_action(node))

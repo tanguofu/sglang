@@ -6,13 +6,13 @@
 #include <sgl_kernel/utils.cuh>
 #include <sgl_kernel/vec.cuh>
 #include <sgl_kernel/warp.cuh>
+#include <sgl_kernel/deepseek_v4/fp8_utils.cuh>
 
 #include <dlpack/dlpack.h>
 #include <tvm/ffi/container/tensor.h>
 
 #include <bit>
 #include <cstdint>
-#include <cuda_fp8.h>
 
 namespace sglang {
 
@@ -29,10 +29,7 @@ SGL_DEVICE float fp8_e4m3_clip(float val) {
   return math::max(math::min(val, kFP8E4M3Max), -kFP8E4M3Max);
 }
 
-[[maybe_unused]]
-SGL_DEVICE fp8x2_e4m3_t pack_fp8(float x, float y) {
-  return fp8x2_e4m3_t{fp32x2_t{fp8_e4m3_clip(x), fp8_e4m3_clip(y)}};
-}
+using deepseek_v4::fp8::pack_fp8;
 
 template <typename KeyT, typename IndicesT, uint32_t kPageBits, bool kUsePDL>
 __global__ void fused_store_indexer_cache(const __grid_constant__ FusedStoreCacheParam param) {

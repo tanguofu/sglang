@@ -1354,6 +1354,8 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             )
 
             bootstrap_room = obj.bootstrap_room
+            if isinstance(bootstrap_room, (list, tuple)):
+                bootstrap_room = bootstrap_room[0] if bootstrap_room else None
             if (
                 bootstrap_room is None
                 and self.server_args.disaggregation_transfer_backend == "fake"

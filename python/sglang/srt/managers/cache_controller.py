@@ -1073,6 +1073,14 @@ class HiCacheController:
             if prefix_keys and len(prefix_keys) > 0:
                 prefix_keys += batch_hashes
 
+        # FIX(prefetch-log): INFO so we can see exist-hit vs GET on PD.
+        logger.info(
+            "L3 storage_hit_query tokens=%s pages=%s last_hash=%s first=%s",
+            storage_query_count,
+            len(hash_value),
+            last_hash,
+            (hash_value[0][:16] if hash_value else None),
+        )
         return hash_value, storage_query_count
 
     def prefetch_thread_func(self):

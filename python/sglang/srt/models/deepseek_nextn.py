@@ -61,7 +61,7 @@ from sglang.srt.models.deepseek_common.utils import enable_nextn_moe_bf16_cast_t
 from sglang.srt.models.deepseek_v2 import DeepseekV2DecoderLayer, DeepseekV3ForCausalLM
 from sglang.srt.models.utils import WeightsMapper
 from sglang.srt.runtime_context import get_model, get_parallel, get_spec
-from sglang.srt.utils import BumpAllocator, add_prefix, is_cuda, is_npu
+from sglang.srt.utils import BumpAllocator, add_prefix, is_cuda, is_hip, is_npu
 
 
 def _gather_dsa_topk_indices_for_cp(
@@ -156,7 +156,7 @@ class DeepseekModelNextN(nn.Module):
 
         self.alt_stream = (
             torch.cuda.Stream()
-            if _is_cuda or envs.SGLANG_NPU_USE_MULTI_STREAM.get()
+            if _is_cuda or is_hip() or envs.SGLANG_NPU_USE_MULTI_STREAM.get()
             else None
         )
 

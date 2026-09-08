@@ -506,7 +506,14 @@ class UnifiedRadixCache(BasePrefixCache):
     ) -> Optional[BackupKV]:
         """Evict one device leaf, consuming its step result; returns the
         deferred write-back BackupKV when one must run before the demote."""
-        result = self.tree_core.evict_device_leaf(node_id, self.is_write_back)
+        result = self.tree_core.evict_device_leaf(
+            node_id,
+            # FIX(evict-backup-v2): PD prefill may evict unbackuped GPU nodes
+            # before write_through_selective reaches threshold. Force D->H on
+            # eviction whenever HiCache is on, but keep is_write_back tied to
+            # the write policy so hits still promote L2/L3.
+            self.is_write_back or self.cache_controller is not None,
+        )
         self._free_values(result.device_frees, result.host_frees)
         self._accumulate_tracker(tracker, result.tracker)
         return result.backup_kv

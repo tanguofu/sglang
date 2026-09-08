@@ -1887,6 +1887,19 @@ async def v1_score_request(request: ScoringRequest, raw_request: Request):
 
 @app.post("/v1/responses", dependencies=[Depends(validate_json_request)])
 async def v1_responses_request(request: ResponsesRequest, raw_request: Request):
+    # FIX(responses-404-guardrail): Responses API is disabled on this PD deployment.
+    from fastapi.responses import ORJSONResponse as _ORJSONResponse
+    return _ORJSONResponse(
+        status_code=404,
+        content={
+            "error": {
+                "message": "The Responses API (/v1/responses) is not available on this deployment. Use /v1/chat/completions.",
+                "type": "invalid_request_error",
+                "param": None,
+                "code": "not_found",
+            }
+        },
+    )
     """Endpoint for the responses API with reasoning support."""
 
     result = await raw_request.app.state.openai_serving_responses.create_responses(
@@ -1906,6 +1919,19 @@ async def v1_responses_request(request: ResponsesRequest, raw_request: Request):
 
 @app.get("/v1/responses/{response_id}")
 async def v1_retrieve_responses(response_id: str, raw_request: Request):
+    # FIX(responses-404-guardrail): Responses API is disabled on this PD deployment.
+    from fastapi.responses import ORJSONResponse as _ORJSONResponse
+    return _ORJSONResponse(
+        status_code=404,
+        content={
+            "error": {
+                "message": "The Responses API (/v1/responses) is not available on this deployment. Use /v1/chat/completions.",
+                "type": "invalid_request_error",
+                "param": None,
+                "code": "not_found",
+            }
+        },
+    )
     """Retrieve a response by ID."""
     return await raw_request.app.state.openai_serving_responses.retrieve_responses(
         response_id
@@ -1914,6 +1940,19 @@ async def v1_retrieve_responses(response_id: str, raw_request: Request):
 
 @app.post("/v1/responses/{response_id}/cancel")
 async def v1_cancel_responses(response_id: str, raw_request: Request):
+    # FIX(responses-404-guardrail): Responses API is disabled on this PD deployment.
+    from fastapi.responses import ORJSONResponse as _ORJSONResponse
+    return _ORJSONResponse(
+        status_code=404,
+        content={
+            "error": {
+                "message": "The Responses API (/v1/responses) is not available on this deployment. Use /v1/chat/completions.",
+                "type": "invalid_request_error",
+                "param": None,
+                "code": "not_found",
+            }
+        },
+    )
     """Cancel a background response."""
     return await raw_request.app.state.openai_serving_responses.cancel_responses(
         response_id
