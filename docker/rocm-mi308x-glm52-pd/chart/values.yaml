@@ -201,6 +201,18 @@ commonArgs:
 
 prefill:
   workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit
+  # Agent-context fix (2026-09-07): prefix nodes >= SGLANG_HICACHE_BIG_NODE_TOKENS
+  # (default 65536) back up D->H on the FIRST insert instead of waiting for the
+  # write_through_selective 2nd hit. Codex turn-3 was cold-prefilling 81s when
+  # it landed inside the async backup window after turn-2. Patch file must be at
+  # /data/mooncake-patched/patch_big_node_backup.py on each prefill node.
+  bigNodeBackup: true
+  # Zombie-cache fix (2026-09-07): chunked-insert FreeDeviceKV freed tree-node
+  # slots when the insert walk matched beyond cache_protected_len (another
+  # request extended the shared prefix path between schedule and insert).
+  # Tree nodes kept referencing freed slots -> non-deterministic turn-3 miss.
+  # Patch file must be at /data/mooncake-patched/patch_zombie_free_fix.py.
+  zombieFreeFix: true
   extraEnv:
     SGLANG_HICACHE_HOST_ALLOCATOR: default
     MOONCAKE_TE_META_DATA_SERVER: P2PHANDSHAKE

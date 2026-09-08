@@ -69,6 +69,12 @@ spec:
               {{- include "sglang-1p1d.gemmCsvInstall" $root | nindent 14 }}
               python3 /data/mooncake-patched/patch_evict_backup.py || echo "WARNING: evict-backup patch failed"
               python3 /data/mooncake-patched/patch_prefetch_log.py || echo "WARNING: prefetch-log patch failed"
+              {{- if $root.Values.prefill.bigNodeBackup }}
+              python3 /data/mooncake-patched/patch_big_node_backup.py || echo "WARNING: big-node-backup patch failed"
+              {{- end }}
+              {{- if $root.Values.prefill.zombieFreeFix }}
+              python3 /data/mooncake-patched/patch_zombie_free_fix.py || echo "WARNING: zombie-free-fix patch failed"
+              {{- end }}
               {{- if and $root.Values.mooncake.store.enabled $root.Values.mooncake.store.standalonePrefill }}
               echo "waiting for mooncake_client 127.0.0.1:{{ $root.Values.mooncake.store.port }}"
               for _ in $(seq 1 90); do
