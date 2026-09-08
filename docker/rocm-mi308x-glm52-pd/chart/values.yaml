@@ -52,12 +52,12 @@ ports:
     metrics: 9003
 
 # Prefill-only HiCache. ratio 4 previously OOM'd ~2TB host KV on TP8.
-# L1=GPU radix, L2=host (ratio 1), L3=Mooncake DRAM pool.
+# L1=GPU radix, L2=host (ratio 1.5, live), L3=Mooncake DRAM pool.
 # wait_complete: PD must not start compute before L3 GET; timeout was
 # existing-but-never-getting. prefetch_threshold 1 token (default 256).
 hicache:
   enabled: true
-  ratio: 1
+  ratio: 1.5
   storageBackend: mooncake
   prefetchPolicy: wait_complete
   memLayout: page_first_direct
@@ -207,7 +207,9 @@ prefill:
     MOONCAKE_GLOBAL_SEGMENT_SIZE: "64gb"
     MC_MMAP_ARENA_POOL_SIZE: "4gb"
   args:
-    - --mem-fraction-static 0.88
+    # 0.85 leaves RCCL scratch after long-context GDR; 0.88 hit
+    # "Failed to CUDA calloc" in sampler all_reduce (2026-09-08).
+    - --mem-fraction-static 0.85
     - --chunked-prefill-size 16384
     - --prefill-max-requests 32
     - --max-prefill-tokens 32768
