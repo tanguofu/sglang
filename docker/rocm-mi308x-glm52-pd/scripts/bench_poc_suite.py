@@ -57,6 +57,55 @@ def get_json(url: str, path: str, timeout: float = 30):
     )
 
 
+def prefill_ttft(url: str, label: str, target_tokens: int) -> dict:
+    """Cold-blob prefill TTFT: the prefill worker's production metric.
+
+    A unique salt per run defeats the radix cache so the prefill is cold.
+    The stream is closed at the first token — no decode is measured (the
+    prefill worker never decodes in production PD).
+    """
+    import random
+    import string
+
+    salt = "".join(random.choices(string.ascii_lowercase, k=8))
+    filler = FILLER * (target_tokens // 24 + 8)
+    text = (
+        f"[{salt}] {filler}\n\nSummarize the document above in one sentence."
+    )
+    t0 = time.time()
+    resp = chat(
+        url,
+        [{"role": "user", "content": text}],
+        max_tokens=8,
+        timeout=1800,
+        stream=True,
+    )
+    ttft = None
+    for line in resp:
+        if not line.startswith(b"data: "):
+            continue
+        payload = line[6:].strip()
+        if payload == b"[DONE]":
+            break
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        delta = chunk.get("choices", [{}])[0].get("delta", {})
+        if delta.get("content") or delta.get("reasoning_content"):
+            ttft = time.time() - t0
+            break
+    resp.close()
+    result = {
+        "label": label,
+        "salt": salt,
+        "ttft_s": round(ttft or -1, 1),
+        "ts": time.time(),
+    }
+    print(f"[prefill] cold ttft={result['ttft_s']}s salt={salt}")
+    return result
+
+
 def run_suite(url: str, label: str, target_tokens: int, gen_tokens: int) -> dict:
     results = {"label": label, "url": url, "ts": time.time()}
 
@@ -165,7 +214,16 @@ def main() -> None:
     ap.add_argument("--label", required=True, help="baseline | parity | w1 | w2 ...")
     ap.add_argument("--target-tokens", type=int, default=196000)
     ap.add_argument("--gen-tokens", type=int, default=512)
+    ap.add_argument("--prefill-only", action="store_true")
     args = ap.parse_args()
+
+    if args.prefill_only:
+        out = prefill_ttft(args.url, args.label, args.target_tokens)
+        path = f"poc-prefill-{args.label}.json"
+        with open(path, "w") as f:
+            json.dump(out, f, indent=2)
+        print(f"[done] results -> {path}")
+        return
 
     results = run_suite(args.url, args.label, args.target_tokens, args.gen_tokens)
     out = f"poc-results-{args.label}.json"
