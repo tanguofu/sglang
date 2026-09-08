@@ -840,72 +840,11 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
         assert len(weights.shape) == 3
         weights = weights.squeeze(2)
 
-        if (
-            _is_hip
-            and get_bool_env_var("SGLANG_DSA_PAGED_FLYDSL")
-            and (
-                (page_size == 1 and not _use_aiter_preshuffle)
-                or (_use_aiter_preshuffle and page_size % 16 == 0)
-            )
-        ):
-            from aiter.ops.flydsl.kernels.fp8_mqa_logits import (
-                flydsl_fp8_paged_mqa_logits,
-            )
-
-            if next_n == 4:
-                paged_flydsl_variant = "mfma_r4_w4"
-            elif next_n == 2:
-                paged_flydsl_variant = "mfma_r2_w4"
-            else:
-                paged_flydsl_variant = "mfma_r1_w4"
-
-            num_blocks = kv_cache_fp8.shape[0]
-            kv_words = kv_cache_fp8.reshape(num_blocks, -1).view(torch.float32)
-            kv_scales = kv_words[:, page_size * 32:]
-            kv_flat = kv_cache_fp8.reshape(-1)
-            if _is_fp8_fnuz:
-                kv_flat = kv_flat.view(torch.float8_e4m3fnuz)
-            else:
-                kv_flat = kv_flat.view(torch.float8_e4m3fn)
-            seqlens_for_flydsl = (
-                seqlens_32.reshape(-1) if seqlens_32.dim() == 2 else seqlens_32
-            )
-            rows = q_fp8[:q_offset].shape[0]
-            tables = block_tables
-            if tables.shape[0] != rows:
-                if tables.shape[0] == 0 or rows % tables.shape[0] != 0:
-                    raise ValueError(
-                        f"paged FlyDSL block table rows mismatch: tables={tables.shape[0]}, q_rows={rows}"
-                    )
-                tables = tables.repeat_interleave(rows // tables.shape[0], dim=0)
-            if (
-                seqlens_for_flydsl.shape[0] != rows
-            ):
-                if seqlens_for_flydsl.shape[0] == 0 or rows % seqlens_for_flydsl.shape[0] != 0:
-                    raise ValueError(
-                        f"paged FlyDSL context length rows mismatch: context_lens={seqlens_for_flydsl.shape[0]}, q_rows={rows}"
-                    )
-                seqlens_for_flydsl = seqlens_for_flydsl.repeat_interleave(
-                    rows // seqlens_for_flydsl.shape[0]
-                )
-            logits = flydsl_fp8_paged_mqa_logits(
-                q_fp8[:q_offset],
-                kv_flat,
-                kv_scales,
-                weights[:q_offset],
-                seqlens_for_flydsl,
-                tables,
-                max_seq_len,
-                variant=paged_flydsl_variant,
-                page_size=page_size,
-                preshuffle=_use_aiter_preshuffle,
-            )
-            row_starts = None
-        elif self.paged_mqa_logits_backend.is_aiter():
+        if self.paged_mqa_logits_backend.is_aiter():
             logits = aiter_paged_mqa_logits(
-                q_fp8[:q_offset],
+                q_fp8,
                 kv_cache_fp8,
-                weights[:q_offset],
+                weights,
                 seqlens_32,
                 block_tables,
                 max_seq_len,
@@ -960,9 +899,9 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
 
         # NOTE(dark): logits should be cleaned in topk_transform
         self._mask_init_and_local_tokens(logits, seqlens_32)
-        topk_result = metadata.topk_transform(logits[:q_offset], self.index_topk)
+        topk_result = metadata.topk_transform(logits, self.index_topk)
         # Restore possible padding exist in the hidden states.
-        if q_offset < q_fp8.shape[0]:
+        if not _is_hip and q_offset < q_fp8.shape[0]:
             pad_len = q_fp8.shape[0] - q_offset
             padding = torch.full(
                 (pad_len, topk_result.shape[1]),

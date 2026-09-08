@@ -74,7 +74,7 @@ def compute_dsa_seqlens(original_seq_lens, dsa_index_topk: int):
 def should_remap_pd_dsa_seed_to_local_slots(server_args: "ServerArgs") -> bool:
     """Whether a PD seed should enter the allocator-local fused TopK domain."""
     return (
-        is_cuda()
+        (is_cuda() or is_hip())
         and envs.SGLANG_DSA_FUSE_TOPK.get()
         and server_args.disaggregation_mode == "decode"
         and not server_args.enable_hisparse

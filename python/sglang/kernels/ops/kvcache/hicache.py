@@ -72,7 +72,7 @@ def can_use_hicache_jit_kernel(
     block_quota: int | None = None,  # can be tuned for less interference
 ) -> bool:
     logger = logging.getLogger(__name__)
-    if element_size % 128 != 0:
+    if element_size % 64 != 0:
         logger.warning(f"Unsupported {element_size = } for JIT HiCache kernel")
         return False
     try:

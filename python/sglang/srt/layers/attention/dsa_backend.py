@@ -167,16 +167,6 @@ def _to_2d_context_lens(seqlens_32: torch.Tensor, batch_size: int) -> torch.Tens
     return seqlens_32.contiguous().view(-1, 1)
 
 
-def _idle_spec_rows_per_seq(forward_batch: ForwardBatch) -> int:
-    """Query rows carried by each padded sequence of an idle DP-attention rank."""
-    if not forward_batch.forward_mode.is_idle():
-        return 1
-    spec_info = forward_batch.spec_info
-    if spec_info is None:
-        return 1
-    return max(1, spec_info.num_tokens_per_req)
-
-
 @dataclass(frozen=True)
 class DSAFlashMLAMetadata:
     """Metadata only needed by FlashMLA"""
@@ -839,19 +829,6 @@ class DeepseekSparseAttnBackend(
         indexer_seq_lens = forward_batch.seq_lens
 
         if forward_batch.forward_mode.is_decode_or_idle():
-            rows_per_seq = _idle_spec_rows_per_seq(forward_batch)
-            if rows_per_seq > 1:
-                batch_size = batch_size * rows_per_seq
-                cache_seqlens_int32 = cache_seqlens_int32.repeat_interleave(
-                    rows_per_seq
-                )
-                cu_seqlens_k = compute_cu_seqlens(cache_seqlens_int32)
-                page_table = page_table.repeat_interleave(rows_per_seq, dim=0)
-                indexer_seq_lens = indexer_seq_lens.repeat_interleave(rows_per_seq)
-                if indexer_seq_lens_cpu is not None:
-                    indexer_seq_lens_cpu = indexer_seq_lens_cpu.repeat_interleave(
-                        rows_per_seq
-                    )
             extend_seq_lens_cpu = [1] * batch_size
             max_seqlen_q = 1
             cu_seqlens_q = self.get_device_int32_arange(batch_size + 1)
