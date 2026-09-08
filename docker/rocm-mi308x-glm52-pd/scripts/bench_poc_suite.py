@@ -99,7 +99,9 @@ def run_suite(url: str, label: str, target_tokens: int, gen_tokens: int) -> dict
         f"total={dt:.1f}s answer={results['needle']['answer']!r}"
     )
 
-    # 3) decode tps on the cached context (streaming, TTFT excludes prefill)
+    # 3) decode tps on the cached context (streaming, TTFT excludes prefill).
+    # GLM-5.3 emits reasoning_content before content, so TTFT is the first
+    # delta of ANY kind and tokens count both streams.
     t0 = time.time()
     ttft = None
     resp = chat(
@@ -120,21 +122,29 @@ def run_suite(url: str, label: str, target_tokens: int, gen_tokens: int) -> dict
             chunk = json.loads(payload)
         except json.JSONDecodeError:
             continue
-        if chunk.get("choices") and chunk["choices"][0].get("delta", {}).get("content"):
+        delta = chunk.get("choices") and chunk["choices"][0].get("delta", {})
+        if delta and (delta.get("content") or delta.get("reasoning_content")):
             if ttft is None:
                 ttft = time.time() - t0
             comp += 1
     total = time.time() - t0
     decode_s = total - (ttft or 0)
+    # Server-side throughput (most reliable; reasoning+content combined).
+    loads = get_json(url, "/v1/loads")
+    gen_tps = loads.get("loads", [{}])[0].get("gen_throughput", 0.0)
     results["decode"] = {
         "gen_tokens": gen_tokens,
+        "counted_tokens": comp,
         "ttft_s": round(ttft or 0, 1),
         "decode_s": round(decode_s, 1),
-        "tps": round(gen_tokens / decode_s, 2) if decode_s > 0 else 0,
+        "tps_client": round(comp / decode_s, 2) if decode_s > 0 else 0,
+        "tps_server": round(gen_tps, 2),
     }
     print(
         f"[decode] ttft={results['decode']['ttft_s']}s "
-        f"decode={results['decode']['decode_s']}s tps={results['decode']['tps']}"
+        f"decode={results['decode']['decode_s']}s "
+        f"tps_client={results['decode']['tps_client']} "
+        f"tps_server={results['decode']['tps_server']}"
     )
 
     # 4) accept_len
