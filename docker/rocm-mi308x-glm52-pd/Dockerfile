@@ -1,10 +1,11 @@
-# GLM-5.2-FP8 1P1D SGLang worker for AMD MI308X (gfx942)
-# Based on official rocm/sgl-dev:v0.5.15.post1-rocm700-mi30x-20260715 (ROCm 7.0.0).
+# GLM-5.2/5.3-FP8 1P1D SGLang worker for AMD MI308X (gfx942)
+# Based on official rocm/sgl-dev:v0.5.17-rocm720-mi30x-20260809 (ROCm 7.2.0).
 #
-# This image KEEPS all previous optimizations while upgrading to the newer post1 base.
-# Because post1 refactored runtime APIs (removed get_global_server_args, new import
-# paths), we CANNOT overlay whole files from the old branch — instead we apply the
-# SEMANTIC patch of each change to the post1 source via idempotent patch scripts.
+# SOURCE OF TRUTH: branch mi308x-1p1d-src. The sglang source is committed
+# there (base 11d03eaeef + all production patches as real commits, extracted
+# from the running v0826 containers on 2026-09-08, parity-diff verified
+# against both prefill and decode). This Dockerfile COPYs that source;
+# no build-time patching.
 #
 # Applied layers:
 #   1. Mooncake@01d1eb2a GDR (GPUDirect RDMA via HIP dmabuf) patches + rebuild .so.
@@ -12,26 +13,17 @@
 #      for true GPU-direct RDMA — NO host staging. Also respects MC_DISABLE_HIP_TRANSPORT=1
 #      (disables intra-node HIP IPC transport for cross-node PD).
 #      Base already ships mooncake source @01d1eb2a + a configured build dir; no git clone.
-#   2. 11 GLM-5.2/PD/HIP patches ported to post1 (scripts under patches/post1/):
-#        deepseek_v2.py     (2.1  PCG_DSV2_DUAL_STREAM on HIP)
-#        dsa_indexer.py     (1.6  k_norm fp32 cast; 04 breakable-target-verify guard)
-#        deepseek_nextn.py  (3.1  alt_stream on HIP)
-#        transformers.py    (4.1  mla_kv_a_proj replicate TP style)
-#        dsa_backend.py     (5c  MLA q view->reshape on HIP)
-#        elementwise.py     (03  q_fp8_raw uint8-then-view on HIP)
-#        fused_store_index_cache.cuh (05/6.1 pack_fp8 via deepseek_v4::fp8)
-#        eagle_worker_v2.py (06c DSA backend on HIP)
-#        frozen_kv_mtp_worker_v2.py (06b seq_lens_cpu fast path)
-#        forward_mha.py     (07  aiter+HIP non-power-of-2 nope_dim guard for GLM-5.2)
-#        aiter_backend.py   (08  forward_extend/decode +**kwargs for DSA topk_indices)
-#        conn_host_staging.py (HIP L2: decode selective H2D + prefill D2H)
+#   2. sglang source from mi308x-1p1d-src (COPY python/sglang). Includes:
+#      14 post1 semantic patches, 9 live patches, dp8ep8 (indexer), fused-topk v2
+#      (decode, env-gated), hicache-jit (prefill), 4 prefill runtime patches
+#      (evict_backup/prefetch_log/big_node_backup/zombie_free_fix), GDR L2 flush.
 #   3. FlyDSL gfx942 fp8 MQA logits kernel (BLOCK_KV=128, register-based)
 #   4. AITER tuned GEMM/MoE CSV configs for gfx942
 #   5. libbnxt_re-rdmav34.so 238.1.138.5 (ts4 kernel bnxt_re ABI match; image default 235.x fails)
 #
-# Build (from repo root):
+# Build (from repo root, on branch mi308x-1p1d-src):
 #   docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile \
-#     -t sglang-glm52-308x-pd:rocm700-0716-gdr .
+#     -t mirrors.tencent.com/ti-platform/sglang-glm52-308x:<tag> .
 
 FROM rocm/sgl-dev:v0.5.17-rocm720-mi30x-20260809
 
@@ -63,39 +55,14 @@ RUN set -eux; \
     echo "[Mooncake] GDR peermem engine.so rebuilt"
 
 # ============================================================
-# Layer 2: Apply 11 GLM-5.2/PD/HIP patches ported to post1.
-# Each script is idempotent: it applies the minimal semantic change to the post1
-# source file in-place. (See patches/post1/ for per-patch docs.)
+# Layer 2: sglang source of truth = branch mi308x-1p1d-src.
+# The editable install at /sgl-workspace/sglang/python picks this up
+# directly. _version.py is build-generated (gitignored) and absent from
+# the tree — the base image's generated version survives the COPY.
 # ============================================================
-COPY docker/rocm-mi308x-glm52-pd/patches/post1/ /tmp/post1-patches/
-COPY docker/rocm-mi308x-glm52-pd/live-1p1d/patches/ /tmp/live-patches/
-COPY python/sglang/srt/disaggregation/mooncake/gdr_l2_flush.py \
-     /sgl-workspace/sglang/python/sglang/srt/disaggregation/mooncake/gdr_l2_flush.py
-COPY docker/rocm-mi308x-glm52-pd/live-1p1d/patches/gdr_l2_flush.hsaco \
-     /sgl-workspace/sglang/python/sglang/srt/disaggregation/mooncake/gdr_l2_flush.hsaco
+COPY python/sglang /sgl-workspace/sglang/python/sglang
 
-RUN set -eux; \
-    S=/sgl-workspace/sglang/python/sglang; \
-    python3 /tmp/post1-patches/deepseek_v2.py              $S/srt/models/deepseek_v2.py; \
-    python3 /tmp/post1-patches/dsa_indexer.py              $S/srt/layers/attention/dsa/dsa_indexer.py; \
-    python3 /tmp/post1-patches/deepseek_nextn.py           $S/srt/models/deepseek_nextn.py; \
-    python3 /tmp/post1-patches/transformers.py             $S/srt/models/transformers.py; \
-    python3 /tmp/post1-patches/dsa_backend.py              $S/srt/layers/attention/dsa_backend.py; \
-    python3 /tmp/post1-patches/elementwise.py              $S/kernels/ops/attention/dsv4/elementwise.py; \
-    python3 /tmp/post1-patches/fused_store_index_cache.py  $S/kernels/jit/csrc/dsa/fused_store_index_cache.cuh; \
-    python3 /tmp/post1-patches/eagle_worker_v2.py          $S/srt/speculative/eagle_worker_v2.py; \
-    python3 /tmp/post1-patches/frozen_kv_mtp_worker_v2.py  $S/srt/speculative/frozen_kv_mtp_worker_v2.py; \
-    python3 /tmp/post1-patches/aiter_backend.py            $S/srt/layers/attention/aiter_backend.py; \
-    python3 /tmp/post1-patches/decode_bootstrap.py         $S/srt/disaggregation/decode.py; \
-    python3 /tmp/post1-patches/protocol_responses.py       $S/srt/entrypoints/openai/protocol.py; \
-    python3 /tmp/post1-patches/serving_responses_pd.py     $S/srt/entrypoints/openai/serving_responses.py; \
-    python3 /tmp/post1-patches/conn_host_staging.py        $S/srt/disaggregation/mooncake/conn.py; \
-    python3 /tmp/post1-patches/apply_live_runtime.py       $S; \
-    python3 /tmp/post1-patches/dp8ep8_mtp_fix.py          $S; \
-    python3 /tmp/post1-patches/enable_paged_flydsl.py     $S/srt/layers/attention/dsa/dsa_indexer.py; \
-    echo "[GLM-5.2] patches + GDR L2 flush baked into post1 source"
-
-# Verify all 11 ported patches are present in the patched source.
+# Build-time gate: every production patch marker must be present in the source.
 RUN python3 -c "\
 import pathlib as p; R=p.Path('/sgl-workspace/sglang/python/sglang'); r=lambda x:(R/x).read_text(); \
 assert '(_is_cuda or _is_hip) and envs.SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM' in r('srt/models/deepseek_v2.py'), '2.1'; \
@@ -119,27 +86,24 @@ assert 'refusing full-pool' in r('srt/disaggregation/mooncake/conn.py'), 'select
 assert 'FIX(gdr-l2-flush)' in r('srt/disaggregation/mooncake/conn.py'), 'gdr-l2-flush'; \
 assert 'rdma_read_flush' in r('srt/disaggregation/mooncake/conn.py'), 'gdr-rdma-read'; \
 assert (R/'srt/disaggregation/mooncake/gdr_l2_flush.hsaco').stat().st_size > 0, 'gdr-hsaco'; \
-# post1 base patches (must remain, not clobbered) \
 assert 'DUAL_STREAM_TOKEN_THRESHOLD = 1024' in r('srt/layers/attention/dsa/dsa_indexer.py'), '06a base'; \
 assert 'is_shuffled = True' in r('srt/layers/quantization/fp8.py'), '02 base'; \
-# WAVE1: FlyDSL MQA + HIP Event.wait(). Do not COPY local indexer/overlap_utils (0.5.17 tree skew). \
 idx = r('srt/layers/attention/dsa/dsa_indexer.py'); \
 assert idx.count('flydsl_fp8_mqa_logits') >= 2, 'wave1-flydsl-sites'; \
 assert idx.count('WAVE1: FlyDSL gfx942 MQA logits') == 2, 'wave1-flydsl-marker'; \
 assert 'self.publish_ready.synchronize()' not in r('srt/managers/overlap_utils.py'), 'wave1-hip-wait'; \
 assert 'Event.wait() regresses TPOT' not in r('srt/managers/overlap_utils.py'), 'wave1-no-mi355-sync'; \
-assert '_idle_spec_rows_per_seq' in r('srt/layers/attention/dsa_backend.py'), 'dp8ep8-idle-spec'; \
-assert 'rows_per_seq = _idle_spec_rows_per_seq(forward_batch)' in r('srt/layers/attention/dsa_backend.py'), 'dp8ep8-idle-expansion'; \
-assert 'q_fp8[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-q-slice'; \
-assert 'weights[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-weights-slice'; \
-assert 'logits[:q_offset]' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-topk-slice'; \
-assert 'if q_offset < q_fp8.shape[0]:' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'dp8ep8-hip-padding-restore'; \
-assert 'SGLANG_DSA_PAGED_FLYDSL' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl'; \
-assert 'flydsl_fp8_paged_mqa_logits' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-native'; \
-assert 'paged_flydsl_variant = \"mfma_r4_w4\"' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-r4-w4'; \
-assert 'page_size=page_size' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-page-size'; \
-assert 'preshuffle=_use_aiter_preshuffle' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'paged-flydsl-preshuffle'; \
-print('[OK] All 11 ported patches + 2 base patches + WAVE1 flydsl/hip-wait verified')"
+assert 'q_fp8[:q_offset]' in idx, 'dp8ep8-hip-q-slice'; \
+assert 'weights[:q_offset]' in idx, 'dp8ep8-hip-weights-slice'; \
+assert '_use_splitk_topk' in r('srt/layers/attention/dsa/dsa_topk_backend.py'), 'fused-topk-splitk'; \
+assert 'should_use_topk_v2' in r('srt/layers/attention/dsa/dsa_topk_backend.py'), 'fused-topk-v2'; \
+assert (R/'kernels/ops/attention/dsa/topk_splitk.py').stat().st_size > 0, 'topk-splitk-file'; \
+assert 'FIX(evict-backup-v2)' in r('srt/mem_cache/unified_radix_cache.py'), 'evict-backup'; \
+assert 'FIX(prefetch-log)' in r('srt/managers/cache_controller.py'), 'prefetch-log'; \
+assert 'FIX(big-node-backup)' in r('srt/mem_cache/unified_cache/unified_tree_core.py'), 'big-node-backup'; \
+assert 'zombie' in r('srt/mem_cache/unified_cache/unified_tree_core.py').lower(), 'zombie-free'; \
+assert (R/'kernels/jit/csrc/kvcacheio/hicache.cuh').stat().st_size > 0, 'hicache-jit'; \
+print('[OK] All production patch markers verified in source tree')"
 
 # ============================================================
 # Layer 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)
