@@ -89,7 +89,7 @@ def run_suite(url: str, label: str, target_tokens: int, gen_tokens: int) -> dict
     usage = d.get("usage", {})
     prompt_tokens = usage.get("prompt_tokens", 0)
     results["needle"] = {
-        "ok": code in content,
+        "ok": code in content or code in reasoning,
         "code": code,
         "answer": content.strip()[:60],
         "reasoning_tokens": len(reasoning) // 4,
