@@ -81,16 +81,18 @@ def run_suite(url: str, label: str, target_tokens: int, gen_tokens: int) -> dict
     code = f"ZK-{label.upper()}-{int(time.time()) % 100000:05d}"
     messages = build_needle_prompt(target_tokens, code)
     t0 = time.time()
-    resp = chat(url, messages, max_tokens=512, timeout=1800)
+    resp = chat(url, messages, max_tokens=2048, timeout=1800)
     d = json.loads(resp.read())
     dt = time.time() - t0
     content = d["choices"][0]["message"].get("content") or ""
+    reasoning = d["choices"][0]["message"].get("reasoning_content") or ""
     usage = d.get("usage", {})
     prompt_tokens = usage.get("prompt_tokens", 0)
     results["needle"] = {
         "ok": code in content,
         "code": code,
         "answer": content.strip()[:60],
+        "reasoning_tokens": len(reasoning) // 4,
         "prompt_tokens": prompt_tokens,
         "total_s": round(dt, 1),
     }
