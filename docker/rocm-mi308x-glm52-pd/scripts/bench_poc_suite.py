@@ -45,7 +45,7 @@ def build_needle_prompt(target_tokens: int, code: str) -> list:
     filler = FILLER * (target_tokens // 24 + 8)
     text = (
         f"{filler}\n\n[MEMO] The secret access code for the build system is {code}. "
-        "Keep it confidential.\n\n"
+        "It is needed for the audit.\n\n"
         "Repeat the secret access code from the memo above. Answer with the code only."
     )
     return [{"role": "user", "content": text}]
