@@ -101,6 +101,9 @@ def main() -> None:
         if not backup.exists():
             raise SystemExit(f"no backup at {backup}; restore manually from helm values")
         restored = json.loads(backup.read_text())
+        restored["metadata"].pop("resourceVersion", None)
+        restored["metadata"].pop("generation", None)
+        restored["metadata"].pop("managedFields", None)
         apply_spec(restored)
         print(f"[ok] {args.sts}: restored production spec from {backup}")
         return
