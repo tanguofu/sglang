@@ -1,0 +1,31 @@
+--- a/mooncake-transfer-engine/src/transport/rdma_transport/rdma_context.cpp
++++ b/mooncake-transfer-engine/src/transport/rdma_transport/rdma_context.cpp
+@@ -527,9 +527,27 @@
+     }
+ #else
+-    mrMeta.addr = addr;
+-    mrMeta.mr = ibv_reg_mr(pd_, addr, length, access);
++    {
++        hipPointerAttribute_t elseAttr{};
++        hipError_t elseRes = hipPointerGetAttributes(&elseAttr, addr);
++        if (elseRes == hipSuccess && elseAttr.type == hipMemoryTypeDevice) {
++            HipDeviceGuard dev_guard(elseAttr.device);
++            if (!dev_guard.set_ok()) { return ERR_CONTEXT; }
++            void* host_buf = nullptr;
++            if (hipMallocHost(&host_buf, length) != hipSuccess) { return ERR_CONTEXT; }
++            if (hipMemcpy(host_buf, addr, length, hipMemcpyDeviceToHost) != hipSuccess) {
++                (void)hipFreeHost(host_buf); return ERR_CONTEXT; }
++            mrMeta.addr = addr;
++            mrMeta.staging_host_buf = host_buf;
++            mrMeta.staging_gpu_addr = addr;
++            mrMeta.staging_length = length;
++            mrMeta.mr = ibv_reg_mr(pd_, host_buf, length, access);
++            LOG(INFO) << "RDMA host staging: GPU=" << addr << " host=" << host_buf << " len=" << length;
++        } else {
++            mrMeta.addr = addr;
++            mrMeta.mr = ibv_reg_mr(pd_, addr, length, access);
++        }
++    }
+ #endif
+     if (!mrMeta.mr) {
+         PLOG(ERROR) << "Failed to register memory " << addr;

@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: host-debug-152
+  namespace: kube-system
+spec:
+  hostPID: true
+  hostNetwork: true
+  nodeName: node-NODE_PREFILL_1_IP
+  restartPolicy: Never
+  containers:
+    - name: debug
+      image: YOUR_REGISTRY/your-project/sglang-glm52-308x-pd:v2-8card
+      imagePullPolicy: IfNotPresent
+      command: ["sleep", "36000"]
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - name: host-root
+          mountPath: /host
+  volumes:
+    - name: host-root
+      hostPath:
+        path: /
+        type: Directory

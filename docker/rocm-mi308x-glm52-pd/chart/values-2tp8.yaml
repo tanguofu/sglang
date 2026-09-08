@@ -1,0 +1,36 @@
+# GLM-5.3 MI308X 2P2D — 2x TP8 decode overlay.
+#
+# Apply after chart/values.yaml. Use --reset-values so a previously installed
+# DP8+EP8 canary overlay cannot persist its per-decode arguments:
+#   helm upgrade --install sglang-1p1d docker/rocm-mi308x-glm52-pd/chart \
+#     -n kube-system \
+#     -f docker/rocm-mi308x-glm52-pd/chart/values.yaml \
+#     -f docker/rocm-mi308x-glm52-pd/chart/values-2tp8.yaml \
+#     --set apiKey="$SGLANG_API_KEY" --reset-values --force-conflicts
+#
+# 这里不要写 `args: null`。Helm 里显式 null 不是「继承 chart/values.yaml 的
+# 默认值」，而是把该键覆盖成空：decode.yaml 的
+#   $args := $d.args | default $root.Values.decode.args
+# 会拿到 nil，两个 decode 的 StatefulSet 模板随即丢掉全部 decode 参数
+# (disaggregation-mode / NEXTN / mem-fraction-static / stream-interval ...)。
+# STS 是 OnDelete，pod 不会立刻重建，于是故障延迟到下次重启才暴露 ——
+# 表现是 decode 以 disaggregation_mode=null 起来，prefill 侧 PD bootstrap
+# 全部 600s 超时。要继承 chart/values.yaml 的 decode.args，就把这个键整个删掉。
+#
+# 同理，decodes[i].args 一旦给出就是整表替换 decode.args，不是追加。
+# 漏写 --disaggregation-mode decode 就会得到上面同一个故障。
+decode:
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk
+  pagedFlydsl:
+    enabled: false
+  extraEnv: {}
+
+decodes:
+  - nodeName: node-21.151.225.132
+    ip: 21.151.225.132
+  - nodeName: node-21.151.225.172
+    ip: 21.151.225.172
+
+router:
+  # Empty inherits .Values.decodes; power_of_two keeps both TP8 decodes.
+  decodes: []

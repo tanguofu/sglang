@@ -1,0 +1,276 @@
+# GLM-5.3 MI308X 2P2D — live snapshot 2026-09-01
+#
+# Restores the running kube-system/sglang-1p1d cluster (hostNetwork, GDR,
+# DSA tilelang + FlyDSL MQA, NEXTN, Mooncake L3). Router talks to worker host IPs.
+#
+#   helm upgrade --install sglang-1p1d docker/rocm-mi308x-glm52-pd/chart \
+#     -n kube-system --force-conflicts \
+#     --set apiKey=sk-...
+#
+# Do not helm-install a second PD release. Image bakes GDR peermem + L2 flush
+# + BF16 gate/indexer overlay. Prefill still runs
+# /data/mooncake-patched/patch_evict_backup.py if present
+# (v2: eviction D->H backup without disabling write_through L2/L3).
+
+nameOverride: sglang-1p1d
+
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit
+routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0827-pot-loads
+imagePullPolicy: Always
+imagePullSecrets:
+  - tencent-registry
+
+# Set at install time. Never commit the live key.
+apiKey: sk-REPLACE_WITH_YOUR_API_KEY
+modelName: glm-5.3
+modelPath: /data/model/glm53-fp8
+
+# P and D are on different nodes so they all bind :30000 / :8998.
+prefills:
+  - nodeName: node-21.151.225.144
+    ip: 21.151.225.144
+  - nodeName: node-21.151.225.152
+    ip: 21.151.225.152
+decodes:
+  - nodeName: node-21.151.225.132
+    ip: 21.151.225.132
+  - nodeName: node-21.151.225.172
+    ip: 21.151.225.172
+
+ports:
+  prefill:
+    http: 30000
+    bootstrap: 8998
+  decode:
+    http: 30000
+    bootstrap: 8998
+  router:
+    http: 30001
+    metrics: 19096
+  mooncake:
+    rpc: 50051
+    metrics: 9003
+
+# Prefill-only HiCache. ratio 4 previously OOM'd ~2TB host KV on TP8.
+# L1=GPU radix, L2=host (ratio 1.5, live), L3=Mooncake DRAM pool.
+# wait_complete: PD must not start compute before L3 GET; timeout was
+# existing-but-never-getting. prefetch_threshold 1 token (default 256).
+hicache:
+  enabled: true
+  ratio: 1.5
+  storageBackend: mooncake
+  prefetchPolicy: wait_complete
+  memLayout: page_first_direct
+  writePolicy: write_through_selective
+  extraConfig:
+    prefetch_threshold: 1
+
+# Shared Mooncake master. Workers resolve the Service DNS so a master restart
+# or reschedule does not require hardcoding a new host IP.
+# RDMA data path is P2P; only the TCP control plane uses this address.
+mooncake:
+  master:
+    enabled: true
+    nodeName: node-21.151.225.152
+    ip: 21.151.225.152
+    port: 50051
+    metricsPort: 9003
+    evictionHighWatermark: "0.95"
+  globalSegmentSize: "64gb"
+  metadataServer: P2PHANDSHAKE
+  mmapArenaPoolSize: "4gb"
+  # One client process per GPU node. Prefill SGLang talks to it as a dummy
+  # client (L3 survives worker restart). Decode only donates DRAM.
+  store:
+    enabled: true
+    port: 50052
+    prefillSegmentSize: "64GB"
+    decodeSegmentSize: "256GB"
+    # Dummy client failed on this ROCm image (setup_dummy -1). Prefill
+    # keeps in-process store; sidecars still donate extra DRAM.
+    standalonePrefill: false
+
+# Live router is hostNetwork on the prefill-1 GPU node (not eklet).
+# Must tolerate dedicated=sglang-1pd-A-group:NoSchedule (chart hard-codes Exists).
+#
+# v0827-pot-loads parses loads[].num_total_tokens and skips scrape -1.
+# 2 workers => PoT always compares both and sends new traffic to the
+# lighter one. cache_aware pinned P1/D0 here. Decode has no GPU HiCache.
+# Cross-P prefix reuse is Mooncake L3. Do not rebuild workers for this.
+router:
+  nodeName: node-21.151.225.152
+  hostNetwork: true
+  port: 30001
+  metricsPort: 19096
+  # Empty inherits .Values.decodes. power_of_two requires at least two entries.
+  decodes: []
+  cbTimeoutSecs: 60
+  prefillPolicy: cache_aware
+  decodePolicy: power_of_two
+  balanceAbsThreshold: 16
+  balanceRelThreshold: 1.5
+
+ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
+
+gateway:
+  hostname: glm52-pd-1p1d.jmpti.woa.com
+  httprouteName: glm52-pd-1p1d
+  parentNamespace: ti-cloud
+  parentGateway: eg-tke
+
+hostPathData: /data
+allowHostPathOverlay: "0"
+
+# Thin BF16 overlay for MoE gate (N=256) + DSA indexer weights_proj (N=32).
+# Init generates /data/aiter_configs/mi308x_bf16_gate_indexer.csv (threaded clone,
+# no merge of the fat bf16_tuned_gemm.csv). Main container overwrites the image
+# file model_configs/mi308x_gfx942_bf16_tuned_gemm.csv. Optional GPU retune:
+#   python3 /data/aiter_configs/gen_bf16_gate_indexer.py tune --workers 8
+aiterBf16Gemm:
+  enabled: true
+  version: "1"
+  workers: 8
+  hostCsv: /data/aiter_configs/mi308x_bf16_gate_indexer.csv
+  imageCsv: /sgl-workspace/aiter/aiter/configs/model_configs/mi308x_gfx942_bf16_tuned_gemm.csv
+
+workerEnv:
+  # 300s: 200K cold prefill (~200s) dummy health queued >60s was a false 503.
+  SGLANG_HEALTH_CHECK_TIMEOUT: "300"
+  SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT: "600"
+  SGLANG_DISAGGREGATION_WAITING_TIMEOUT: "1800"
+  SGLANG_MOONCAKE_SEND_AUX_TCP: "1"
+  # FlyDSL MQA logits kernel variant: mfma_r4_w4 is 38-65% faster than the
+  # default mfma_r2_w4 for GLM-5.2 DSA (index_topk=2048 sparse window).
+  # Prefill throughput 901->1490 tok/s on 1M input. Verified max_diff=0.0.
+  FLYDSL_FP8_MQA_LOGITS_VARIANT: mfma_r4_w4
+  MOONCAKE_PROTOCOL: rdma
+  MC_GID_INDEX: "3"
+  HIP_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+  NCCL_DEBUG: WARN
+  NCCL_IB_GID_INDEX: "3"
+  HSA_ENABLE_SDMA: "0"
+  HIP_FORCE_DEV_KERNARG: "1"
+  NCCL_CUMEM_ENABLE: "0"
+  NCCL_MIN_NCHANNELS: "112"
+  NCCL_NVLS_ENABLE: "0"
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  PYTORCH_ROCM_ARCH: gfx942
+  ROCM_QUICK_REDUCE_QUANTIZATION: INT8
+  SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN: "1"
+  SGLANG_DISABLE_CUDNN_CHECK: "1"
+  SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM: "1"
+  SGLANG_INT4_WEIGHT: "0"
+  SGLANG_MOE_PADDING: "1"
+  SGLANG_ROCM_DISABLE_LINEARQUANT: "0"
+  SGLANG_ROCM_FUSED_DECODE_MLA: "1"
+  SGLANG_SET_CPU_AFFINITY: "1"
+  SGLANG_USE_AITER: "1"
+  SGLANG_USE_ROCM700A: "1"
+  SGLANG_OPT_USE_TOPK_V2: "0"
+  # Image ENV defaults this to 1; must explicitly set 0 for page_size=64.
+  SGLANG_DSA_HIP_DISABLE_PRESHUFFLE: "0"
+  MC_DISABLE_HIP_TRANSPORT: "1"
+  SGLANG_PD_HOST_STAGING: "0"
+  # MoE tuned config: aiter glm5_1 CSV with cu_num rewritten 304->80 (MI308X reports 80 CU).
+  AITER_CONFIG_FMOE: /data/aiter_configs/a8w8_blockscale_tuned_fmoe_glm5_1_cu80.csv
+
+commonArgs:
+  - --model-path /data/model/glm53-fp8
+  - --model-impl sglang
+  - --served-model-name glm-5.3
+  - --tp-size 8
+  - --pp-size 1
+  - --trust-remote-code
+  - --host 0.0.0.0
+  - --context-length 1048576
+  - --tool-call-parser glm47
+  - --reasoning-parser glm45
+  - --preferred-sampling-params '{"max_new_tokens":163840}'
+  - --attention-backend dsa
+  - --dsa-prefill-backend tilelang
+  - --dsa-decode-backend tilelang
+  - --enable-aiter-allreduce-fusion
+  - --enable-fused-qk-norm-rope
+  - --schedule-conservativeness 0.8
+  - --kv-cache-dtype fp8_e4m3
+  - --max-running-requests 32
+  - --disaggregation-transfer-backend mooncake
+  - --num-reserved-decode-tokens 1024
+  - --enable-metrics
+  - --log-level info
+
+prefill:
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit
+  # Agent-context fix (2026-09-07): prefix nodes >= SGLANG_HICACHE_BIG_NODE_TOKENS
+  # (default 65536) back up D->H on the FIRST insert instead of waiting for the
+  # write_through_selective 2nd hit. Codex turn-3 was cold-prefilling 81s when
+  # it landed inside the async backup window after turn-2. Patch file must be at
+  # /data/mooncake-patched/patch_big_node_backup.py on each prefill node.
+  bigNodeBackup: true
+  # Zombie-cache fix (2026-09-07): chunked-insert FreeDeviceKV freed tree-node
+  # slots when the insert walk matched beyond cache_protected_len (another
+  # request extended the shared prefix path between schedule and insert).
+  # Tree nodes kept referencing freed slots -> non-deterministic turn-3 miss.
+  # Patch file must be at /data/mooncake-patched/patch_zombie_free_fix.py.
+  zombieFreeFix: true
+  extraEnv:
+    SGLANG_HICACHE_HOST_ALLOCATOR: default
+    MOONCAKE_TE_META_DATA_SERVER: P2PHANDSHAKE
+    MOONCAKE_GLOBAL_SEGMENT_SIZE: "64gb"
+    MC_MMAP_ARENA_POOL_SIZE: "4gb"
+  args:
+    # 0.85 leaves RCCL scratch after long-context GDR; 0.88 hit
+    # "Failed to CUDA calloc" in sampler all_reduce (2026-09-08).
+    - --mem-fraction-static 0.85
+    - --chunked-prefill-size 16384
+    - --prefill-max-requests 32
+    - --max-prefill-tokens 32768
+    - --disable-decode-cuda-graph
+    - --disaggregation-mode prefill
+    - --watchdog-timeout 7200
+  resources:
+    limits:
+      amd.com/gpu: "8"
+    requests:
+      amd.com/gpu: "8"
+      cpu: "360"
+      memory: 1800Gi
+
+decode:
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk
+  # Native paged FlyDSL now supports page_size=1 and AITER preshuffle
+  # page_size=16/32/64. Keep it disabled by default so a canary can opt in.
+  pagedFlydsl:
+    enabled: false
+  extraEnv: {}
+  args:
+    - --mem-fraction-static 0.92
+    - --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32
+    - --cuda-graph-max-bs-decode 32
+    - --speculative-algorithm NEXTN
+    # steps=2 (not 3) is the validated pairing for NEXTN on this build —
+    # helm rev10 measured quality 10/10 and better throughput than steps=3.
+    # Keep num-draft-tokens at 4: the rev10 validation used steps=2 + draft=4,
+    # and accept_len on steps=3 was only ~2.6 of 4 drafted tokens.
+    - --speculative-num-steps 2
+    - --speculative-num-draft-tokens 4
+    - --speculative-eagle-topk 1
+    - --num-continuous-decode-steps 4
+    - --stream-interval 2
+    - --skip-server-warmup
+    - --watchdog-timeout 1800
+    - --load-balance-method follow_bootstrap_room
+    - --disaggregation-mode decode
+  resources:
+    limits:
+      amd.com/gpu: "8"
+    requests:
+      amd.com/gpu: "8"
+      cpu: "360"
+      memory: 2100Gi
+
+probes:
+  initialDelaySeconds: 900
+  periodSeconds: 30
+  timeoutSeconds: 60
+  failureThreshold: 40

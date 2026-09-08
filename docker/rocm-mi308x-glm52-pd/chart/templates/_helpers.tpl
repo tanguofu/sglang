@@ -1,0 +1,242 @@
+{{- define "sglang-1p1d.name" -}}
+{{- default "sglang-1p1d" .Values.nameOverride -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.labels" -}}
+app.kubernetes.io/name: {{ include "sglang-1p1d.name" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "sglang-1p1d.ekletAnnotations" -}}
+eks.tke.cloud.tencent.com/cluster-ip-switch: cluster
+eks.tke.cloud.tencent.com/resolv-conf: |
+  nameserver 9.137.197.120 9.137.192.34
+tke.cloud.tencent.com/pod-type: eklet
+{{- end -}}
+
+{{- define "sglang-1p1d.mooncakeMasterAddr" -}}
+{{- include "sglang-1p1d.mooncakeMasterDNS" . -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.workerEnv" -}}
+{{- $extra := .extra | default dict -}}
+{{- range $k, $v := .root.Values.workerEnv }}
+- name: {{ $k }}
+  value: {{ $v | quote }}
+{{- end }}
+- name: SGLANG_HOST_IP
+  value: {{ .hostIP | quote }}
+{{- if .mooncakeLocal }}
+- name: MOONCAKE_LOCAL_HOSTNAME
+  value: {{ .hostIP | quote }}
+- name: MOONCAKE_MASTER
+  value: {{ include "sglang-1p1d.mooncakeMasterAddr" .root | quote }}
+{{- end }}
+{{- range $k, $v := $extra }}
+- name: {{ $k }}
+  value: {{ $v | quote }}
+{{- end }}
+{{- end -}}
+
+{{- define "sglang-1p1d.prefillStsName" -}}
+{{- if eq (int .index) 0 -}}
+{{ include "sglang-1p1d.name" .root }}-prefill
+{{- else -}}
+{{ include "sglang-1p1d.name" .root }}-prefill-{{ .index }}
+{{- end -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.decodeStsName" -}}
+{{- if eq (int .index) 0 -}}
+{{ include "sglang-1p1d.name" .root }}-decode
+{{- else -}}
+{{ include "sglang-1p1d.name" .root }}-decode-{{ .index }}
+{{- end -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.podFQDN" -}}
+{{ .pod }}.{{ .svc }}.{{ .ns }}.svc.cluster.local
+{{- end -}}
+
+{{- define "sglang-1p1d.prefillFQDN" -}}
+{{- $sts := include "sglang-1p1d.prefillStsName" . -}}
+{{- include "sglang-1p1d.podFQDN" (dict "pod" (printf "%s-0" $sts) "svc" $sts "ns" .root.Release.Namespace) -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.decodeFQDN" -}}
+{{- $sts := include "sglang-1p1d.decodeStsName" . -}}
+{{- include "sglang-1p1d.podFQDN" (dict "pod" (printf "%s-0" $sts) "svc" $sts "ns" .root.Release.Namespace) -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.mooncakeMasterDNS" -}}
+{{ include "sglang-1p1d.name" . }}-mooncake-master.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.mooncake.master.port }}
+{{- end -}}
+
+{{- define "sglang-1p1d.aiterScriptsEnabled" -}}
+{{- $enabled := .Values.aiterBf16Gemm.enabled -}}
+{{- range .Values.decodes -}}
+{{- $pagedFlydsl := .pagedFlydsl | default $.Values.decode.pagedFlydsl -}}
+{{- if $pagedFlydsl.enabled -}}
+{{- $enabled = true -}}
+{{- end -}}
+{{- end -}}
+{{- $enabled -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.hicacheArgs" -}}
+{{- if .Values.hicache.enabled }} --enable-hierarchical-cache --hicache-ratio {{ .Values.hicache.ratio }} --hicache-storage-backend {{ .Values.hicache.storageBackend }} --hicache-storage-prefetch-policy {{ .Values.hicache.prefetchPolicy }} --hicache-mem-layout {{ .Values.hicache.memLayout }} --hicache-write-policy {{ .Values.hicache.writePolicy }}{{- if .Values.hicache.extraConfig }} --hicache-storage-backend-extra-config '{{ .Values.hicache.extraConfig | toJson }}'{{- end }}{{- end -}}
+{{- end -}}
+
+{{- define "sglang-1p1d.mooncakeStoreSidecar" -}}
+{{- $root := .root -}}
+- name: mooncake-store
+  image: {{ $root.Values.workerImage }}
+  imagePullPolicy: {{ $root.Values.imagePullPolicy }}
+  command: ["/bin/bash", "-c"]
+  args:
+    - |
+      set -euo pipefail
+      echo "=== mooncake_client {{ .role }} {{ .hostIP }}:{{ $root.Values.mooncake.store.port }} segment={{ .segmentSize }} ==="
+      exec mooncake_client \
+        --master_server_address={{ include "sglang-1p1d.mooncakeMasterAddr" $root }} \
+        --metadata_server={{ $root.Values.mooncake.metadataServer }} \
+        --protocol=rdma \
+        --global_segment_size={{ .segmentSize | quote }} \
+        --host={{ .hostIP }} \
+        --port={{ $root.Values.mooncake.store.port }} \
+        --logtostderr
+  env:
+    - name: MC_GID_INDEX
+      value: {{ index $root.Values.workerEnv "MC_GID_INDEX" | default "3" | quote }}
+    - name: MOONCAKE_PROTOCOL
+      value: "rdma"
+    - name: MC_DISABLE_HIP_TRANSPORT
+      value: "1"
+  resources:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+    limits:
+      memory: {{ .memoryLimit | default "300Gi" }}
+  securityContext:
+    {{- include "sglang-1p1d.securityContext" $root | nindent 4 }}
+  volumeMounts:
+    - name: dev-infiniband
+      mountPath: /dev/infiniband
+{{- end -}}
+
+{{- define "sglang-1p1d.launchArgs" -}}
+{{- $root := .root -}}
+{{- range $root.Values.commonArgs }} {{ . }}{{- end -}}
+{{- range .extra }} {{ . }}{{- end }} --port {{ .port }} --disaggregation-ib-device {{ $root.Values.ibDevice | quote }} --disaggregation-bootstrap-port {{ .bootstrapPort }}
+{{- end -}}
+
+{{- define "sglang-1p1d.workerVolumes" -}}
+- name: shm
+  emptyDir:
+    medium: Memory
+    sizeLimit: 64Gi
+- name: data
+  hostPath:
+    path: {{ .Values.hostPathData }}
+    type: Directory
+- name: dev-kfd
+  hostPath:
+    path: /dev/kfd
+    type: CharDevice
+- name: dev-dri
+  hostPath:
+    path: /dev/dri
+    type: Directory
+- name: dev-infiniband
+  hostPath:
+    path: /dev/infiniband
+    type: Directory
+{{- if eq (include "sglang-1p1d.aiterScriptsEnabled" .) "true" }}
+- name: aiter-scripts
+  configMap:
+    name: {{ include "sglang-1p1d.name" . }}-aiter-scripts
+    defaultMode: 0555
+{{- end }}
+{{- end -}}
+
+{{- define "sglang-1p1d.workerVolumeMounts" -}}
+- name: shm
+  mountPath: /dev/shm
+- name: data
+  mountPath: /data
+- name: dev-kfd
+  mountPath: /dev/kfd
+- name: dev-dri
+  mountPath: /dev/dri
+- name: dev-infiniband
+  mountPath: /dev/infiniband
+{{- if eq (include "sglang-1p1d.aiterScriptsEnabled" .) "true" }}
+- name: aiter-scripts
+  mountPath: /opt/aiter-scripts
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "sglang-1p1d.gemmCsvGenerate" -}}
+{{- if .Values.aiterBf16Gemm.enabled }}
+echo "--- BF16 gate/indexer overlay (generate, no merge) ---"
+python3 /opt/aiter-scripts/gen_bf16_gate_indexer.py generate \
+  --version {{ .Values.aiterBf16Gemm.version | quote }} \
+  --workers {{ .Values.aiterBf16Gemm.workers }} \
+  --host-csv {{ .Values.aiterBf16Gemm.hostCsv | quote }} \
+  --image-csv {{ .Values.aiterBf16Gemm.imageCsv | quote }} \
+  --script-src /opt/aiter-scripts/gen_bf16_gate_indexer.py
+echo "host csv: {{ .Values.aiterBf16Gemm.hostCsv }}"
+ls -l {{ .Values.aiterBf16Gemm.hostCsv }} {{ .Values.aiterBf16Gemm.hostCsv | replace ".csv" ".meta" }} || true
+{{- end }}
+{{- end -}}
+
+{{- define "sglang-1p1d.gemmCsvInstall" -}}
+{{- if .Values.aiterBf16Gemm.enabled }}
+echo "--- BF16 gate/indexer overlay (overwrite image file) ---"
+python3 /opt/aiter-scripts/gen_bf16_gate_indexer.py install \
+  --host-csv {{ .Values.aiterBf16Gemm.hostCsv | quote }} \
+  --image-csv {{ .Values.aiterBf16Gemm.imageCsv | quote }}
+{{- end }}
+{{- end -}}
+
+{{- define "sglang-1p1d.pagedFlydslInstall" -}}
+echo "--- native paged FlyDSL overlay (guarded, decode-only) ---"
+python3 /opt/aiter-scripts/patch_paged_flydsl_native.py \
+  --flydsl-src /opt/aiter-scripts
+{{- end -}}
+
+{{- define "sglang-1p1d.securityContext" -}}
+allowPrivilegeEscalation: true
+privileged: true
+readOnlyRootFilesystem: false
+seccompProfile:
+  type: Unconfined
+{{- end -}}
+
+{{- define "sglang-1p1d.preflight" -}}
+set -euo pipefail
+echo "========== Environment Pre-Flight Check =========="
+echo "Timestamp: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+echo "Hostname:  $(hostname)"
+GPU_COUNT=$(rocminfo 2>/dev/null | grep -c "^  Name:.*gfx" || true)
+echo "GPU count: ${GPU_COUNT}"
+if [ "${GPU_COUNT}" -lt 1 ]; then
+  echo "FATAL: No GPU detected via rocminfo" >&2
+  exit 1
+fi
+MODEL_PATH="{{ .Values.modelPath }}"
+if [ ! -d "${MODEL_PATH}" ] || [ ! -f "${MODEL_PATH}/config.json" ]; then
+  echo "FATAL: Model ${MODEL_PATH} missing" >&2
+  exit 1
+fi
+echo "Model path: ${MODEL_PATH} size=$(du -sh "${MODEL_PATH}" 2>/dev/null | awk '{print $1}')"
+IB_ACTIVE=$(ibv_devinfo 2>&1 | grep -c "PORT_ACTIVE" || true)
+echo "Active IB ports: ${IB_ACTIVE}"
+if [ "${IB_ACTIVE}" -lt 1 ]; then
+  echo "WARNING: No active IB ports — PD may fall back to TCP" >&2
+fi
+{{- include "sglang-1p1d.gemmCsvGenerate" . }}
+echo "========== Pre-Flight Check Complete =========="
+{{- end -}}
