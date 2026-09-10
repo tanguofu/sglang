@@ -114,12 +114,16 @@ print('[OK] All production patch markers verified in source tree')"
 
 # Layer 2b: rebuild sgl-kernel so fast_topk_v2 is the coop exact kernel.
 # hipcc does not need a GPU. ti-builder 64-core, expect 30-60 min.
+# Do not use `pip wheel .` here: pep517/setuptools auto-discovery treats
+# csrc/cmake/include as top-level packages and aborts.
 RUN set -eux; \
     cd /sgl-workspace/sglang/python/sglang/kernels/aot && \
-    pip wheel --no-deps -w /tmp/wheel . && \
-    pip install --force-reinstall --no-deps /tmp/wheel/sgl_kernel-*.whl && \
-    python3 -c "from sgl_kernel import fast_topk_v2; print('fast_topk_v2 OK')" && \
-    rm -rf /tmp/wheel
+    python3 setup_rocm.py build_ext --inplace && \
+    so="$(find python/sgl_kernel . -name 'common_ops*.so' | head -1)"; \
+    test -n "$so"; \
+    dest="$(python3 -c 'import sgl_kernel, pathlib; print(pathlib.Path(sgl_kernel.__file__).parent)')"; \
+    cp -v "$so" "$dest/"; \
+    python3 -c "from sgl_kernel import fast_topk_v2; print('fast_topk_v2 OK')"
 
 # ============================================================
 # Layer 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)
