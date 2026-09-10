@@ -103,7 +103,23 @@ assert 'FIX(prefetch-log)' in r('srt/managers/cache_controller.py'), 'prefetch-l
 assert 'FIX(big-node-backup)' in r('srt/mem_cache/unified_cache/unified_tree_core.py'), 'big-node-backup'; \
 assert 'zombie' in r('srt/mem_cache/unified_cache/unified_tree_core.py').lower(), 'zombie-free'; \
 assert (R/'kernels/jit/csrc/kvcacheio/hicache.cuh').stat().st_size > 0, 'hicache-jit'; \
+dsa = r('srt/layers/attention/dsa_backend.py'); \
+assert 'fused_dsa_decode_metadata' in dsa, 'w1-fused-meta'; \
+assert 'is_cuda() and not _is_hip' not in dsa, 'w1-hip-gate'; \
+assert 'format_checker=None' in r('srt/function_call/utils.py'), 'tool-schema-regex'; \
+assert '_is_glm_moe_dsa_config' in r('srt/models/deepseek_v2.py'), 'w1-bias-fp32'; \
+assert (R/'kernels/aot/include/hip/dsa_topk_coop.cuh').stat().st_size > 0, 'w2-coop-cuh'; \
+assert 'coop' in r('kernels/aot/csrc/elementwise/topk.hip'), 'w2-topk-hip'; \
 print('[OK] All production patch markers verified in source tree')"
+
+# Layer 2b: rebuild sgl-kernel so fast_topk_v2 is the coop exact kernel.
+# hipcc does not need a GPU. ti-builder 64-core, expect 30-60 min.
+RUN set -eux; \
+    cd /sgl-workspace/sglang/python/sglang/kernels/aot && \
+    pip wheel --no-deps -w /tmp/wheel . && \
+    pip install --force-reinstall --no-deps /tmp/wheel/sgl_kernel-*.whl && \
+    python3 -c "from sgl_kernel import fast_topk_v2; print('fast_topk_v2 OK')" && \
+    rm -rf /tmp/wheel
 
 # ============================================================
 # Layer 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)
