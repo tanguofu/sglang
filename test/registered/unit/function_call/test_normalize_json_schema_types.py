@@ -5,7 +5,10 @@ import unittest
 
 from jsonschema import Draft202012Validator, SchemaError
 
-from sglang.srt.function_call.utils import normalize_json_schema_types
+from sglang.srt.function_call.utils import (
+    normalize_json_schema_types,
+    validate_tool_parameters_schema,
+)
 from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
@@ -403,6 +406,38 @@ class TestNormalizeJsonSchemaTypes(CustomTestCase):
         self.assertIs(schema["additionalProperties"], True)
         self.assertIs(schema["unevaluatedProperties"], False)
         self._assert_accepts(schema)
+
+
+class TestValidateToolParametersSchema(CustomTestCase):
+    def test_js_unicode_property_pattern_is_accepted(self):
+        schema = {
+            "type": "object",
+            "properties": {
+                "field": {"type": "string", "pattern": r"[^\p{Cc}]{1,5}$"}
+            },
+        }
+        self.assertIsNone(validate_tool_parameters_schema(schema))
+
+    def test_js_lookahead_pattern_is_accepted(self):
+        schema = {
+            "type": "object",
+            "properties": {
+                "field": {
+                    "type": "string",
+                    "pattern": r'^(?!__.*__$)[^"\\./[\]]{1,200}$',
+                }
+            },
+        }
+        self.assertIsNone(validate_tool_parameters_schema(schema))
+
+    def test_unknown_type_is_still_rejected(self):
+        schema = {
+            "type": "object",
+            "properties": {"invalid_field": {"type": "unknown_type"}},
+        }
+        err = validate_tool_parameters_schema(schema)
+        self.assertIsNotNone(err)
+        self.assertIn("unknown_type", err)
 
 
 if __name__ == "__main__":

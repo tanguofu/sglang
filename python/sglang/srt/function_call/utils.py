@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import orjson
 import partial_json_parser
+from jsonschema import Draft202012Validator, SchemaError
 from partial_json_parser.core.options import Allow
 
 from sglang.srt.entrypoints.openai.protocol import Tool, ToolChoice
@@ -172,6 +173,25 @@ def normalize_json_schema_types(schema: Any) -> None:
     ):
         if key in schema:
             normalize_json_schema_types(schema[key])
+
+
+def validate_tool_parameters_schema(schema: Any) -> Optional[str]:
+    """Return an error string if ``schema`` is not a usable tool JSON Schema.
+
+    Structural checks stay on (unknown ``type``, cycles, malformed keywords).
+    ``format: regex`` is skipped: Codex / Claude Code emit JS Unicode-property
+    patterns such as ``\\p{Cc}`` that Python ``re`` (jsonschema's checker)
+    cannot compile. Those patterns are prompts for the model, not executed
+    by the server.
+    """
+    try:
+        normalize_json_schema_types(schema)
+        Draft202012Validator.check_schema(schema, format_checker=None)
+    except SchemaError as e:
+        return str(e)
+    except RecursionError:
+        return "schema is too deeply nested or contains a cycle"
+    return None
 
 
 def _find_common_prefix(s1: str, s2: str) -> str:
