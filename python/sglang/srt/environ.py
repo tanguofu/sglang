@@ -812,6 +812,9 @@ class Envs:
     SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM = EnvBool(False)
     SGLANG_DSA_TOPK_BROADCAST = EnvBool(False)
     SGLANG_DISABLE_DSA_INDEXER_FUSION = EnvBool(False)
+    # Opt-in: fuse DSA indexer wk + weights_proj on gfx942 only. Keeps the
+    # HIP Hadamard/cache path; not bitwise vs unfused block-FP8 GEMMs.
+    SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION = EnvBool(False)
     # Opt-in perf path for --dsa-prefill-backend flashmla_sparse_q8: fuse the
     # absorbed q bmm with the nope/rope concat + fp8 cast so q is written
     # directly in fp8 ("born fp8") and the standalone concat-cast kernel
