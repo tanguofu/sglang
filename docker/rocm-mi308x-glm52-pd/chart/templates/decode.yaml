@@ -73,6 +73,7 @@ spec:
               {{- if $pagedFlydsl.enabled }}
               {{- include "sglang-1p1d.pagedFlydslInstall" $root | nindent 14 }}
               {{- end }}
+              python3 /data/mooncake-patched/patch_tool_schema_regex.py || echo "WARNING: tool-schema-regex patch failed"
               exec python3 -m sglang.launch_server{{- include "sglang-1p1d.launchArgs" (dict "root" $root "extra" $args "port" $root.Values.ports.decode.http "bootstrapPort" $root.Values.ports.decode.bootstrap) }}
           env:
             {{- include "sglang-1p1d.workerEnv" (dict "root" $root "extra" $extraEnv "hostIP" $d.ip) | nindent 12 }}

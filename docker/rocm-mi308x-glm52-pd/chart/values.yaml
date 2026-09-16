@@ -29,13 +29,25 @@ modelPath: /data/model/glm53-fp8
 prefills:
   - nodeName: node-21.151.225.144
     ip: 21.151.225.144
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit
   - nodeName: node-21.151.225.152
     ip: 21.151.225.152
+    # W0 canary. Pin so helm does not revert to prefill.workerImage.
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0908-src-parity
 decodes:
   - nodeName: node-21.151.225.132
     ip: 21.151.225.132
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk
+    extraEnv:
+      AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
   - nodeName: node-21.151.225.172
     ip: 21.151.225.172
+    # Projection-fusion canary (#39243). Pin so helm does not revert.
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0916-src-projfuse
+    extraEnv:
+      AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
+      AITER_LOG_TUNED_CONFIG: "1"
+      SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION: "1"
 
 ports:
   prefill:
@@ -193,7 +205,9 @@ commonArgs:
   - --enable-fused-qk-norm-rope
   - --schedule-conservativeness 0.8
   - --kv-cache-dtype fp8_e4m3
-  - --max-running-requests 32
+  # 32 let several 300K-1M jobs land on one decode and retract (2026-09-09).
+  # 8 is the live shield; raise only after admission control exists.
+  - --max-running-requests 8
   - --disaggregation-transfer-backend mooncake
   - --num-reserved-decode-tokens 1024
   - --enable-metrics
@@ -214,6 +228,9 @@ prefill:
   # Patch file must be at /data/mooncake-patched/patch_zombie_free_fix.py.
   zombieFreeFix: true
   extraEnv:
+    # Idle invariant checker suicides on a leftover 320-token bookkeeping miss
+    # (prefill-0 2026-09-08 21:00 UTC). Keep warn-only until that leak is fixed.
+    SGLANG_ENABLE_STRICT_MEM_CHECK_DURING_IDLE: "0"
     SGLANG_HICACHE_HOST_ALLOCATOR: default
     MOONCAKE_TE_META_DATA_SERVER: P2PHANDSHAKE
     MOONCAKE_GLOBAL_SEGMENT_SIZE: "64gb"
