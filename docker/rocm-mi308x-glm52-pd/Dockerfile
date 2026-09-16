@@ -108,6 +108,7 @@ assert 'fused_dsa_decode_metadata' in dsa, 'w1-fused-meta'; \
 assert 'is_cuda() and not _is_hip' not in dsa, 'w1-hip-gate'; \
 assert 'format_checker=None' in r('srt/function_call/utils.py'), 'tool-schema-regex'; \
 assert '_is_glm_moe_dsa_config' in r('srt/models/deepseek_v2.py'), 'w1-bias-fp32'; \
+assert '_aiter_fp32_correction_bias_args' in r('srt/layers/moe/topk.py'), 'w1-bias-aiter-upcast'; \
 assert (R/'kernels/aot/include/hip/dsa_topk_coop.cuh').stat().st_size > 0, 'w2-coop-cuh'; \
 assert 'coop' in r('kernels/aot/csrc/elementwise/topk.hip'), 'w2-topk-hip'; \
 print('[OK] All production patch markers verified in source tree')"

@@ -200,6 +200,20 @@ if _use_aiter:
         from aiter.fused_moe import fused_topk as aiter_fused_topk
     except ImportError:
         raise ImportError("aiter is required when SGLANG_USE_AITER is set to True")
+
+
+def _aiter_fp32_correction_bias_args(
+    gating_output: torch.Tensor, correction_bias: torch.Tensor
+):
+    """Keep an fp32 MoE correction bias in fp32 at the aiter boundary.
+
+    GLM-5.2/5.3 bias lives near 7 with a ~0.25 spread. Casting it to bf16
+    collapses that to ~8 ULPs and reorders top-k. Upcast the gating logits
+    instead. A bias that is already bf16 stays byte-identical.
+    """
+    if correction_bias.dtype == torch.float32:
+        return gating_output.to(torch.float32), correction_bias
+    return gating_output, correction_bias
 if _is_musa:
     try:
         from mate import moe_fused_gate
@@ -895,9 +909,12 @@ def fused_topk(
             )
     elif scoring_func == "sigmoid":
         if _use_aiter and correction_bias is not None:
+            aiter_gating_output, aiter_bias = _aiter_fp32_correction_bias_args(
+                gating_output, correction_bias
+            )
             aiter_biased_grouped_topk(
-                gating_output,
-                correction_bias.to(dtype=gating_output.dtype),
+                aiter_gating_output,
+                aiter_bias,
                 topk_weights,
                 topk_ids,
                 num_expert_group=1,
@@ -1566,9 +1583,12 @@ def biased_grouped_topk_gpu(
         ), f"Number of tokens mismatch: hidden_states.shape[0] = {hidden_states.shape[0]}, gating_output.shape[0] = {gating_output.shape[0]}"
         topk_weights = torch.empty((token, topk), dtype=torch.float32, device=device)
         topk_ids = torch.empty((token, topk), dtype=torch.int32, device=device)
+        aiter_gating_output, aiter_bias = _aiter_fp32_correction_bias_args(
+            gating_output, correction_bias
+        )
         aiter_biased_grouped_topk(
-            gating_output,
-            correction_bias.to(dtype=gating_output.dtype),
+            aiter_gating_output,
+            aiter_bias,
             topk_weights,
             topk_ids,
             num_expert_group,
