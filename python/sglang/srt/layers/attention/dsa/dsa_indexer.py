@@ -67,6 +67,8 @@ from sglang.srt.utils import (
 from sglang.srt.utils.custom_op import register_custom_op
 
 logger = logging.getLogger(__name__)
+_MQA_I32_CHUNK_LOGGED = False
+_MQA_LOGITS_I32_MAX = 2147483647
 
 _is_cuda = is_cuda()
 _is_hip = is_hip()
@@ -977,21 +979,51 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
         self._mqa_logits_budget_bytes[device_index] = budget_bytes
         return budget_bytes
 
+    @staticmethod
+    def _mqa_i32_safe_max_rows(num_k: int) -> int:
+        # FlyDSL/Triton index logits with i32. The store offset is
+        # (row * num_k + col) * sizeof(fp32), so a 16k-token prefill chunk
+        # against k>~32k wraps i32 and corrupts DSA top-k (PD 64K→96K cliff).
+        if num_k <= 0:
+            return 1
+        return max(
+            1,
+            _MQA_LOGITS_I32_MAX // (num_k * Indexer._MQA_LOGITS_BYTES_PER_ELEM),
+        )
+
     def _should_chunk_mqa_logits(
         self, num_q: int, num_k: int, device_index: int
     ) -> Tuple[bool, int]:
         """
         Detect whether we need to chunk the MQA logits computation to avoid OOM
-        Return: (need_chunk, logits_budget_bytes)
+        or i32 index wrap. Return: (need_chunk, logits_budget_bytes)
         """
-        # Quick static check for normal batches
-        if num_q * num_k < self._MQA_LOGITS_STATIC_SKIP_ELEMS:
+        i32_safe_rows = self._mqa_i32_safe_max_rows(num_k)
+        i32_overflow = num_q > i32_safe_rows
+
+        # Quick static check for normal batches that also stay i32-safe.
+        if (not i32_overflow) and num_q * num_k < self._MQA_LOGITS_STATIC_SKIP_ELEMS:
             return False, 0
 
-        logits_bytes = num_q * num_k * self._MQA_LOGITS_BYTES_PER_ELEM
         logits_budget_bytes = self._get_mqa_logits_budget_bytes(device_index)
+        i32_safe_bytes = i32_safe_rows * max(num_k, 1) * self._MQA_LOGITS_BYTES_PER_ELEM
+        if logits_budget_bytes == 0:
+            logits_budget_bytes = i32_safe_bytes
+        else:
+            logits_budget_bytes = min(logits_budget_bytes, i32_safe_bytes)
 
-        need_chunk = logits_bytes > logits_budget_bytes
+        logits_bytes = num_q * num_k * self._MQA_LOGITS_BYTES_PER_ELEM
+        need_chunk = i32_overflow or logits_bytes > logits_budget_bytes
+        if i32_overflow:
+            global _MQA_I32_CHUNK_LOGGED
+            if not _MQA_I32_CHUNK_LOGGED:
+                logger.info(
+                    "FlyDSL MQA i32-safe chunk (prefill) q=%s k=%s max_rows=%s",
+                    num_q,
+                    num_k,
+                    i32_safe_rows,
+                )
+                _MQA_I32_CHUNK_LOGGED = True
         return need_chunk, logits_budget_bytes
 
     def _get_topk_ragged(
@@ -1129,7 +1161,7 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
 
         bytes_per_row = k_offset * self._MQA_LOGITS_BYTES_PER_ELEM
         max_rows = max(1, int(logits_budget_bytes // max(bytes_per_row, 1)))
-        max_rows = min(max_rows, q_offset)
+        max_rows = min(max_rows, q_offset, self._mqa_i32_safe_max_rows(k_offset))
 
         global_topk_offset = metadata.attn_metadata.topk_indices_offset
         cu_seqlens_q_full = None
@@ -1435,13 +1467,6 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
                     ke,
                     clean_logits=False,
                 )
-            # Guard against i32 index overflow in the FlyDSL/Triton MQA logits
-            # kernel: the kernel indexes logits with i32, so long-context
-            # prefill (k_offset > ~180k) wraps the i32 index and corrupts output.
-            INT32_MAX = 2147483647
-            bytes_per_row = self.index_topk * 4  # fp32 logits per row
-            i32_safe_rows = INT32_MAX // max(bytes_per_row, 1)
-            max_rows = min(max_rows, i32_safe_rows, q_offset)
 
             actual_seq_q = torch.tensor([actual_seq_q], dtype=torch.int32).to(
                 device="cuda", non_blocking=True

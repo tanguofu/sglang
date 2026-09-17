@@ -29,17 +29,27 @@ modelPath: /data/model/glm53-fp8
 prefills:
   - nodeName: node-21.151.225.144
     ip: 21.151.225.144
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit
+    # Prefill long-context (FlyDSL MQA i32-safe chunk). Fusion env off.
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0916-src-mqa32
+    extraEnv:
+      AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
+      AITER_LOG_TUNED_CONFIG: "1"
   - nodeName: node-21.151.225.152
     ip: 21.151.225.152
-    # W0 canary. Pin so helm does not revert to prefill.workerImage.
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0908-src-parity
+    # Prefill long-context canary (FlyDSL MQA i32-safe chunk). Fusion env off.
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0916-src-mqa32
+    extraEnv:
+      AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
+      AITER_LOG_TUNED_CONFIG: "1"
 decodes:
   - nodeName: node-21.151.225.132
     ip: 21.151.225.132
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0916-src-projfuse
     extraEnv:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
+      AITER_LOG_TUNED_CONFIG: "1"
+      SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION: "1"
+      SGLANG_OPT_USE_TOPK_V2: "1"
   - nodeName: node-21.151.225.172
     ip: 21.151.225.172
     # Projection-fusion canary (#39243). Pin so helm does not revert.
@@ -48,6 +58,7 @@ decodes:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
       AITER_LOG_TUNED_CONFIG: "1"
       SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION: "1"
+      SGLANG_OPT_USE_TOPK_V2: "1"
 
 ports:
   prefill:

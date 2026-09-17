@@ -109,9 +109,11 @@ assert 'is_cuda() and not _is_hip' not in dsa, 'w1-hip-gate'; \
 assert 'format_checker=None' in r('srt/function_call/utils.py'), 'tool-schema-regex'; \
 assert '_is_glm_moe_dsa_config' in r('srt/models/deepseek_v2.py'), 'w1-bias-fp32'; \
 assert '_aiter_fp32_correction_bias_args' in r('srt/layers/moe/topk.py'), 'w1-bias-aiter-upcast'; \
+assert 'aiter fp32 correction bias kept' in r('srt/layers/moe/topk.py'), 'w1-bias-once-log'; \
 assert 'SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION' in r('srt/environ.py'), 'proj-fusion-env'; \
 assert 'dsa_indexer_projection_fusion_enabled' in r('srt/layers/attention/dsa/dsa_projection_fusion.py'), 'proj-fusion-helper'; \
 assert 'use_dsa_indexer_projection_fusion' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'proj-fusion-gate'; \
+assert '_mqa_i32_safe_max_rows' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'mqa-i32-chunk'; \
 assert (R/'kernels/aot/include/hip/dsa_topk_coop.cuh').stat().st_size > 0, 'w2-coop-cuh'; \
 assert 'coop' in r('kernels/aot/csrc/elementwise/topk.hip'), 'w2-topk-hip'; \
 print('[OK] All production patch markers verified in source tree')"
