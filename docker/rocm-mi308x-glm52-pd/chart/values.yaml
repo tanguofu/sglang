@@ -44,21 +44,26 @@ prefills:
 decodes:
   - nodeName: node-21.151.225.132
     ip: 21.151.225.132
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0916-src-projfuse
+    # CK dense GEMM (2026-09-18): CSV-HIT-only CK path, PoC +2.9% tps,
+    # accept_len +0.096 (up), 6h canary zero incidents. Rollout: decode-1
+    # 07:11, decode-0 13:35.
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0918-src-ckgemm
     extraEnv:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
       AITER_LOG_TUNED_CONFIG: "1"
       SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION: "1"
       SGLANG_OPT_USE_TOPK_V2: "1"
+      SGLANG_ROCM_USE_CK_GEMM_GFX942: "1"
   - nodeName: node-21.151.225.172
     ip: 21.151.225.172
-    # Projection-fusion canary (#39243). Pin so helm does not revert.
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0916-src-projfuse
+    # CK dense GEMM canary first (07:11), then decode-0. Pin so helm does not revert.
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0918-src-ckgemm
     extraEnv:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
       AITER_LOG_TUNED_CONFIG: "1"
       SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION: "1"
       SGLANG_OPT_USE_TOPK_V2: "1"
+      SGLANG_ROCM_USE_CK_GEMM_GFX942: "1"
 
 ports:
   prefill:
