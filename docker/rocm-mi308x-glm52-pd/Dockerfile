@@ -114,6 +114,8 @@ assert 'SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION' in r('srt/environ.py'), 'proj
 assert 'dsa_indexer_projection_fusion_enabled' in r('srt/layers/attention/dsa/dsa_projection_fusion.py'), 'proj-fusion-helper'; \
 assert 'use_dsa_indexer_projection_fusion' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'proj-fusion-gate'; \
 assert '_mqa_i32_safe_max_rows' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'mqa-i32-chunk'; \
+assert '_ck_csv_has_row' in r('srt/layers/quantization/fp8_utils.py'), 'ck-gfx942-gate'; \
+assert 'SGLANG_ROCM_USE_CK_GEMM_GFX942' in r('srt/layers/quantization/fp8_utils.py'), 'ck-gfx942-env'; \
 assert (R/'kernels/aot/include/hip/dsa_topk_coop.cuh').stat().st_size > 0, 'w2-coop-cuh'; \
 assert 'coop' in r('kernels/aot/csrc/elementwise/topk.hip'), 'w2-topk-hip'; \
 print('[OK] All production patch markers verified in source tree')"

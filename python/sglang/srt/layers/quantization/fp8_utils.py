@@ -42,6 +42,7 @@ from sglang.srt.utils import (
     is_blackwell_supported,
     is_cuda,
     is_flashinfer_available,
+    is_gfx942_supported,
     is_gfx95_supported,
     is_hip,
     is_musa,
@@ -65,6 +66,20 @@ _is_musa = is_musa()
 
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
 _use_aiter_gfx95 = _use_aiter and _is_gfx95_supported
+# gfx942 (MI308X): the aiter CK blockscale GEMM is prebuilt for this arch and
+# the cu80 tuned CSV (AITER_CONFIG_GEMM_A8W8_BLOCKSCALE) has rows for every
+# GLM-5.x dense shape except the indexer wk (N=128). Upstream PR #31217 routes
+# every non-gfx95 arch to triton, which leaves that CSV dead config. Opt in to
+# CK per shape: use it only when the CSV has a tuned row for the exact
+# (padded_M, N, K); any miss (e.g. wk N=128, where the CK default is slower
+# than triton) keeps today's triton path. Env-gated so rollback is a config
+# bounce, not an image swap.
+_use_aiter_ck_gfx942 = (
+    _use_aiter
+    and is_gfx942_supported()
+    and not _is_gfx95_supported
+    and get_bool_env_var("SGLANG_ROCM_USE_CK_GEMM_GFX942")
+)
 # ROCm 7.0 hipcc miscompiles gemm_a8w8_blockscale_bpreshuffle on gfx95 (#23319).
 _use_aiter_bpreshuffle_gfx95 = _use_aiter_gfx95 and get_hip_version() >= (7, 2, 0)
 # gfx95 + ROCm < 7.2: bpreshuffle CK is disabled (above), and the non-bpreshuffle
@@ -152,6 +167,32 @@ def use_aiter_triton_gemm_w8a8_tuned_gfx950(n: int, k: int) -> bool:
         (8192, 1024),
         (8192, 32768),
     ]
+
+
+@lru_cache(maxsize=4096)
+def _ck_csv_has_row(m: int, n: int, k: int) -> bool:
+    """True if the a8w8 blockscale tuned CSV has a row for this shape.
+
+    Mirrors get_CKGEMM_config's own key walk (gl in [None, 0, 1] with
+    get_padded_m) so the probe and the real lookup agree: if the probe says
+    HIT, the CK path will find the same row and never fall to its default
+    heuristic. Any failure (no aiter, missing CSV, unexpected error) keeps
+    the triton path.
+    """
+    if not _use_aiter_ck_gfx942:
+        return False
+    try:
+        from aiter.jit.core import AITER_CONFIGS
+        from aiter.ops.gemm_op_a8w8 import get_CKGEMM_config
+
+        return (
+            get_CKGEMM_config(
+                m, n, k, AITER_CONFIGS.AITER_CONFIG_GEMM_A8W8_BLOCKSCALE_FILE
+            )
+            is not None
+        )
+    except Exception:
+        return False
 
 
 if _use_aiter:
@@ -1119,6 +1160,10 @@ def aiter_w8a8_block_fp8_linear(
         use_triton = use_aiter_triton_gemm_w8a8_tuned_gfx950(n, k) or (
             _ck_safe_m is not None and input_2d.shape[0] > _ck_safe_m
         )
+    elif _use_aiter_ck_gfx942 and _ck_csv_has_row(input_2d.shape[0], n, k):
+        # gfx942: the CSV has a tuned CK row for this exact shape (microbench
+        # 1.8-4.6x over the triton any-config on GLM-5.x dense shapes).
+        use_triton = False
     else:
         use_triton = True
 
