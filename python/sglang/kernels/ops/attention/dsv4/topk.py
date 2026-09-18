@@ -34,13 +34,15 @@ def _jit_topk_v2_module():
     # constant, so a single module serves every k. The upstream split of the
     # single `transform` entry into paged/ragged/packed (PR #37889) renamed the
     # wrappers; the packed one is compiled under USE_ROCM only.
+    args = make_cpp_args(is_arch_support_pdl())
+    kernel = f"TopKKernel<{args}>"
     wrappers = [
-        ("topk_transform_paged", "TopKKernel::transform_paged"),
-        ("topk_transform_ragged", "TopKKernel::transform_ragged"),
-        ("topk_plan", "TopKKernel::plan"),
+        ("topk_transform_paged", f"{kernel}::transform_paged"),
+        ("topk_transform_ragged", f"{kernel}::transform_ragged"),
+        ("topk_plan", f"{kernel}::plan"),
     ]
     if is_hip_runtime():
-        wrappers.append(("topk_transform_packed", "TopKKernel::transform_packed"))
+        wrappers.append(("topk_transform_packed", f"{kernel}::transform_packed"))
     return load_jit(
         make_name("topk_v2"),
         cuda_files=["deepseek_v4/topk_v2.cuh"],
