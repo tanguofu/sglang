@@ -802,6 +802,11 @@ class Envs:
     )
     SGLANG_DSA_TOPK_FLASHINFER_DETERMINISTIC = EnvBool(False)
     SGLANG_DSA_TOPK_FLASHINFER_TIE_BREAK = EnvStr(None)
+    # Packed-row v2 top-k for DSA extend prefill (PR #37889). Separate from
+    # SGLANG_OPT_USE_TOPK_V2, which stays force-off for the DSA family on HIP:
+    # the packed entry needs no plan and no cluster path, so it compiles on
+    # gfx942 (CDNA3), unlike the paged/ragged v2 entries (CDNA4 clusters).
+    SGLANG_DSA_USE_TOPK_V2_PACKED = EnvBool(False)
     SGLANG_DSA_PREFILL_DENSE_ATTN_KV_LEN_THRESHOLD = EnvIntWithAlias(
         2048, deprecated_name="SGLANG_NSA_PREFILL_DENSE_ATTN_KV_LEN_THRESHOLD"
     )

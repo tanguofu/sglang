@@ -31,14 +31,20 @@ def _jit_topk_v1_module(topk: int):
 @cache_once
 def _jit_topk_v2_module():
     # v2 is universal: topk (<= 2048) is a runtime argument, not a compile-time
-    # constant, so a single module serves every k.
+    # constant, so a single module serves every k. The upstream split of the
+    # single `transform` entry into paged/ragged/packed (PR #37889) renamed the
+    # wrappers; the packed one is compiled under USE_ROCM only.
+    wrappers = [
+        ("topk_transform_paged", "TopKKernel::transform_paged"),
+        ("topk_transform_ragged", "TopKKernel::transform_ragged"),
+        ("topk_plan", "TopKKernel::plan"),
+    ]
+    if is_hip_runtime():
+        wrappers.append(("topk_transform_packed", "TopKKernel::transform_packed"))
     return load_jit(
         make_name("topk_v2"),
         cuda_files=["deepseek_v4/topk_v2.cuh"],
-        cuda_wrappers=[
-            ("topk_transform", "TopKKernel::transform"),
-            ("topk_plan", "TopKKernel::plan"),
-        ],
+        cuda_wrappers=wrappers,
     )
 
 
@@ -104,7 +110,7 @@ def topk_transform_512_v2(
     the output is all -1.
     """
     module = _jit_topk_v2_module()
-    module.topk_transform(
+    module.topk_transform_paged(
         scores,
         seq_lens,
         page_tables,
@@ -112,4 +118,49 @@ def topk_transform_512_v2(
         page_size,
         metadata,
         out_raw_indices,
+    )
+
+
+def topk_transform_packed_v2(
+    scores: torch.Tensor,
+    seq_lens: torch.Tensor,
+    page_tables: torch.Tensor,
+    out_page_indices: torch.Tensor,
+    page_size: int,
+    *,
+    row_starts: torch.Tensor,
+    row_to_batch: Optional[torch.Tensor] = None,
+) -> None:
+    """Packed (DSA extend prefill) fused top-k + page-table transform.
+
+    Row ``i`` selects the top-k of ``scores[i, ks : ks + seq_lens[i]]``
+    (``ks = row_starts[i]``) and writes the page-table transform of the selected
+    row-local positions into ``out_page_indices``, ``-1`` padded. Prefill expands
+    one request into many query-token rows, so ``row_to_batch[i]`` (optional,
+    ``(rows,)`` int32) names the ``page_tables`` row of the request row ``i``
+    belongs to; omitting it indexes the table by score row. ``row_to_batch`` is
+    not range-checked.
+
+    Ported from PR #37889 (amd/topk-v2-prefill). No plan and no cluster path:
+    the implementation level is picked per row at runtime.
+
+    NOTE: ``scores`` is MODIFIED IN PLACE -- the <= 3 columns ahead of each
+    row's window that the 16-byte-aligned read base pulls in are masked out.
+    They are invalid for that row and the buffer must have no other consumer,
+    so do not pass a view with overlapping rows.
+    ``seq_lens`` entries must be NON-NEGATIVE, as for the paged entry point.
+
+    ROCm only: the kernel is compiled under ``USE_ROCM`` so that CUDA and XPU
+    builds are untouched.
+    """
+    assert is_hip_runtime(), "topk_transform_packed_v2 is compiled under USE_ROCM only"
+    module = _jit_topk_v2_module()
+    module.topk_transform_packed(
+        scores,
+        seq_lens,
+        row_starts,
+        page_tables,
+        out_page_indices,
+        page_size,
+        row_to_batch,
     )

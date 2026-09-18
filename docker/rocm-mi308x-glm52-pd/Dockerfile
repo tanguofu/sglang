@@ -116,6 +116,9 @@ assert 'use_dsa_indexer_projection_fusion' in r('srt/layers/attention/dsa/dsa_in
 assert '_mqa_i32_safe_max_rows' in r('srt/layers/attention/dsa/dsa_indexer.py'), 'mqa-i32-chunk'; \
 assert '_ck_csv_has_row' in r('srt/layers/quantization/fp8_utils.py'), 'ck-gfx942-gate'; \
 assert 'SGLANG_ROCM_USE_CK_GEMM_GFX942' in r('srt/layers/quantization/fp8_utils.py'), 'ck-gfx942-env'; \
+assert 'topk_packed_kernel' in r('kernels/jit/csrc/deepseek_v4/topk_v2.cuh'), 'topk2p-kernel'; \
+assert 'SGLANG_DSA_USE_TOPK_V2_PACKED' in r('srt/environ.py'), 'topk2p-env'; \
+assert 'kQRFp16CastScaleLog2' in r('kernels/aot/csrc/allreduce/quick_all_reduce.cuh'), 'qr-saturation-fix'; \
 assert (R/'kernels/aot/include/hip/dsa_topk_coop.cuh').stat().st_size > 0, 'w2-coop-cuh'; \
 assert 'coop' in r('kernels/aot/csrc/elementwise/topk.hip'), 'w2-topk-hip'; \
 print('[OK] All production patch markers verified in source tree')"
