@@ -72,6 +72,25 @@ def fast_round_scale(amax, fp8_max_inv):
 
 
 @lru_cache(maxsize=8)
+@lru_cache(maxsize=1)
+def _gfx942_cu_count() -> int:
+    """CU count of the running gfx942 device.
+
+    The shipped configs hardcode cu=304 (MI300X/MI325X). MI308X reports 80 CU
+    via rocminfo, and _pick_inner_iter divides by cu, so the wrong constant
+    clamps inner_iter on small batches: a 64-token extend picks 4 instead of
+    16 (4x more partial groups), bs=32 decode picks 2 instead of 8. Query the
+    device once; keep 304 as the fallback so unknown devices are unchanged.
+    """
+    try:
+        cu = torch.cuda.get_device_properties(0).multi_processor_count
+        if cu > 0:
+            return cu
+    except Exception:
+        pass
+    return 304
+
+
 def _pick_inner_iter(seq: int, ni: int, cu: int, block_per_cu: int) -> int:
     """
     Pick the largest valid inner_iter (power-of-two divisor of ni) that keeps
@@ -1336,7 +1355,7 @@ def tilelang_sparse_fwd(
             if _is_gfx95_supported:
                 block_I, threads, block_per_cu, cu = 64, 256, 2, 256
             else:
-                block_I, threads, block_per_cu, cu = 64, 256, 1, 304
+                block_I, threads, block_per_cu, cu = 64, 256, 1, _gfx942_cu_count()
             ni = topk // block_I
             inner_iter = _pick_inner_iter(q.shape[0], ni, cu, block_per_cu)
             kernel_partial = sparse_mla_fwd_decode_partial_fp8(
@@ -1353,7 +1372,7 @@ def tilelang_sparse_fwd(
             if _is_gfx95_supported:
                 block_I, threads, block_per_cu, cu = 64, 256, 2, 256
             else:
-                block_I, threads, block_per_cu, cu = 32, 128, 1, 304
+                block_I, threads, block_per_cu, cu = 32, 128, 1, _gfx942_cu_count()
             ni = topk // block_I
             inner_iter = _pick_inner_iter(q.shape[0], ni, cu, block_per_cu)
             kernel_partial = sparse_mla_fwd_decode_partial(
@@ -2482,7 +2501,7 @@ def dpsk_v4_fp8_attention_fwd(
     if _is_gfx95_supported:
         block_I, threads, num_stages, block_per_cu, cu = 64, 512, 0, 2, 256
     else:
-        block_I, threads, num_stages, block_per_cu, cu = 32, 128, 1, 1, 304
+        block_I, threads, num_stages, block_per_cu, cu = 32, 128, 1, 1, _gfx942_cu_count()
 
     batch, seq_len, num_heads, _ = q.shape
     # Partial grid is (seq_len * REPLICATE_H * n_groups, batch, kv_group); the
