@@ -118,6 +118,7 @@ assert '_ck_csv_has_row' in r('srt/layers/quantization/fp8_utils.py'), 'ck-gfx94
 assert 'SGLANG_ROCM_USE_CK_GEMM_GFX942' in r('srt/layers/quantization/fp8_utils.py'), 'ck-gfx942-env'; \
 assert 'topk_packed_kernel' in r('kernels/jit/csrc/deepseek_v4/topk_v2.cuh'), 'topk2p-kernel'; \
 assert 'SGLANG_DSA_USE_TOPK_V2_PACKED' in r('srt/environ.py'), 'topk2p-env'; \
+assert '_gfx942_cu_count' in r('kernels/ops/attention/dsa/tilelang_kernel.py'), 'cu-count-fix'; \
 assert 'kQRFp16CastScaleLog2' in r('kernels/aot/csrc/allreduce/quick_all_reduce.cuh'), 'qr-saturation-fix'; \
 assert (R/'kernels/aot/include/hip/dsa_topk_coop.cuh').stat().st_size > 0, 'w2-coop-cuh'; \
 assert 'coop' in r('kernels/aot/csrc/elementwise/topk.hip'), 'w2-topk-hip'; \
