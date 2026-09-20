@@ -152,7 +152,7 @@ RUN set -eux; \
     cd /sgl-workspace/aiter; \
     git fetch origin 4f613c281acd3fb9e47429a468458501ec966c15; \
     git checkout 4f613c281acd3fb9e47429a468458501ec966c15; \
-    pip install -e . --no-deps --no-build-isolation; \
+    GPU_ARCHS=gfx942 pip install -e . --no-deps --no-build-isolation; \
     python3 -c "import aiter; print('aiter at', aiter.__file__)"
 
 # Upstream moved fp8_mqa_logits into kernels/mqa_logits/; sglang still imports
