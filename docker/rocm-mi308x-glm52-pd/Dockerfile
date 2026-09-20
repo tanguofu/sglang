@@ -169,7 +169,11 @@ COPY docker/rocm-mi308x-glm52-pd/patches/flydsl_mqa_compat.py /sgl-workspace/ait
 # passthrough). Do not merge into the fat source CSV.
 # ============================================================
 COPY docker/rocm-mi308x-glm52/patches/glm5_1_gemm_gfx942.csv /sgl-workspace/aiter/aiter/configs/model_configs/glm5_bf16_tuned_gemm.csv
-COPY docker/rocm-mi308x-glm52/patches/glm5_1_fmoe_gfx942.csv /sgl-workspace/aiter/aiter/configs/model_configs/glm5_a8w8_blockscale_bpreshuffle_tuned_gemm.csv
+# The fmoe overlay (glm5_1_fmoe_gfx942.csv -> glm5_a8w8_blockscale_bpreshuffle_
+# tuned_gemm.csv) is DROPPED: aiter 4f613c2's GEMM merge glob picks up that
+# filename, parses the fmoe-schema rows as M=0/N=0/K=0 GEMM rows, and aborts
+# with "21 duplicate shape entries". The live fmoe path is AITER_CONFIG_FMOE
+# (hostPath cu80 CSV) plus upstream's own cu80 rows in tuned_fmoe_glm5_1.csv.
 COPY docker/rocm-mi308x-glm52-pd/patches/mi308x_gfx942_bf16_gate_indexer.csv \
      /sgl-workspace/aiter/aiter/configs/model_configs/mi308x_gfx942_bf16_tuned_gemm.csv
 COPY docker/rocm-mi308x-glm52-pd/scripts/gen_bf16_gate_indexer.py \
