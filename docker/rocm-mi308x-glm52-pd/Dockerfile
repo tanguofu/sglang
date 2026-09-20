@@ -153,6 +153,7 @@ RUN set -eux; \
     git fetch origin 4f613c281acd3fb9e47429a468458501ec966c15; \
     git checkout 4f613c281acd3fb9e47429a468458501ec966c15; \
     GPU_ARCHS=gfx942 pip install -e . --no-deps --no-build-isolation; \
+    find aiter/jit -maxdepth 1 -name '*.so' -delete; \
     python3 -c "import importlib.metadata as md; print('aiter', md.version('amd-aiter'))"
 
 # Upstream moved fp8_mqa_logits into kernels/mqa_logits/; sglang still imports
