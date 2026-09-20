@@ -138,12 +138,26 @@ RUN set -eux; \
     python3 -c "from sgl_kernel import fast_topk_v2; print('fast_topk_v2 OK')"
 
 # ============================================================
-# Layer 3: FlyDSL gfx942 fp8 MQA logits kernel (308x 64KB shared mem limit)
-# + Triton fp8_mqa_logits FN→FNUZ fix + BLOCK_KV=128
+# Layer 2c: aiter upgrade d9e5ef7 -> 4f613c2 (2026-09-19).
+# Brings: opt dynmic_per_group_scaled_quant (#5631), indexer_qk_rope_quant
+# rewrite (#5576), flydsl radix topk one-block (#5363), topk_select half
+# formats (#5526), FMoE GEMM2 A addressing fix (#5519), triton 3.8 configs
+# (#5612), cu80 rows in tuned_fmoe_glm5_1 (covers the 256/8 routed-only path
+# left on default since 2026-08-23), and the flydsl fp8_mqa_logits BLOCK_KV=128
+# + variant system + FNUZ fix that our Layer-3 overlays used to carry
+# (upstreamed — overlays dropped).
+# JIT .so modules rebuild on first use (~60-90s per kernel, once).
 # ============================================================
-COPY docker/rocm-mi308x-glm52/patches/flydsl/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/flydsl/kernels/fp8_mqa_logits.py
-COPY docker/rocm-mi308x-glm52/patches/flydsl/__init__.py /sgl-workspace/aiter/aiter/ops/flydsl/__init__.py
-COPY docker/rocm-mi308x-glm52/patches/fp8_mqa_logits.py /sgl-workspace/aiter/aiter/ops/triton/attention/fp8_mqa_logits.py
+RUN set -eux; \
+    cd /sgl-workspace/aiter; \
+    git fetch origin 4f613c281acd3fb9e47429a468458501ec966c15; \
+    git checkout 4f613c281acd3fb9e47429a468458501ec966c15; \
+    pip install -e . --no-deps --no-build-isolation; \
+    python3 -c "import aiter; print('aiter at', aiter.__file__)"
+
+# Upstream moved fp8_mqa_logits into kernels/mqa_logits/; sglang still imports
+# the old flat path. Re-export until the sglang side moves.
+COPY docker/rocm-mi308x-glm52-pd/patches/flydsl_mqa_compat.py /sgl-workspace/aiter/aiter/ops/flydsl/kernels/fp8_mqa_logits.py
 
 # ============================================================
 # Layer 4: AITER tuned GEMM/MoE configs for gfx942
