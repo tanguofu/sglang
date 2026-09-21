@@ -88,7 +88,7 @@ spec:
               {{- end }}
               exec python3 -m sglang.launch_server{{- include "sglang-1p1d.launchArgs" (dict "root" $root "extra" $root.Values.prefill.args "port" $root.Values.ports.prefill.http "bootstrapPort" $root.Values.ports.prefill.bootstrap) }}{{- include "sglang-1p1d.hicacheArgs" $root }}
           env:
-            {{- include "sglang-1p1d.workerEnv" (dict "root" $root "extra" $root.Values.prefill.extraEnv "mooncakeLocal" true "hostIP" $p.ip) | nindent 12 }}
+            {{- include "sglang-1p1d.workerEnv" (dict "root" $root "extra" ($p.extraEnv | default $root.Values.prefill.extraEnv) "mooncakeLocal" true "hostIP" $p.ip) | nindent 12 }}
           ports:
             - name: http
               containerPort: {{ $root.Values.ports.prefill.http }}
