@@ -21,8 +21,10 @@ tke.cloud.tencent.com/pod-type: eklet
 {{- define "sglang-1p1d.workerEnv" -}}
 {{- $extra := .extra | default dict -}}
 {{- range $k, $v := .root.Values.workerEnv }}
+{{- if not (hasKey $extra $k) }}
 - name: {{ $k }}
   value: {{ $v | quote }}
+{{- end }}
 {{- end }}
 - name: SGLANG_HOST_IP
   value: {{ .hostIP | quote }}
