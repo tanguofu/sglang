@@ -1,0 +1,41 @@
+{{- if .Values.gateway.anthropicDirect }}
+# sglang_router 不转发 /v1/messages（Anthropic 协议，实测 404），但实例本身支持。
+# 因此给 Claude Code 之类用 Anthropic 协议的客户端开一条直连后端的旁路：
+# 无 selector 的 Service + 手工 Endpoints，把全部 prefill/decode 实例直接暴露出来。
+# （4 个 worker 的 component 标签分别是 prefill / prefill-1 / decode / decode-1，
+#   Service 的等值 selector 没法一次选中，所以用手工 Endpoints。）
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sglang-1p1d.name" . }}-direct
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sglang-1p1d.labels" . | nindent 4 }}
+    app.kubernetes.io/component: direct
+spec:
+  ports:
+    - name: http
+      port: {{ .Values.ports.prefill.http }}
+      targetPort: {{ .Values.ports.prefill.http }}
+      protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: {{ include "sglang-1p1d.name" . }}-direct
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "sglang-1p1d.labels" . | nindent 4 }}
+    app.kubernetes.io/component: direct
+subsets:
+  - addresses:
+      {{- range .Values.prefills }}
+      - ip: {{ .ip }}
+      {{- end }}
+      {{- range .Values.decodes }}
+      - ip: {{ .ip }}
+      {{- end }}
+    ports:
+      - name: http
+        port: {{ .Values.ports.prefill.http }}
+{{- end }}

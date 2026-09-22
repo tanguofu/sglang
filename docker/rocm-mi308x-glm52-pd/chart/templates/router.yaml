@@ -58,12 +58,23 @@ spec:
               cp /dev/shm/sglang_router_rs.abi3.so /opt/venv/lib/python3.12/site-packages/sglang_router/sglang_router_rs.abi3.so 2>/dev/null || true
               echo "=== SGLang PD Router ==="
               exec python3 -m sglang_router.launch_router \
+                {{- $pdMode := true }}
+                {{- if and .Values.router (hasKey .Values.router "pdMode") }}{{ $pdMode = .Values.router.pdMode }}{{ end }}
+                {{- if $pdMode }}
                 --pd-disaggregation \
                 {{- range $i, $p := .Values.prefills }}
                 --prefill http://{{ $p.ip }}:{{ $.Values.ports.prefill.http }} {{ $.Values.ports.prefill.bootstrap }} \
                 {{- end }}
                 {{- range $i, $d := $decodes }}
                 --decode http://{{ $d.ip }}:{{ $.Values.ports.decode.http }} \
+                {{- end }}
+                {{- else }}
+                {{- range $i, $p := .Values.prefills }}
+                --worker-urls http://{{ $p.ip }}:{{ $.Values.ports.prefill.http }} \
+                {{- end }}
+                {{- range $i, $d := $decodes }}
+                --worker-urls http://{{ $d.ip }}:{{ $.Values.ports.decode.http }} \
+                {{- end }}
                 {{- end }}
                 --host 0.0.0.0 --port {{ .Values.router.port }} \
                 --prometheus-port {{ .Values.router.metricsPort }} \
@@ -73,8 +84,10 @@ spec:
                 --health-check-interval-secs 5 \
                 --health-failure-threshold 5 \
                 --health-success-threshold 2 \
+                {{- if $pdMode }}
                 --prefill-policy {{ .Values.router.prefillPolicy | default "round_robin" }} \
                 --decode-policy {{ .Values.router.decodePolicy | default "round_robin" }} \
+                {{- end }}
                 --balance-abs-threshold {{ .Values.router.balanceAbsThreshold | default 0 }} \
                 --balance-rel-threshold {{ .Values.router.balanceRelThreshold | default 1.5 }} \
                 --cb-timeout-duration-secs {{ .Values.router.cbTimeoutSecs | default 60 }} \

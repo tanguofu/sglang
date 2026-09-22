@@ -21,6 +21,20 @@ spec:
       namespace: {{ .Values.gateway.parentNamespace }}
       sectionName: https-{{ .Values.gateway.httprouteName }}
   rules:
+    {{- if .Values.gateway.anthropicDirect }}
+    # /v1/messages（Anthropic 协议）绕过 router 直连实例，见 templates/direct-service.yaml
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: {{ include "sglang-1p1d.name" . }}-direct
+          namespace: {{ .Release.Namespace }}
+          port: {{ .Values.ports.prefill.http }}
+          weight: 1
+      matches:
+        - path:
+            type: PathPrefix
+            value: /v1/messages
+    {{- end }}
     - backendRefs:
         - group: ""
           kind: Service
