@@ -2120,10 +2120,14 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         freeze_gc("Tokenizer Manager")
         return None
 
-    def create_abort_task(self, obj: GenerateReqInput):
+    def create_abort_task(
+        self, obj: GenerateReqInput, request: Optional[fastapi.Request] = None
+    ):
         # Abort the request if the client is disconnected.
         async def abort_request():
             await asyncio.sleep(2)
+            if request is not None and not await request.is_disconnected():
+                return
             if obj.is_single:
                 self.abort_request(obj.rid)
             else:

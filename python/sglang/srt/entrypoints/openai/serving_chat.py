@@ -1460,7 +1460,9 @@ class OpenAIServingChat(OpenAIServingBase):
         return StreamingResponse(
             prepend_first_chunk(),
             media_type="text/event-stream",
-            background=self.tokenizer_manager.create_abort_task(adapted_request),
+            background=self.tokenizer_manager.create_abort_task(
+                adapted_request, raw_request
+            ),
         )
 
     async def _generate_chat_stream(

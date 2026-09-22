@@ -14,7 +14,7 @@ Covers:
 
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import msgspec
 
@@ -234,6 +234,39 @@ class TestRidToStateCleanupOnAbort(CustomTestCase):
         tm.abort_request(rid=rid)
 
         tm.send_to_scheduler.send_pyobj.assert_not_called()
+
+    def test_background_abort_skips_connected_client(self):
+        """A completed stream must not be counted as an aborted request."""
+        tm = _make_tokenizer_manager()
+        obj = Mock(spec=GenerateReqInput)
+        obj.rid = "connected_client_rid"
+        obj.is_single = True
+        request = Mock()
+        request.is_disconnected = AsyncMock(return_value=False)
+
+        background = tm.create_abort_task(obj, request)
+        with patch("asyncio.sleep", AsyncMock(return_value=None)):
+            asyncio.run(background())
+
+        tm.send_to_scheduler.send_pyobj.assert_not_called()
+
+    def test_background_abort_forwards_disconnected_client(self):
+        """A disconnected stream must still abort the scheduler request."""
+        tm = _make_tokenizer_manager()
+        tm.disaggregation_mode = DisaggregationMode.DECODE
+        obj = Mock(spec=GenerateReqInput)
+        obj.rid = "disconnected_client_rid"
+        obj.is_single = True
+        request = Mock()
+        request.is_disconnected = AsyncMock(return_value=True)
+
+        background = tm.create_abort_task(obj, request)
+        with patch("asyncio.sleep", AsyncMock(return_value=None)):
+            asyncio.run(background())
+
+        tm.send_to_scheduler.send_pyobj.assert_called_once()
+        sent_req = tm.send_to_scheduler.send_pyobj.call_args.args[0]
+        self.assertEqual(sent_req.rid, obj.rid)
 
     def test_abort_removes_rid_from_state(self):
         """After _handle_abort_req, rid should be removed from rid_to_state."""
