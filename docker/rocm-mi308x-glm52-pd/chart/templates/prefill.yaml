@@ -88,7 +88,12 @@ spec:
               {{- end }}
               exec python3 -m sglang.launch_server{{- include "sglang-1p1d.launchArgs" (dict "root" $root "extra" $root.Values.prefill.args "port" $root.Values.ports.prefill.http "bootstrapPort" $root.Values.ports.prefill.bootstrap) }}{{- include "sglang-1p1d.hicacheArgs" $root }}
           env:
-            {{- include "sglang-1p1d.workerEnv" (dict "root" $root "extra" ($p.extraEnv | default $root.Values.prefill.extraEnv) "mooncakeLocal" true "hostIP" $p.ip) | nindent 12 }}
+            {{- /* Merge shared prefill.extraEnv with the per-entry extraEnv (per-entry wins). The old `default` form replaced the shared block entirely, silently dropping STRICT_MEM_CHECK / HICACHE_HOST_ALLOCATOR / MOONCAKE_* envs when an entry had its own extraEnv — prefill-0 crashed 2026-09-22 08:56 on the idle invariant checker that STRICT_MEM_CHECK=0 was supposed to keep warn-only. */ -}}
+            {{- $mergedEnv := $root.Values.prefill.extraEnv | default dict | deepCopy -}}
+            {{- range $k, $v := ($p.extraEnv | default dict) -}}
+            {{- $_ := set $mergedEnv $k $v -}}
+            {{- end }}
+            {{- include "sglang-1p1d.workerEnv" (dict "root" $root "extra" $mergedEnv "mooncakeLocal" true "hostIP" $p.ip) | nindent 12 }}
           ports:
             - name: http
               containerPort: {{ $root.Values.ports.prefill.http }}

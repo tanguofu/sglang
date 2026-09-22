@@ -2,7 +2,11 @@
 {{- range $i, $d := .Values.decodes }}
 {{- $workerImage := $d.workerImage | default $root.Values.decode.workerImage | default $root.Values.workerImage }}
 {{- $args := $d.args | default $root.Values.decode.args }}
-{{- $extraEnv := $d.extraEnv | default $root.Values.decode.extraEnv }}
+{{- /* Merge shared decode.extraEnv with the per-entry extraEnv (per-entry wins). */ -}}
+{{- $extraEnv := $root.Values.decode.extraEnv | default dict | deepCopy -}}
+{{- range $k, $v := ($d.extraEnv | default dict) -}}
+{{- $_ := set $extraEnv $k $v -}}
+{{- end }}
 {{- $pagedFlydsl := $d.pagedFlydsl | default $root.Values.decode.pagedFlydsl }}
 {{- $component := "decode" }}
 {{- if gt (int $i) 0 }}
