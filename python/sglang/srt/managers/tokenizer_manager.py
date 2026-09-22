@@ -1949,6 +1949,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             not abort_all
             and self.server_args.tokenizer_worker_num == 1
             and rid not in self.rid_to_state
+            and self.disaggregation_mode != DisaggregationMode.DECODE
         ):
             return
         req = AbortReq(rid=rid, abort_all=abort_all)
