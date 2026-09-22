@@ -904,9 +904,10 @@ async def generate_request(obj: GenerateReqInput, request: Request):
             yield b"data: [DONE]\n\n"
 
         return StreamingResponse(
-            stream_results(),
+            _global_state.tokenizer_manager.wrap_stream_with_abort(
+                obj, stream_results()
+            ),
             media_type="text/event-stream",
-            background=_global_state.tokenizer_manager.create_abort_task(obj, request),
         )
     else:
         try:

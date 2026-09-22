@@ -14,7 +14,7 @@ Covers:
 
 import asyncio
 import unittest
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import msgspec
 
@@ -235,34 +235,41 @@ class TestRidToStateCleanupOnAbort(CustomTestCase):
 
         tm.send_to_scheduler.send_pyobj.assert_not_called()
 
-    def test_background_abort_skips_connected_client(self):
+    def test_stream_abort_wrapper_skips_normal_completion(self):
         """A completed stream must not be counted as an aborted request."""
         tm = _make_tokenizer_manager()
         obj = Mock(spec=GenerateReqInput)
-        obj.rid = "connected_client_rid"
+        obj.rid = "normal_completion_rid"
         obj.is_single = True
-        request = Mock()
-        request.is_disconnected = AsyncMock(return_value=False)
 
-        background = tm.create_abort_task(obj, request)
-        with patch("asyncio.sleep", AsyncMock(return_value=None)):
-            asyncio.run(background())
+        async def source():
+            yield "chunk"
+
+        async def consume():
+            return [chunk async for chunk in tm.wrap_stream_with_abort(obj, source())]
+
+        self.assertEqual(asyncio.run(consume()), ["chunk"])
 
         tm.send_to_scheduler.send_pyobj.assert_not_called()
 
-    def test_background_abort_forwards_disconnected_client(self):
+    def test_stream_abort_wrapper_forwards_cancellation(self):
         """A disconnected stream must still abort the scheduler request."""
         tm = _make_tokenizer_manager()
         tm.disaggregation_mode = DisaggregationMode.DECODE
         obj = Mock(spec=GenerateReqInput)
-        obj.rid = "disconnected_client_rid"
+        obj.rid = "cancelled_client_rid"
         obj.is_single = True
-        request = Mock()
-        request.is_disconnected = AsyncMock(return_value=True)
 
-        background = tm.create_abort_task(obj, request)
-        with patch("asyncio.sleep", AsyncMock(return_value=None)):
-            asyncio.run(background())
+        async def source():
+            yield "chunk"
+            raise asyncio.CancelledError
+
+        async def consume():
+            async for _chunk in tm.wrap_stream_with_abort(obj, source()):
+                pass
+
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(consume())
 
         tm.send_to_scheduler.send_pyobj.assert_called_once()
         sent_req = tm.send_to_scheduler.send_pyobj.call_args.args[0]

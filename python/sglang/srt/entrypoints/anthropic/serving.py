@@ -811,16 +811,16 @@ class AnthropicServing:
             )
 
         return StreamingResponse(
-            self._generate_anthropic_stream(
+            self.openai_serving_chat.tokenizer_manager.wrap_stream_with_abort(
                 adapted_request,
-                processed_request,
-                anthropic_request,
-                raw_request,
+                self._generate_anthropic_stream(
+                    adapted_request,
+                    processed_request,
+                    anthropic_request,
+                    raw_request,
+                ),
             ),
             media_type="text/event-stream",
-            background=self.openai_serving_chat.tokenizer_manager.create_abort_task(
-                adapted_request, raw_request
-            ),
         )
 
     async def _generate_anthropic_stream(

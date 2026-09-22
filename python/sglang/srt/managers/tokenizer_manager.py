@@ -34,7 +34,17 @@ from datetime import datetime
 from enum import Enum
 from functools import lru_cache
 from http import HTTPStatus
-from typing import Any, Awaitable, Dict, Iterable, List, Optional, Tuple, Union
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 import fastapi
 import numpy as np
@@ -43,7 +53,6 @@ import torch
 import uvloop
 import zmq
 import zmq.asyncio
-from fastapi import BackgroundTasks
 
 from sglang.srt.configs.model_config import ModelConfig
 from sglang.srt.constants import HEALTH_CHECK_RID_PREFIX
@@ -2120,23 +2129,22 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         freeze_gc("Tokenizer Manager")
         return None
 
-    def create_abort_task(
-        self, obj: GenerateReqInput, request: Optional[fastapi.Request] = None
-    ):
-        # Abort the request if the client is disconnected.
-        async def abort_request():
-            await asyncio.sleep(2)
-            if request is not None and not await request.is_disconnected():
-                return
-            if obj.is_single:
-                self.abort_request(obj.rid)
-            else:
-                for rid in obj.rid:
-                    self.abort_request(rid)
+    def wrap_stream_with_abort(
+        self, obj: GenerateReqInput, stream: AsyncIterator[Any]
+    ) -> AsyncIterator[Any]:
+        async def wrapped_stream():
+            try:
+                async for chunk in stream:
+                    yield chunk
+            except asyncio.CancelledError:
+                if obj.is_single:
+                    self.abort_request(obj.rid)
+                else:
+                    for rid in obj.rid:
+                        self.abort_request(rid)
+                raise
 
-        background_tasks = BackgroundTasks()
-        background_tasks.add_task(abort_request)
-        return background_tasks
+        return wrapped_stream()
 
     def auto_create_handle_loop(self):
         if self.event_loop is not None:
