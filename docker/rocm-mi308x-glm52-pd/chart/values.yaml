@@ -59,7 +59,7 @@ decodes:
   - nodeName: node-21.151.225.172
     ip: 21.151.225.172
     # CK dense GEMM canary first (07:11), then decode-0. Pin so helm does not revert.
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0919c-src-cufix
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0922-src-zombie-abort-prod
     extraEnv:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
       AITER_LOG_TUNED_CONFIG: "1"
