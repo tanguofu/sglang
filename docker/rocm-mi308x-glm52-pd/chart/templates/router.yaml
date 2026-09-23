@@ -2,6 +2,9 @@
 {{- if not $decodes }}
 {{- $decodes = .Values.decodes }}
 {{- end }}
+{{- if or (not .Values.apiKey) (eq .Values.apiKey "sk-REPLACE_WITH_YOUR_API_KEY") }}
+{{- fail "apiKey must be set to a live key; refusing to deploy the placeholder" }}
+{{- end }}
 {{- if and (eq .Values.router.decodePolicy "power_of_two") (lt (len $decodes) 2) }}
 {{- fail "router.decodePolicy=power_of_two requires at least two router.decodes" }}
 {{- end }}
