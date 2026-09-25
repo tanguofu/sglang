@@ -26,6 +26,9 @@ metadata:
 spec:
   serviceName: {{ include "sglang-1p1d.decodeStsName" (dict "root" $root "index" $i) }}
   replicas: 1
+  updateStrategy:
+    type: OnDelete
+    rollingUpdate: null
   podManagementPolicy: OrderedReady
   selector:
     matchLabels:

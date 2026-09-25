@@ -30,26 +30,39 @@ prefills:
   - nodeName: node-21.151.225.144
     ip: 21.151.225.144
     # Prefill long-context (FlyDSL MQA i32-safe chunk). Fusion env off.
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0919c-src-cufix
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0924-src-mooncake-fix
     extraEnv:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
       AITER_LOG_TUNED_CONFIG: "1"
       SGLANG_DSA_USE_TOPK_V2_PACKED: "1"
+      SGLANG_ENABLE_FAILED_SESSION_PROBE: "1"
+      SGLANG_MOONCAKE_SESSION_FAILURE_THRESHOLD: "3"
+      SGLANG_MOONCAKE_FAILED_SESSION_TTL_S: "300"
   - nodeName: node-21.151.225.152
     ip: 21.151.225.152
-    # Prefill long-context canary (FlyDSL MQA i32-safe chunk). Fusion env off.
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0919c-src-cufix
+    # Prefill long-context (FlyDSL MQA i32-safe chunk). Fusion env off.
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0924-src-mooncake-fix
     extraEnv:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
       AITER_LOG_TUNED_CONFIG: "1"
       SGLANG_DSA_USE_TOPK_V2_PACKED: "1"
+      SGLANG_ENABLE_FAILED_SESSION_PROBE: "1"
+      SGLANG_MOONCAKE_SESSION_FAILURE_THRESHOLD: "3"
+      SGLANG_MOONCAKE_FAILED_SESSION_TTL_S: "300"
 decodes:
   - nodeName: node-21.151.225.132
     ip: 21.151.225.132
     # CK dense GEMM (2026-09-18): CSV-HIT-only CK path, PoC +2.9% tps,
     # accept_len +0.096 (up), 6h canary zero incidents. Rollout: decode-1
     # 07:11, decode-0 13:35.
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0919c-src-cufix
+    # 2026-09-25: v0919c -> v0924. Reason is NOT the mooncake session fix
+    # (that one is prefill-only); v0919c's tokenizer_manager silently drops
+    # abort in PD decode mode (`rid not in rid_to_state` -> early return), so a
+    # disconnected client keeps the decode scheduler generating and floods
+    # "state was deleted in TokenizerManager" (observed 4726 lines for one rid).
+    # v0922/v0924 replace create_abort_task() with wrap_stream_with_abort()
+    # (abort on asyncio.CancelledError) plus a `!= DECODE` guard.
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0924-src-mooncake-fix
     extraEnv:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
       AITER_LOG_TUNED_CONFIG: "1"
@@ -232,7 +245,7 @@ commonArgs:
   - --log-level info
 
 prefill:
-  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0924-src-mooncake-fix
   # Agent-context fix (2026-09-07): prefix nodes >= SGLANG_HICACHE_BIG_NODE_TOKENS
   # (default 65536) back up D->H on the FIRST insert instead of waiting for the
   # write_through_selective 2nd hit. Codex turn-3 was cold-prefilling 81s when
@@ -253,6 +266,9 @@ prefill:
     MOONCAKE_TE_META_DATA_SERVER: P2PHANDSHAKE
     MOONCAKE_GLOBAL_SEGMENT_SIZE: "64gb"
     MC_MMAP_ARENA_POOL_SIZE: "4gb"
+    SGLANG_ENABLE_FAILED_SESSION_PROBE: "1"
+    SGLANG_MOONCAKE_SESSION_FAILURE_THRESHOLD: "3"
+    SGLANG_MOONCAKE_FAILED_SESSION_TTL_S: "300"
   args:
     # 0.85 leaves RCCL scratch after long-context GDR; 0.88 hit
     # "Failed to CUDA calloc" in sampler all_reduce (2026-09-08).

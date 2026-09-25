@@ -1,6 +1,6 @@
 # GLM-5.3 MI308X 2P2D Helm chart
 
-Live snapshot of `kube-system/sglang-1p1d` as of 2026-09-02 (chart 0.3.10). Two TP8 prefills and two TP8 decodes, with GDR PD, DSA tilelang + FlyDSL MQA, NEXTN, and Mooncake L3 HiCache. Serving uses `page_size=64`; Mooncake store sidecars and router `power_of_two` remain enabled. If the release still carries the DP8+EP8 decode-1 canary, apply `values-2tp8.yaml` to restore the two-TP8 topology.
+Live snapshot of `kube-system/sglang-1p1d` as of 2026-09-23. Two TP8 prefills and two TP8 decodes, with GDR PD, DSA tilelang + FlyDSL MQA, NEXTN, and Mooncake L3 HiCache. Serving uses `page_size=64`; Mooncake store sidecars and router `power_of_two` remain enabled.
 
 Use this chart to rebuild the **current** cluster from zero. Worker discovery is the live scheme: **hostNetwork + node host IPs** (not STS DNS). Prefill and decode all bind `:30000` / `:8998` because they sit on different nodes.
 
@@ -41,6 +41,23 @@ helm upgrade --install sglang-1p1d docker/rocm-mi308x-glm52-pd/chart \
 ```
 
 Do not commit the live API key. Do not `helm install` a second PD release. Do not set `--hicache-ratio 4` (OOM ~2TB host KV on TP8). Scale the router to 0 before a bounce, then back to 1 with `nodeName` pinned and `tolerations: [{operator: Exists}]` — GPU nodes are tainted; a hostNetwork pod without that toleration fails kubelet `NodePorts` and leaves zombie replicas.
+
+## Safe change procedure
+
+Worker StatefulSets render with `updateStrategy.type=OnDelete`. A Helm upgrade
+changes the STS template but does not restart a worker; the operator must drain
+that worker and delete exactly one pod. Never bounce both prefills or both
+decodes in the same window.
+
+Before every Helm change:
+
+1. Save live Helm values and live Deployment/StatefulSet JSON.
+2. Render or diff with the live API key. The chart rejects an empty or
+   placeholder key.
+3. Confirm the diff is limited to the intended fields.
+4. Keep the previous image tag and rollback command available.
+5. Check the peer worker's `token_usage < 0.55`, retract count, and preallocation
+   before deleting a worker pod.
 
 Each GPU node needs `/data/model/glm52-fp8` and `/data/aiter_configs/a8w8_blockscale_tuned_fmoe_glm5_1_cu80.csv` (cu_num=80 **and** decode tiles `expert=256,topk=8` for token 1..128; see `scripts/merge_decode_fmoe_256_8.py`). Prefill will try `/data/mooncake-patched/patch_evict_backup.py` (v2) and `patch_prefetch_log.py` and continue if they are missing.
 
@@ -93,10 +110,10 @@ A per-node master would partition L3 and make cross-P prefix sharing impossible.
 
 ## Images
 
-- Prefills / mooncake: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit`
-- Decode-0: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk`
-- Decode-1: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk` (same as decode-0 since 2026-09-02; the `v0831-dp8ep8-mtp-paged-flydsl-v4` DP8+EP8 canary image was reverted)
+- Prefill-0 / prefill-1: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0919c-src-cufix`
+- Decode-0: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0919c-src-cufix`
+- Decode-1: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0922-src-stream-abort-prod`
 - Router: `mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0827-pot-loads`
-- Rollback workers: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk`
+- Rollback workers: keep the tag that was running immediately before the change
 
 The current lineage keeps the FlyDSL gfx942 ragged/prefill MQA kernel, HIP event optimization, BF16 gate/indexer overlay, and decode MoE CSV. `SGLANG_DSA_HIP_DISABLE_PRESHUFFLE=0` keeps AITER preshuffle enabled, which is why serving remains on `page_size=64`. The TP8 canary enables the native paged FlyDSL kernel on that layout.
