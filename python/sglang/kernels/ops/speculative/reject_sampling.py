@@ -206,3 +206,246 @@ def chain_speculative_sampling_triton(
         VOCAB_SIZE=vocab_size,
         BLOCK_V=4096,
     )
+
+
+@triton.jit
+def _load_sparse_q_block(
+    CandidateIds,
+    QRows,
+    v_offsets,
+    stride_cid_b,
+    stride_cid_s,
+    stride_cid_k,
+    stride_q_b,
+    stride_q_s,
+    stride_q_k,
+    pid,
+    prob_row,
+    TOP_K: tl.constexpr,
+    BLOCK_V: tl.constexpr,
+):
+    q_values = tl.zeros([BLOCK_V], dtype=tl.float32)
+    cid_base = CandidateIds + (pid * stride_cid_b) + (prob_row * stride_cid_s)
+    q_base = QRows + (pid * stride_q_b) + (prob_row * stride_q_s)
+    for top_k_idx in range(TOP_K):
+        candidate_id = tl.load(cid_base + top_k_idx * stride_cid_k)
+        q_value = tl.load(q_base + top_k_idx * stride_q_k)
+        q_value = tl.where(q_value == q_value, q_value, 0.0)
+        q_values += tl.where(v_offsets == candidate_id, q_value, 0.0)
+    return q_values
+
+
+@triton.jit
+def speculative_sampling_sparse_kernel(
+    Predicts,
+    AcceptIndex,
+    AcceptTokenNum,
+    Candidates,
+    RetriveIndex,
+    UniformSamples,
+    UniformSamplesFinal,
+    TargetProbs,
+    DraftQValues,
+    CandidateIds,
+    QRows,
+    stride_cand_b,
+    stride_cand_s,
+    stride_idx_b,
+    stride_idx_s,
+    stride_uni_b,
+    stride_uni_s,
+    stride_tp_b,
+    stride_tp_s,
+    stride_tp_v,
+    stride_dq_b,
+    stride_dq_s,
+    stride_cid_b,
+    stride_cid_s,
+    stride_cid_k,
+    stride_q_b,
+    stride_q_s,
+    stride_q_k,
+    NUM_SLOTS: tl.constexpr,
+    VOCAB_SIZE: tl.constexpr,
+    BLOCK_V: tl.constexpr,
+    TOP_K: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    cur_prob_row = 0
+
+    cand_ptr_base = Candidates + pid * stride_cand_b
+    idx_ptr_base = RetriveIndex + pid * stride_idx_b
+    uni_ptr_base = UniformSamples + pid * stride_uni_b
+
+    root_global_idx = tl.load(idx_ptr_base + 0 * stride_idx_s)
+    tl.store(AcceptIndex + pid * stride_idx_b + 0 * stride_idx_s, root_global_idx)
+    last_accepted_global_idx = root_global_idx
+
+    num_accept = 0
+    step = 1
+    continue_verifying = 1
+
+    while (step < NUM_SLOTS) and (continue_verifying == 1):
+        draft_token = tl.load(cand_ptr_base + step * stride_cand_s)
+        p = tl.load(
+            TargetProbs
+            + (pid * stride_tp_b)
+            + (cur_prob_row * stride_tp_s)
+            + (draft_token * stride_tp_v)
+        )
+        q = tl.load(DraftQValues + (pid * stride_dq_b) + (cur_prob_row * stride_dq_s))
+        coin = tl.load(uni_ptr_base + (step - 1) * stride_uni_s)
+
+        if coin * q < p:
+            num_accept += 1
+            cur_prob_row = step
+            tl.store(Predicts + last_accepted_global_idx, draft_token)
+            curr_global_idx = tl.load(idx_ptr_base + step * stride_idx_s)
+            tl.store(
+                AcceptIndex + pid * stride_idx_b + num_accept * stride_idx_s,
+                curr_global_idx,
+            )
+            last_accepted_global_idx = curr_global_idx
+            step += 1
+        else:
+            continue_verifying = 0
+
+    tl.store(AcceptTokenNum + pid, num_accept)
+
+    all_drafts_accepted = continue_verifying
+    coin_final = tl.load(UniformSamplesFinal + pid)
+    norm_sum = 0.0
+    tp_base_ptr = TargetProbs + (pid * stride_tp_b) + (cur_prob_row * stride_tp_s)
+
+    for v_start in range(0, VOCAB_SIZE, BLOCK_V):
+        v_offsets = v_start + tl.arange(0, BLOCK_V)
+        mask = v_offsets < VOCAB_SIZE
+        p_val = tl.load(tp_base_ptr + v_offsets * stride_tp_v, mask=mask, other=0.0)
+
+        if all_drafts_accepted:
+            val = p_val
+        else:
+            q_val = _load_sparse_q_block(
+                CandidateIds,
+                QRows,
+                v_offsets,
+                stride_cid_b,
+                stride_cid_s,
+                stride_cid_k,
+                stride_q_b,
+                stride_q_s,
+                stride_q_k,
+                pid,
+                cur_prob_row,
+                TOP_K,
+                BLOCK_V,
+            )
+            diff = p_val - q_val
+            val = tl.where(diff > 0.0, diff, 0.0)
+
+        norm_sum += tl.sum(val)
+
+    target_u = coin_final * norm_sum
+    cum_sum = 0.0
+    final_token = VOCAB_SIZE - 1
+    found = 0
+
+    for v_start in range(0, VOCAB_SIZE, BLOCK_V):
+        if found == 0:
+            v_offsets = v_start + tl.arange(0, BLOCK_V)
+            mask = v_offsets < VOCAB_SIZE
+            p_val = tl.load(tp_base_ptr + v_offsets * stride_tp_v, mask=mask, other=0.0)
+
+            if all_drafts_accepted:
+                val = p_val
+            else:
+                q_val = _load_sparse_q_block(
+                    CandidateIds,
+                    QRows,
+                    v_offsets,
+                    stride_cid_b,
+                    stride_cid_s,
+                    stride_cid_k,
+                    stride_q_b,
+                    stride_q_s,
+                    stride_q_k,
+                    pid,
+                    cur_prob_row,
+                    TOP_K,
+                    BLOCK_V,
+                )
+                diff = p_val - q_val
+                val = tl.where(diff > 0.0, diff, 0.0)
+
+            block_cumsum = tl.cumsum(val, axis=0)
+            total_cumsum = cum_sum + block_cumsum
+            candidates_mask = total_cumsum > target_u
+            has_match = tl.max(candidates_mask, axis=0)
+
+            if has_match:
+                match_idx = tl.argmax(candidates_mask.to(tl.int32), axis=0)
+                final_token = v_start + match_idx
+                found = 1
+
+            cum_sum += tl.sum(val)
+
+    tl.store(Predicts + last_accepted_global_idx, final_token)
+
+
+def chain_speculative_sampling_sparse_triton(
+    predicts,
+    accept_index,
+    accept_token_num,
+    candidates,
+    retrive_index,
+    retrive_next_token,
+    retrive_next_sibling,
+    uniform_samples,
+    uniform_samples_for_final_sampling,
+    target_probs,
+    draft_q_values,
+    candidate_ids,
+    q_rows,
+    threshold_single,
+    threshold_acc,
+    deterministic,
+):
+    batch_size, num_slots = candidates.shape
+    vocab_size = target_probs.shape[-1]
+    top_k = candidate_ids.shape[-1]
+
+    grid = (batch_size,)
+    speculative_sampling_sparse_kernel[grid](
+        predicts,
+        accept_index,
+        accept_token_num,
+        candidates,
+        retrive_index,
+        uniform_samples,
+        uniform_samples_for_final_sampling,
+        target_probs,
+        draft_q_values,
+        candidate_ids,
+        q_rows,
+        candidates.stride(0),
+        candidates.stride(1),
+        retrive_index.stride(0),
+        retrive_index.stride(1),
+        uniform_samples.stride(0),
+        uniform_samples.stride(1),
+        target_probs.stride(0),
+        target_probs.stride(1),
+        target_probs.stride(2),
+        draft_q_values.stride(0),
+        draft_q_values.stride(1),
+        candidate_ids.stride(0),
+        candidate_ids.stride(1),
+        candidate_ids.stride(2),
+        q_rows.stride(0),
+        q_rows.stride(1),
+        q_rows.stride(2),
+        NUM_SLOTS=num_slots,
+        VOCAB_SIZE=vocab_size,
+        BLOCK_V=4096,
+        TOP_K=top_k,
+    )

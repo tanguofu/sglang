@@ -143,6 +143,7 @@ router:
 ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
 
 gateway:
+  httpRouteEnabled: true
   hostname: glm52-pd-1p1d.jmpti.woa.com
   httprouteName: glm52-pd-1p1d
   parentNamespace: ti-cloud

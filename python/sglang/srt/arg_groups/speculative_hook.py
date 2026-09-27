@@ -146,10 +146,18 @@ def handle_speculative_decoding(server_args: ServerArgs) -> None:
 
 def _handle_dflash(server_args: ServerArgs) -> None:
     from sglang.srt.arg_groups.overrides import resolved_view
+    from sglang.srt.utils import is_hip
 
-    if not (server_args.device.startswith("cuda") or server_args.device == "npu"):
+    hip_enabled = is_hip() and os.getenv("SGLANG_ENABLE_DFLASH_HIP") == "1"
+    device = server_args.device or ("rocm" if is_hip() else "")
+    if not (
+        device.startswith("cuda")
+        or device == "npu"
+        or hip_enabled
+    ):
         raise ValueError(
-            "DFLASH speculative decoding only supports CUDA and NPU devices."
+            "DFLASH speculative decoding only supports CUDA and NPU devices; "
+            "set SGLANG_ENABLE_DFLASH_HIP=1 to enable the experimental HIP path."
         )
 
     if resolved_view(server_args).enable_dp_attention:

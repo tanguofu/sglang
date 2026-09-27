@@ -1,0 +1,184 @@
+# DFlash2 GLM-5.3-Flash true 1P1D canary overlay.
+#
+# Apply on top of chart/values.yaml. Do not install this over the live
+# sglang-1p1d release; create a separate release and switch traffic only after
+# the validation gates pass.
+#
+#   helm upgrade --install sglang-dflash2-1p1d \
+#     docker/rocm-mi308x-glm52-pd/chart \
+#     -n default \
+#     -f docker/rocm-mi308x-glm52-pd/chart/values.yaml \
+#     -f docker/rocm-mi308x-glm52-pd/chart/values-dflash2-1p1d.yaml \
+#     --set apiKey="$SGLANG_API_KEY" \
+#     --force-conflicts
+
+nameOverride: sglang-dflash2-1p1d
+
+probes:
+  initialDelaySeconds: 300
+
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm53-308x:glm53-flash-ts4-dflash2-ck-20260927i
+routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0827-pot-loads
+imagePullPolicy: Always
+imagePullSecrets:
+  - tencent-registry
+
+modelName: glm-5.3-flash
+modelPath: /data/model/glm53-flash
+
+prefills:
+  - nodeName: node-21.234.170.159
+    ip: 21.234.170.159
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm53-308x:glm53-flash-ts4-dflash2-ck-20260927i
+
+decodes:
+  - nodeName: node-21.234.171.87
+    ip: 21.234.171.87
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm53-308x:glm53-flash-ts4-dflash2-ck-20260927i
+
+ports:
+  prefill:
+    http: 31000
+    bootstrap: 8998
+  decode:
+    http: 32000
+    bootstrap: 8998
+  router:
+    http: 30001
+    metrics: 19096
+  mooncake:
+    rpc: 50051
+    metrics: 9003
+
+hicache:
+  enabled: false
+
+aiterBf16Gemm:
+  enabled: false
+
+mooncake:
+  master:
+    nodeName: node-21.234.170.159
+    ip: 21.234.170.159
+
+router:
+  nodeName: node-21.234.170.159
+  hostNetwork: true
+  port: 30001
+  metricsPort: 19096
+  decodes: []
+  prefillPolicy: cache_aware
+  decodePolicy: round_robin
+  balanceAbsThreshold: 0
+  balanceRelThreshold: 1.5
+  cbTimeoutSecs: 300
+
+gateway:
+  httpRouteEnabled: false
+  # The parent Gateway must already expose sectionName:
+  # https-glm53-flash-dflash2-1p1d. If it does not, create that section
+  # first or omit the rendered HTTPRoute during the first canary install.
+  hostname: glm53-flash-dflash2-1p1d.jmpti.woa.com
+  httprouteName: glm53-flash-dflash2-1p1d
+
+workerEnv:
+  AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/aiter_a8w8_blockscale_merged.csv
+  AITER_CONFIG_GEMM_BF16: /data/aiter_configs/aiter_bf16_tuned_merged.csv
+  AITER_USE_SYSTEM_TRITON: "1"
+  HIP_FORCE_DEV_KERNARG: "0"
+  HIP_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7"
+  HSA_ENABLE_SDMA: "0"
+  MC_DISABLE_HIP_TRANSPORT: "1"
+  MC_GID_INDEX: "3"
+  MOONCAKE_PROTOCOL: rdma
+  NCCL_CUMEM_ENABLE: "0"
+  NCCL_DEBUG: WARN
+  NCCL_IB_GID_INDEX: "3"
+  NCCL_MIN_NCHANNELS: "112"
+  NCCL_NVLS_ENABLE: "0"
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:False
+  PYTORCH_ROCM_ARCH: gfx942
+  ROCM_QUICK_REDUCE_QUANTIZATION: INT8
+  SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN: "1"
+  SGLANG_DISABLE_CUDNN_CHECK: "1"
+  SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT: "600"
+  SGLANG_DISAGGREGATION_WAITING_TIMEOUT: "1800"
+  SGLANG_ENABLE_DFLASH_HIP: "1"
+  SGLANG_ENABLE_HEALTH_ENDPOINT_GENERATION: "0"
+  SGLANG_HEALTH_CHECK_TIMEOUT: "60"
+  SGLANG_INT4_WEIGHT: "0"
+  SGLANG_KPOOL_DEBUG: "0"
+  SGLANG_MHC_USE_SPLITK: "1"
+  SGLANG_MOE_PADDING: "1"
+  SGLANG_MOONCAKE_SEND_AUX_TCP: "1"
+  SGLANG_PD_HOST_STAGING: "0"
+  SGLANG_ROCM_DISABLE_LINEARQUANT: "0"
+  SGLANG_ROCM_FUSED_DECODE_MLA: "1"
+  SGLANG_ROCM_USE_CK_GEMM_GFX942: "1"
+  SGLANG_SET_CPU_AFFINITY: "1"
+  SGLANG_USE_AITER: "1"
+  SGLANG_USE_ROCM700A: "1"
+
+commonArgs:
+  - --model-path /data/model/glm53-flash
+  - --model-impl sglang
+  - --served-model-name glm-5.3-flash
+  - --tp-size 8
+  - --pp-size 1
+  - --trust-remote-code
+  - --host 0.0.0.0
+  - --context-length 1048576
+  - --tool-call-parser glm47
+  - --reasoning-parser glm45
+  - --preferred-sampling-params '{"max_new_tokens":163840}'
+  - --attention-backend dsa
+  - --dsa-prefill-backend tilelang
+  - --dsa-decode-backend tilelang
+  - --enable-aiter-allreduce-fusion
+  - --enable-fused-qk-norm-rope
+  - --schedule-conservativeness 0.8
+  - --kv-cache-dtype fp8_e4m3
+  - --max-running-requests 32
+  - --disaggregation-transfer-backend mooncake
+  - --num-reserved-decode-tokens 1024
+  - --enable-metrics
+  - --log-level info
+  - --speculative-algorithm DFLASH
+  - --speculative-draft-model-path /data/model/glm53-flash-dflash2
+  - --speculative-num-steps 1
+  - --speculative-eagle-topk 1
+  - --speculative-num-draft-tokens 8
+  - --speculative-dflash-block-size 8
+
+prefill:
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm53-308x:glm53-flash-ts4-dflash2-ck-20260927i
+  bigNodeBackup: false
+  zombieFreeFix: false
+  args:
+    - --mem-fraction-static 0.70
+    - --chunked-prefill-size 16384
+    - --prefill-max-requests 32
+    - --max-prefill-tokens 32768
+    - --cuda-graph-backend-decode disabled
+    - --cuda-graph-backend-prefill disabled
+    - --disaggregation-mode prefill
+    - --watchdog-timeout 7200
+    - --skip-server-warmup
+
+decode:
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm53-308x:glm53-flash-ts4-dflash2-ck-20260927i
+  extraEnv:
+    SGLANG_PD_HOST_STAGING: "1"
+  args:
+    - --mem-fraction-static 0.70
+    - --enable-linear-replayssm-spec
+    - --cuda-graph-backend-decode disabled
+    - --cuda-graph-backend-prefill disabled
+    - --cuda-graph-bs-decode 1 2 4 8 16 24 32 48
+    - --cuda-graph-max-bs-decode 48
+    - --load-balance-method follow_bootstrap_room
+    - --num-continuous-decode-steps 4
+    - --stream-interval 2
+    - --disaggregation-mode decode
+    - --watchdog-timeout 1800
+    - --skip-server-warmup

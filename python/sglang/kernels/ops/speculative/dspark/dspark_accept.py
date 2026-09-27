@@ -9,6 +9,7 @@ import triton.language as tl
 
 from sglang.kernels.ops.speculative.dspark.dispatch import inputs_on_cuda
 from sglang.kernels.ops.speculative.reject_sampling import (
+    chain_speculative_sampling_sparse_triton,
     chain_speculative_sampling_triton,
 )
 from sglang.srt.speculative.dflash_info_v2 import DFlashDraftInputV2
@@ -81,12 +82,15 @@ def _accept_sampling_core(
     *,
     candidates: torch.Tensor,
     target_logits: torch.Tensor,
-    draft_probs: torch.Tensor,
+    draft_probs: Optional[torch.Tensor] = None,
     sampling_info,
     draft_input: DFlashDraftInputV2,
     gamma: int,
     verify_num_draft_tokens: int,
     cutoff_verify_lens: Optional[torch.Tensor],
+    draft_q_values: Optional[torch.Tensor] = None,
+    candidate_ids: Optional[torch.Tensor] = None,
+    q_rows: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     bs = candidates.shape[0]
     device = candidates.device
@@ -119,22 +123,44 @@ def _accept_sampling_core(
     )
     uniform_samples = torch.rand((bs, gamma), dtype=torch.float32, device=device)
     uniform_samples_final = torch.rand((bs,), dtype=torch.float32, device=device)
-    chain_speculative_sampling_triton(
-        predicts=predicts,
-        accept_index=accept_index,
-        accept_token_num=accept_token_num,
-        candidates=candidates,
-        retrive_index=retrieve_index,
-        retrive_next_token=retrieve_next_token,
-        retrive_next_sibling=retrieve_next_sibling,
-        uniform_samples=uniform_samples,
-        uniform_samples_for_final_sampling=uniform_samples_final,
-        target_probs=target_probs,
-        draft_probs=draft_probs,
-        threshold_single=1.0,
-        threshold_acc=1.0,
-        deterministic=True,
-    )
+    if draft_q_values is not None:
+        chain_speculative_sampling_sparse_triton(
+            predicts=predicts,
+            accept_index=accept_index,
+            accept_token_num=accept_token_num,
+            candidates=candidates,
+            retrive_index=retrieve_index,
+            retrive_next_token=retrieve_next_token,
+            retrive_next_sibling=retrieve_next_sibling,
+            uniform_samples=uniform_samples,
+            uniform_samples_for_final_sampling=uniform_samples_final,
+            target_probs=target_probs,
+            draft_q_values=draft_q_values,
+            candidate_ids=candidate_ids,
+            q_rows=q_rows,
+            threshold_single=1.0,
+            threshold_acc=1.0,
+            deterministic=True,
+        )
+    else:
+        if draft_probs is None:
+            raise ValueError("either draft_probs or sparse draft tensors are required")
+        chain_speculative_sampling_triton(
+            predicts=predicts,
+            accept_index=accept_index,
+            accept_token_num=accept_token_num,
+            candidates=candidates,
+            retrive_index=retrieve_index,
+            retrive_next_token=retrieve_next_token,
+            retrive_next_sibling=retrieve_next_sibling,
+            uniform_samples=uniform_samples,
+            uniform_samples_for_final_sampling=uniform_samples_final,
+            target_probs=target_probs,
+            draft_probs=draft_probs,
+            threshold_single=1.0,
+            threshold_acc=1.0,
+            deterministic=True,
+        )
     correct_len = accept_token_num
     if cutoff_verify_lens is not None:
         correct_len, cap_trim_lens = CapCorrectLen.execute(
@@ -233,6 +259,70 @@ def accept_sampling_triton(
         gamma=gamma,
         verify_num_draft_tokens=verify_num_draft_tokens,
         cutoff_verify_lens=cutoff_verify_lens,
+    )
+    bonus = gather_two_level_bonus_triton(
+        accept_index=accept_index, predicts=predicts, correct_len=correct_len
+    )
+    return correct_len, bonus, cap_trim_lens
+
+
+def accept_sampling_sparse(
+    *,
+    candidates: torch.Tensor,
+    target_logits: torch.Tensor,
+    draft_q_values: torch.Tensor,
+    candidate_ids: torch.Tensor,
+    q_rows: torch.Tensor,
+    sampling_info,
+    draft_input: DFlashDraftInputV2,
+    gamma: int,
+    verify_num_draft_tokens: int,
+    cutoff_verify_lens: Optional[torch.Tensor] = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if candidate_ids.shape != q_rows.shape:
+        raise ValueError("candidate_ids and q_rows shapes must match")
+    if candidate_ids.ndim != 3 or candidate_ids.shape[1] != gamma:
+        raise ValueError("candidate_ids must have shape [batch, gamma, top_k]")
+    if draft_q_values.shape != candidate_ids.shape[:2]:
+        raise ValueError("draft_q_values must have shape [batch, gamma]")
+
+    if not inputs_on_cuda(
+        candidates,
+        target_logits,
+        draft_q_values,
+        candidate_ids,
+        q_rows,
+    ):
+        bs = candidates.shape[0]
+        vocab_size = int(target_logits.shape[-1])
+        draft_probs = torch.zeros(
+            (bs, gamma, vocab_size),
+            dtype=torch.float32,
+            device=target_logits.device,
+        )
+        draft_probs.scatter_(-1, candidate_ids, q_rows.float())
+        return accept_sampling(
+            candidates=candidates,
+            target_logits=target_logits,
+            draft_probs=draft_probs,
+            sampling_info=sampling_info,
+            draft_input=draft_input,
+            gamma=gamma,
+            verify_num_draft_tokens=verify_num_draft_tokens,
+            cutoff_verify_lens=cutoff_verify_lens,
+        )
+
+    correct_len, cap_trim_lens, accept_index, predicts = _accept_sampling_core(
+        candidates=candidates,
+        target_logits=target_logits,
+        sampling_info=sampling_info,
+        draft_input=draft_input,
+        gamma=gamma,
+        verify_num_draft_tokens=verify_num_draft_tokens,
+        cutoff_verify_lens=cutoff_verify_lens,
+        draft_q_values=draft_q_values,
+        candidate_ids=candidate_ids,
+        q_rows=q_rows,
     )
     bonus = gather_two_level_bonus_triton(
         accept_index=accept_index, predicts=predicts, correct_len=correct_len

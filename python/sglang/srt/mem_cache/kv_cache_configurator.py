@@ -10,7 +10,6 @@ import torch
 
 from sglang.srt.configs.hybrid_arch import (
     hybrid_gdn_config,
-    kimi_linear_config,
     mambaish_config,
 )
 from sglang.srt.configs.model_config import (
@@ -83,6 +82,12 @@ from sglang.srt.utils.common import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_kda_replayssm_model(model_config: ModelConfig) -> bool:
+    config = mambaish_config(model_config)
+    cache_params = getattr(config, "mamba2_cache_params", None)
+    return cache_params is not None and cache_params.is_kda
 
 _is_hip = is_hip()
 
@@ -731,7 +736,7 @@ class KVCacheConfigurator:
                 get_exec().mamba.enable_linear_replayssm_spec
                 and (
                     self.hybrid_gdn_config is not None
-                    or kimi_linear_config(self.model_config) is not None
+                    or _is_kda_replayssm_model(self.model_config)
                 )
             ),
         )
@@ -772,7 +777,7 @@ class KVCacheConfigurator:
         if (
             get_exec().mamba.enable_linear_replayssm_spec
             and _algo in ("DSPARK", "DFLASH")
-            and kimi_linear_config(self.model_config) is None
+            and not _is_kda_replayssm_model(self.model_config)
         ):
             raise ValueError(
                 "--enable-linear-replayssm-spec with DSPARK/DFLASH requires a KDA "
@@ -810,7 +815,7 @@ class KVCacheConfigurator:
                 get_exec().mamba.enable_linear_replayssm_spec
                 and (
                     self.hybrid_gdn_config is not None
-                    or kimi_linear_config(self.model_config) is not None
+                    or _is_kda_replayssm_model(self.model_config)
                 )
             ),
         )
@@ -1868,12 +1873,12 @@ class KVCacheConfigurator:
         # the solve must charge it too or num_slots is over-provisioned.
         replayssm_active = get_exec().mamba.enable_linear_replayssm_spec and (
             self.hybrid_gdn_config is not None
-            or kimi_linear_config(self.model_config) is not None
+            or _is_kda_replayssm_model(self.model_config)
         )
         if replayssm_active:
             # GDN sizes the fold window to the draft maximum; the KDA ring
             # stays --linear-replayssm-cache-len long (mirrors MambaPool).
-            if kimi_linear_config(self.model_config) is not None:
+            if _is_kda_replayssm_model(self.model_config):
                 record_len = get_exec().mamba.linear_replayssm_cache_len
             elif server_args.max_speculative_num_draft_tokens is not None:
                 record_len = server_args.max_speculative_num_draft_tokens

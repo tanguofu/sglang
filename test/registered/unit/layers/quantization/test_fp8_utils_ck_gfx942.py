@@ -1,4 +1,6 @@
+import sys
 import unittest
+from contextlib import contextmanager
 from unittest import mock
 
 from sglang.srt.layers.quantization import fp8_utils
@@ -6,6 +8,22 @@ from sglang.srt.layers.quantization.fp8_utils import _ck_csv_has_row
 from sglang.test.ci.ci_register import register_cpu_ci
 
 register_cpu_ci(est_time=2, suite="base-a-test-cpu")
+
+
+@contextmanager
+def patch_ck_lookup(get_config):
+    jit_core = mock.MagicMock()
+    gemm_op = mock.MagicMock()
+    gemm_op.get_CKGEMM_config = get_config
+    modules = {
+        "aiter": mock.MagicMock(),
+        "aiter.jit": mock.MagicMock(),
+        "aiter.jit.core": jit_core,
+        "aiter.ops": mock.MagicMock(),
+        "aiter.ops.gemm_op_a8w8": gemm_op,
+    }
+    with mock.patch.dict(sys.modules, modules):
+        yield jit_core.AITER_CONFIGS, gemm_op.get_CKGEMM_config
 
 
 class TestCkCsvHasRow(unittest.TestCase):
@@ -21,33 +39,23 @@ class TestCkCsvHasRow(unittest.TestCase):
         def boom(*args, **kwargs):
             raise RuntimeError("csv unreadable")
 
-        fake_mod = mock.MagicMock()
-        fake_mod.get_CKGEMM_config = boom
         with mock.patch.object(fp8_utils, "_use_aiter_ck_gfx942", True):
-            with mock.patch.dict(
-                "sys.modules", {"aiter": fake_mod, "aiter.ops": fake_mod}
-            ):
+            with patch_ck_lookup(boom):
                 _ck_csv_has_row.cache_clear()
                 self.assertFalse(_ck_csv_has_row(4, 4096, 2048))
 
     def test_helper_true_on_csv_hit(self):
         fake_config = {"kernelId": 8, "splitK": 3, "us": 8.15}
-        fake_mod = mock.MagicMock()
-        fake_mod.get_CKGEMM_config = mock.MagicMock(return_value=fake_config)
+        get_config = mock.MagicMock(return_value=fake_config)
         with mock.patch.object(fp8_utils, "_use_aiter_ck_gfx942", True):
-            with mock.patch.dict(
-                "sys.modules", {"aiter": fake_mod, "aiter.ops": fake_mod}
-            ):
+            with patch_ck_lookup(get_config):
                 _ck_csv_has_row.cache_clear()
                 self.assertTrue(_ck_csv_has_row(4, 4096, 2048))
 
     def test_helper_false_on_csv_miss(self):
-        fake_mod = mock.MagicMock()
-        fake_mod.get_CKGEMM_config = mock.MagicMock(return_value=None)
+        get_config = mock.MagicMock(return_value=None)
         with mock.patch.object(fp8_utils, "_use_aiter_ck_gfx942", True):
-            with mock.patch.dict(
-                "sys.modules", {"aiter": fake_mod, "aiter.ops": fake_mod}
-            ):
+            with patch_ck_lookup(get_config):
                 _ck_csv_has_row.cache_clear()
                 # indexer wk (N=128) has no CSV rows -> stays triton.
                 self.assertFalse(_ck_csv_has_row(4, 128, 6144))
