@@ -199,6 +199,8 @@ class KVArgsRegisterInfo:
 
 
 class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
+    _HOST_TO_GPU_COPY_CHUNK_BYTES = 256 * 1024 * 1024
+
     AUX_DATA_HEADER = b"AUX_DATA"
 
     def __init__(
@@ -288,6 +290,45 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
     def init_engine(self):
         self.engine = get_mooncake_transfer_engine()
 
+    def _host_staging_enabled(self) -> bool:
+        return (
+            os.environ.get("SGLANG_PD_HOST_STAGING") == "1"
+            and self.disaggregation_mode == DisaggregationMode.DECODE
+        )
+
+    def _allocate_host_staging_buffers(self) -> None:
+        import ctypes
+
+        hip_lib = ctypes.CDLL("libamdhip64.so")
+        self._host_staging_buffers = []
+        self._host_staging_ptrs = []
+        self._host_staging_lens = []
+        self._gpu_ptrs = []
+
+        for ptr, length in zip(
+            self.kv_args.kv_data_ptrs, self.kv_args.kv_data_lens
+        ):
+            host_ptr = ctypes.c_void_p()
+            if length > 0:
+                ret = hip_lib.hipMallocHost(
+                    ctypes.byref(host_ptr), ctypes.c_size_t(length)
+                )
+                if ret != 0:
+                    raise RuntimeError(
+                        f"hipMallocHost failed ret={ret} len={length}"
+                    )
+            self._host_staging_buffers.append(host_ptr)
+            self._host_staging_ptrs.append(host_ptr.value)
+            self._host_staging_lens.append(length)
+            self._gpu_ptrs.append(ptr)
+
+        self.kv_args.kv_data_ptrs = list(self._host_staging_ptrs)
+        logger.info(
+            "Host staging: allocated %d host buffers for KV data (total %d bytes)",
+            len(self._host_staging_ptrs),
+            sum(self._host_staging_lens),
+        )
+
     def _registerable_regions(self) -> List[Tuple[int, int]]:
         """(ptr, len) regions to (de)register, exact duplicates removed.
 
@@ -313,6 +354,8 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         return regions
 
     def register_buffer_to_engine(self):
+        if self._host_staging_enabled():
+            self._allocate_host_staging_buffers()
         regions = self._registerable_regions()
         if regions:
             ptrs, lens = zip(*regions)
@@ -324,9 +367,94 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             ptrs, _ = zip(*regions)
             self.engine.batch_deregister(list(ptrs))
 
+        if getattr(self, "_host_staging_buffers", None):
+            import ctypes
+
+            hip_lib = ctypes.CDLL("libamdhip64.so")
+            for host_ptr in self._host_staging_buffers:
+                if host_ptr.value:
+                    hip_lib.hipHostFree(host_ptr)
+            self._host_staging_buffers = []
+            self._host_staging_ptrs = []
+            self._host_staging_lens = []
+            self._gpu_ptrs = []
+
         if hasattr(self, "connection_pool"):
             with self.connection_lock:
                 self.connection_pool.clear()
+
+    def _copy_host_to_gpu(self, kv_indices=None) -> None:
+        """Copy only the transferred KV pages from pinned host to GPU."""
+        if not getattr(self, "_host_staging_ptrs", None):
+            return
+        if kv_indices is None or len(kv_indices) == 0:
+            logger.warning(
+                "_copy_host_to_gpu: skip copy — no kv_indices "
+                "(refusing full-pool hipMemcpy)"
+            )
+            return
+
+        import ctypes
+
+        hip_lib = ctypes.CDLL("libamdhip64.so")
+        gpu_id = getattr(self.kv_args, "gpu_id", 0)
+        hip_lib.hipSetDevice(ctypes.c_int(gpu_id))
+
+        kv_item_lens = self.kv_args.kv_item_lens
+        indices = sorted({int(index) for index in kv_indices})
+        groups = []
+        start = indices[0]
+        end = indices[0] + 1
+        for index in indices[1:]:
+            if index == end:
+                end += 1
+            else:
+                groups.append((start, end - start))
+                start = index
+                end = index + 1
+        groups.append((start, end - start))
+
+        total_copied = 0
+        for buffer_index, (host_ptr, gpu_ptr) in enumerate(
+            zip(self._host_staging_ptrs, self._gpu_ptrs)
+        ):
+            if buffer_index >= len(kv_item_lens):
+                continue
+            item_len = kv_item_lens[buffer_index]
+            if item_len == 0:
+                continue
+            for start_index, count in groups:
+                offset = start_index * item_len
+                length = count * item_len
+                copied = 0
+                while copied < length:
+                    chunk = min(
+                        self._HOST_TO_GPU_COPY_CHUNK_BYTES,
+                        length - copied,
+                    )
+                    ret = hip_lib.hipMemcpy(
+                        ctypes.c_void_p(int(gpu_ptr) + offset + copied),
+                        ctypes.c_void_p(int(host_ptr) + offset + copied),
+                        ctypes.c_size_t(chunk),
+                        ctypes.c_int(1),
+                    )
+                    if ret != 0:
+                        raise RuntimeError(
+                            f"hipMemcpy failed ret={ret} buffer={buffer_index} "
+                            f"offset={offset + copied} length={chunk} "
+                            f"device={gpu_id}"
+                        )
+                    copied += chunk
+                total_copied += length
+
+        logger.info(
+            "_copy_host_to_gpu: selective copy %d bytes for %d pages "
+            "(%d groups) device=%d",
+            total_copied,
+            len(indices),
+            len(groups),
+            gpu_id,
+        )
 
     # ------------------------------------------------------------------
     # Staging buffer methods (all delegate to staging_handler.py)
@@ -2526,6 +2654,7 @@ class MooncakeKVReceiver(MooncakeFailureExceptionMixin, CommonKVReceiver):
         decode_prefix_len: Optional[int] = None,
         device_kv_indices: Optional[npt.NDArray[np.int32]] = None,
     ):
+        self._dst_kv_indices = kv_indices
         if self.bootstrap_infos is None:
             self.kv_mgr.record_failure(
                 self.bootstrap_room,
@@ -2587,6 +2716,10 @@ class MooncakeKVReceiver(MooncakeFailureExceptionMixin, CommonKVReceiver):
 
         status = self.kv_mgr.check_status(self.bootstrap_room)
         if status in (KVPoll.Success, KVPoll.Failed):
+            if status == KVPoll.Success and self.kv_mgr._host_staging_enabled():
+                self.kv_mgr._copy_host_to_gpu(
+                    getattr(self, "_dst_kv_indices", None)
+                )
             self.conclude_state = status
         elif status == KVPoll.WaitingForInput:
             timeout_result = self._check_waiting_timeout()

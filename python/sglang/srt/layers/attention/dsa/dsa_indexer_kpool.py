@@ -49,6 +49,11 @@ from sglang.srt.model_executor.forward_context import (
 from sglang.srt.model_executor.runner import get_is_capture_mode
 from sglang.srt.runtime_context import get_parallel, get_server_args
 
+
+def _target_verify_backend_supported() -> bool:
+    return is_cuda() or is_hip()
+
+
 if TYPE_CHECKING:
     from sglang.srt.mem_cache.memory_pool import DSATokenToKVPool
 
@@ -1542,7 +1547,9 @@ class IndexerKPool(MultiPlatformOp):
         enable_dual_stream: bool,
         return_indices: bool = True,
     ) -> Optional[torch.Tensor]:
-        assert is_cuda(), "DSA kpool target_verify is CUDA-only"
+        assert _target_verify_backend_supported(), (
+            "DSA kpool target_verify requires CUDA or ROCm"
+        )
         plan = metadata.attn_metadata.kpool_write_plan
         assert plan is not None, "DSA kpool target_verify requires kpool_write_plan"
         num_draft_tokens = plan.num_draft_tokens

@@ -820,6 +820,7 @@ class TritonAttnBackend(AttentionBackend):
                             bs,
                             self.device,
                             self.token_to_kv_pool,
+                            seq_lens_cpu=forward_batch.seq_lens_cpu,
                         )
                     )
                     window_num_kv_splits = torch.empty(
@@ -909,6 +910,7 @@ class TritonAttnBackend(AttentionBackend):
                     bs,
                     self.device,
                     self.token_to_kv_pool,
+                    seq_lens_cpu=forward_batch.seq_lens_cpu,
                 )
 
             custom_mask = spec_info.custom_mask
@@ -964,6 +966,7 @@ class TritonAttnBackend(AttentionBackend):
                     bs,
                     self.device,
                     self.token_to_kv_pool,
+                    seq_lens_cpu=forward_batch.extend_prefix_lens_cpu,
                 )
 
             qo_indptr = self.qo_indptr
@@ -2136,6 +2139,7 @@ def update_sliding_window_buffer(
     token_to_kv_pool=None,
     window_kv_indices=None,
     skip_full_to_swa_translation=False,
+    seq_lens_cpu=None,
 ):
     """Fill window KV buffers for sliding-window attention.
 
@@ -2157,9 +2161,17 @@ def update_sliding_window_buffer(
     )
     window_kv_indptr[1 : bs + 1] = torch.cumsum(window_kv_lens, dim=0)
     window_kv_indptr = window_kv_indptr[: bs + 1]
+    window_kv_indices_len = None
+    if seq_lens_cpu is not None:
+        window_kv_indices_len = sum(
+            min(int(seq_len), sliding_window_size)
+            for seq_len in seq_lens_cpu[:bs].tolist()
+        )
     if window_kv_indices is None:
+        if window_kv_indices_len is None:
+            window_kv_indices_len = int(window_kv_indptr[-1].item())
         window_kv_indices = torch.empty(
-            window_kv_indptr[-1], dtype=torch.int64, device=device
+            window_kv_indices_len, dtype=torch.int64, device=device
         )
     window_kv_start_idx = seq_lens - window_kv_lens
     create_flashinfer_kv_indices_triton[(bs,)](
@@ -2174,7 +2186,11 @@ def update_sliding_window_buffer(
     if not skip_full_to_swa_translation and hasattr(
         token_to_kv_pool, "translate_loc_from_full_to_swa"
     ):
-        kv_last_index = window_kv_indptr[-1]
+        kv_last_index = (
+            window_kv_indices_len
+            if window_kv_indices_len is not None
+            else int(window_kv_indptr[-1].item())
+        )
         window_kv_indices[:kv_last_index] = (
             token_to_kv_pool.translate_loc_from_full_to_swa(
                 window_kv_indices[:kv_last_index]

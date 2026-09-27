@@ -1,0 +1,4 @@
+FROM mirrors.tencent.com/ti-platform/sglang-glm53-308x:glm53-flash-ts4-dflash2-ck-20260927p
+
+COPY python/sglang/srt/layers/attention/triton_backend.py \
+     /sgl-workspace/sglang/python/sglang/srt/layers/attention/triton_backend.py

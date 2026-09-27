@@ -17,6 +17,13 @@ register_cpu_ci(est_time=1, suite="base-a-test-cpu")
 
 
 class TestKPoolMqaBackend(CustomTestCase):
+    def test_target_verify_accepts_rocm_backend(self):
+        with (
+            patch.object(dsa_indexer_kpool, "is_cuda", return_value=False),
+            patch.object(dsa_indexer_kpool, "is_hip", return_value=True),
+        ):
+            self.assertTrue(dsa_indexer_kpool._target_verify_backend_supported())
+
     def test_cuda_tilelang_selector_reads_heads_from_unexpanded_query(self):
         with (
             patch.object(dsa_indexer_kpool, "is_cuda", return_value=True),

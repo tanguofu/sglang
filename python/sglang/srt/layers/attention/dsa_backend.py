@@ -1361,7 +1361,12 @@ class DeepseekSparseAttnBackend(
             forward_batch.extend_seq_lens_cpu = extend_seq_lens_cpu
 
             seqlens_expanded = seqlens_expand_triton(
-                torch.tensor(extend_seq_lens_cpu, dtype=torch.int32, device=device),
+                torch.full(
+                    (batch_size,),
+                    self.speculative_num_draft_tokens,
+                    dtype=torch.int32,
+                    device=device,
+                ),
                 cache_seqlens_int32,
                 self.speculative_num_draft_tokens * batch_size,
                 self.speculative_num_draft_tokens,
