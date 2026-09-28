@@ -722,6 +722,8 @@ class Envs:
     SGLANG_MOONCAKE_SEND_AUX_TCP = EnvBool(False)
     SGLANG_ENABLE_FAILED_SESSION_PROBE = EnvBool(False)
     SGLANG_FAILED_SESSION_PROBE_INTERVAL_S = EnvFloat(30.0)
+    SGLANG_MOONCAKE_SESSION_FAILURE_THRESHOLD = EnvInt(3)
+    SGLANG_MOONCAKE_FAILED_SESSION_TTL_S = EnvFloat(300.0)
 
     # ===================================================================
     # Mooncake store

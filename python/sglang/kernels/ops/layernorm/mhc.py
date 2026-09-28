@@ -16,7 +16,7 @@ from sglang.srt.environ import envs
 from sglang.srt.layers.attention.dsa.utils import is_dsa_prefill_cp_round_robin_split
 from sglang.srt.layers.dp_attention import is_allocation_symmetric
 from sglang.srt.layers.utils.common import strict_contiguous
-from sglang.srt.utils import is_gfx95_supported, is_hip
+from sglang.srt.utils import is_gfx942_supported, is_gfx95_supported, is_hip
 from sglang.srt.utils.common import get_bool_env_var
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def _use_aiter_mhc() -> bool:
     return (
         not _AITER_MHC_RUNTIME_DISABLED
         and is_hip()
-        and is_gfx95_supported()
+        and (is_gfx95_supported() or is_gfx942_supported())
         and get_bool_env_var("SGLANG_USE_AITER")
     )
 
@@ -47,7 +47,7 @@ def _try_aiter_mhc_pre(
     sinkhorn_repeat: int,
     norm_weight: torch.Tensor | None,
     norm_eps: float | None,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor] | None:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, bool] | None:
     global _AITER_MHC_RUNTIME_DISABLED, _AITER_MHC_IMPORT_WARNED
     global _AITER_MHC_ACTIVE_LOGGED
 
@@ -60,10 +60,12 @@ def _try_aiter_mhc_pre(
         _AITER_MHC_RUNTIME_DISABLED = True
         return None
 
+    norm_fused = False
     kwargs = {}
-    if norm_weight is not None:
+    if norm_weight is not None and not is_gfx942_supported():
         kwargs["norm_weight"] = norm_weight
         kwargs["norm_eps"] = norm_eps if norm_eps is not None else rms_eps
+        norm_fused = True
 
     try:
         result = aiter_mhc_pre(
@@ -86,7 +88,7 @@ def _try_aiter_mhc_pre(
     if not _AITER_MHC_ACTIVE_LOGGED:
         logger.info("Using AITER gfx950 mHC pre/post kernels")
         _AITER_MHC_ACTIVE_LOGGED = True
-    return result
+    return (*result, norm_fused)
 
 
 def _try_aiter_mhc_post(
@@ -1782,8 +1784,8 @@ def _mhc_pre_dispatch(
             norm_eps=norm_eps,
         )
         if result is not None:
-            post_mix, comb_mix, layer_input = result
-            return post_mix, comb_mix, layer_input, norm_weight is not None
+            post_mix, comb_mix, layer_input, norm_fused = result
+            return post_mix, comb_mix, layer_input, norm_fused
 
     if not _use_tilelang_mhc_pre():
         post_mix, comb_mix, layer_input = _mhc_pre_torch(

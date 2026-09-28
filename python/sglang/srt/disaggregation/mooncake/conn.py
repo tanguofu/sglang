@@ -151,6 +151,7 @@ class KVArgsRegisterInfo:
     dcp_token_item_lens: Optional[List[int]] = None
     staging_base_ptr: int = 0
     staging_total_size: int = 0
+    dst_state_host_staging: bool = False
 
     @classmethod
     def from_zmq(cls, msg: List[bytes]):
@@ -195,6 +196,7 @@ class KVArgsRegisterInfo:
             dst_dcp_rank=(
                 int(msg[17].decode("ascii")) if len(msg) > 17 and msg[17] != b"" else 0
             ),
+            dst_state_host_staging=len(msg) > 18 and msg[18] == b"1",
         )
 
 
@@ -219,6 +221,11 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             self.start_prefill_thread()
             self.session_failures = defaultdict(int)
             self.failed_sessions = set()
+            self.failed_session_times = {}
+            self.session_failure_threshold = max(
+                1, envs.SGLANG_MOONCAKE_SESSION_FAILURE_THRESHOLD.get()
+            )
+            self.failed_session_ttl_s = envs.SGLANG_MOONCAKE_FAILED_SESSION_TTL_S.get()
             # Per-room count of chunks not yet transferred; teardown waits for
             # zero so a deferred chunk is not dropped by an early conclude.
             self._staging_outstanding = defaultdict(int)
@@ -304,6 +311,10 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         self._host_staging_ptrs = []
         self._host_staging_lens = []
         self._gpu_ptrs = []
+        self._host_state_staging_buffers = []
+        self._host_state_staging_ptrs = []
+        self._host_state_staging_lens = []
+        self._gpu_state_ptrs = []
 
         for ptr, length in zip(
             self.kv_args.kv_data_ptrs, self.kv_args.kv_data_lens
@@ -322,11 +333,53 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             self._host_staging_lens.append(length)
             self._gpu_ptrs.append(ptr)
 
+        state_data_ptrs = self.kv_args.state_data_ptrs or []
+        state_data_lens = self.kv_args.state_data_lens or []
+        if len(state_data_ptrs) != len(state_data_lens):
+            raise RuntimeError(
+                "Host staging state component mismatch: "
+                f"{len(state_data_ptrs)} pointer components, "
+                f"{len(state_data_lens)} length components"
+            )
+
+        for ptrs, lengths in zip(state_data_ptrs, state_data_lens):
+            if len(ptrs) != len(lengths):
+                raise RuntimeError(
+                    "Host staging state pointer/length mismatch: "
+                    f"{len(ptrs)} pointers, {len(lengths)} lengths"
+                )
+
+            host_row = []
+            host_ptr_row = []
+            for ptr, length in zip(ptrs, lengths):
+                host_ptr = ctypes.c_void_p()
+                if length > 0:
+                    ret = hip_lib.hipMallocHost(
+                        ctypes.byref(host_ptr), ctypes.c_size_t(length)
+                    )
+                    if ret != 0:
+                        raise RuntimeError(
+                            f"hipMallocHost failed ret={ret} len={length}"
+                        )
+                host_row.append(host_ptr)
+                host_ptr_row.append(host_ptr.value)
+
+            self._host_state_staging_buffers.append(host_row)
+            self._host_state_staging_ptrs.append(host_ptr_row)
+            self._host_state_staging_lens.append(list(lengths))
+            self._gpu_state_ptrs.append(list(ptrs))
+
         self.kv_args.kv_data_ptrs = list(self._host_staging_ptrs)
+        self.kv_args.state_data_ptrs = [
+            list(row) for row in self._host_state_staging_ptrs
+        ]
         logger.info(
-            "Host staging: allocated %d host buffers for KV data (total %d bytes)",
+            "Host staging: allocated %d KV buffers (%d bytes) and %d state "
+            "buffers (%d bytes)",
             len(self._host_staging_ptrs),
             sum(self._host_staging_lens),
+            sum(len(row) for row in self._host_state_staging_ptrs),
+            sum(sum(row) for row in self._host_state_staging_lens),
         )
 
     def _registerable_regions(self) -> List[Tuple[int, int]]:
@@ -378,6 +431,14 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             self._host_staging_ptrs = []
             self._host_staging_lens = []
             self._gpu_ptrs = []
+            for host_row in self._host_state_staging_buffers:
+                for host_ptr in host_row:
+                    if host_ptr.value:
+                        hip_lib.hipHostFree(host_ptr)
+            self._host_state_staging_buffers = []
+            self._host_state_staging_ptrs = []
+            self._host_state_staging_lens = []
+            self._gpu_state_ptrs = []
 
         if hasattr(self, "connection_pool"):
             with self.connection_lock:
@@ -453,6 +514,96 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             total_copied,
             len(indices),
             len(groups),
+            gpu_id,
+        )
+
+    def _copy_state_host_to_gpu(self, state_indices=None) -> None:
+        """Copy only transferred state slots from pinned host to GPU."""
+        host_state_ptrs = getattr(self, "_host_state_staging_ptrs", None)
+        if not host_state_ptrs:
+            return
+        if state_indices is None or len(state_indices) == 0:
+            logger.warning(
+                "_copy_state_host_to_gpu: skip copy — no state_indices "
+                "(refusing full-pool hipMemcpy)"
+            )
+            return
+
+        import ctypes
+
+        hip_lib = ctypes.CDLL("libamdhip64.so")
+        gpu_id = getattr(self.kv_args, "gpu_id", 0)
+        hip_lib.hipSetDevice(ctypes.c_int(gpu_id))
+
+        state_item_lens = self.kv_args.state_item_lens or []
+        total_copied = 0
+        total_indices = 0
+
+        for component_index, component_indices in enumerate(state_indices):
+            if component_indices is None or len(component_indices) == 0:
+                continue
+            if component_index >= len(host_state_ptrs):
+                break
+            if component_index >= len(state_item_lens):
+                break
+
+            indices = sorted({int(index) for index in component_indices})
+            groups = []
+            start = indices[0]
+            end = indices[0] + 1
+            for index in indices[1:]:
+                if index == end:
+                    end += 1
+                else:
+                    groups.append((start, end - start))
+                    start = index
+                    end = index + 1
+            groups.append((start, end - start))
+            total_indices += len(indices)
+
+            for buffer_index, (host_ptr, gpu_ptr) in enumerate(
+                zip(
+                    host_state_ptrs[component_index],
+                    self._gpu_state_ptrs[component_index],
+                )
+            ):
+                item_lens = state_item_lens[component_index]
+                if buffer_index >= len(item_lens):
+                    continue
+                item_len = item_lens[buffer_index]
+                if item_len == 0:
+                    continue
+
+                for start_index, count in groups:
+                    offset = start_index * item_len
+                    length = count * item_len
+                    copied = 0
+                    while copied < length:
+                        chunk = min(
+                            self._HOST_TO_GPU_COPY_CHUNK_BYTES,
+                            length - copied,
+                        )
+                        ret = hip_lib.hipMemcpy(
+                            ctypes.c_void_p(int(gpu_ptr) + offset + copied),
+                            ctypes.c_void_p(int(host_ptr) + offset + copied),
+                            ctypes.c_size_t(chunk),
+                            ctypes.c_int(1),
+                        )
+                        if ret != 0:
+                            raise RuntimeError(
+                                f"hipMemcpy failed ret={ret} state_buffer="
+                                f"{component_index}/{buffer_index} "
+                                f"offset={offset + copied} length={chunk} "
+                                f"device={gpu_id}"
+                            )
+                        copied += chunk
+                    total_copied += length
+
+        logger.info(
+            "_copy_state_host_to_gpu: selective copy %d bytes for %d state "
+            "slots device=%d",
+            total_copied,
+            total_indices,
             gpu_id,
         )
 
@@ -1357,6 +1508,19 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
         executor: concurrent.futures.ThreadPoolExecutor,
         target_rank_registration_info: Optional[KVArgsRegisterInfo] = None,
     ):
+        if (
+            target_rank_registration_info is not None
+            and target_rank_registration_info.dst_state_host_staging
+            and self.attn_tp_size != target_rank_registration_info.dst_attn_tp_size
+        ):
+            raise RuntimeError(
+                "PD disagg: decode state host staging requires equal attention "
+                f"TP sizes (prefill={self.attn_tp_size}, decode="
+                f"{target_rank_registration_info.dst_attn_tp_size}). Unequal TP "
+                "would leave host state slots partially initialized before the "
+                "whole-slot host-to-GPU copy."
+            )
+
         rc = 0
         state_types = getattr(self.kv_args, "state_types", [])
         for i, st in enumerate(state_types):
@@ -1833,7 +1997,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                     if not req.is_dummy:
                         # Early exit if the request has failed
                         with self.session_lock:
-                            if req.mooncake_session_id in self.failed_sessions:
+                            if self._is_session_blacklisted(req.mooncake_session_id):
                                 self.record_failure(
                                     kv_chunk.room,
                                     f"Decode instance could be dead, remote mooncake session {req.mooncake_session_id} is not alive",
@@ -1973,13 +2137,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                             )
                         if ret != 0:
                             with self.session_lock:
-                                self.session_failures[req.mooncake_session_id] += 1
-                                # Failures should never happen if the session is not dead, if the session fails once, mark it as failed
-                                if self.session_failures[req.mooncake_session_id] >= 1:
-                                    self.failed_sessions.add(req.mooncake_session_id)
-                                    logger.error(
-                                        f"Session {req.mooncake_session_id} failed."
-                                    )
+                                self._record_session_failure(req.mooncake_session_id)
                             self.record_failure(
                                 kv_chunk.room,
                                 f"Failed to send kv chunk of {kv_chunk.room} to "
@@ -2005,10 +2163,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                                 )
                                 if state_rc != 0:
                                     with self.session_lock:
-                                        self.session_failures[
-                                            req.mooncake_session_id
-                                        ] += 1
-                                        self.failed_sessions.add(
+                                        self._record_session_failure(
                                             req.mooncake_session_id
                                         )
                                     self.record_failure(
@@ -2216,10 +2371,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
                         )
                     self.decode_kv_args_table[mooncake_session_id] = decode_kv_args
                     with self.session_lock:
-                        if mooncake_session_id in self.failed_sessions:
-                            self.failed_sessions.remove(mooncake_session_id)
-                        if mooncake_session_id in self.session_failures:
-                            del self.session_failures[mooncake_session_id]
+                        self._clear_session_failure(mooncake_session_id)
                     logger.debug(
                         f"Register KVArgs from {mooncake_session_id} successfully"
                     )
@@ -2385,6 +2537,49 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             if bootstrap_room not in self.request_status:
                 self.addr_to_rooms_tracker[bootstrap_addr].discard(bootstrap_room)
 
+    def _is_session_blacklisted(self, session_id: str) -> bool:
+        if session_id not in self.failed_sessions:
+            return False
+        if self.failed_session_ttl_s <= 0:
+            return True
+
+        failed_at = self.failed_session_times.get(session_id)
+        if failed_at is None:
+            self.failed_session_times[session_id] = time.monotonic()
+            return True
+        if time.monotonic() - failed_at < self.failed_session_ttl_s:
+            return True
+
+        self.failed_sessions.discard(session_id)
+        self.failed_session_times.pop(session_id, None)
+        self.session_failures.pop(session_id, None)
+        logger.warning(
+            "Session %s blacklist expired after %.1fs; retrying transfer",
+            session_id,
+            self.failed_session_ttl_s,
+        )
+        return False
+
+    def _record_session_failure(self, session_id: str) -> bool:
+        self.session_failures[session_id] += 1
+        if self.session_failures[session_id] < self.session_failure_threshold:
+            return False
+
+        self.failed_sessions.add(session_id)
+        self.failed_session_times[session_id] = time.monotonic()
+        logger.error(
+            "Session %s failed %d times; blacklisted for %.1fs",
+            session_id,
+            self.session_failures[session_id],
+            self.failed_session_ttl_s,
+        )
+        return True
+
+    def _clear_session_failure(self, session_id: str) -> None:
+        self.failed_sessions.discard(session_id)
+        self.failed_session_times.pop(session_id, None)
+        self.session_failures.pop(session_id, None)
+
     def _run_one_probe_pass(self) -> None:
         with self.session_lock:
             snapshot = list(self.failed_sessions)
@@ -2401,8 +2596,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             if rc == 0:
                 with self.session_lock:
                     was_blacklisted = session_id in self.failed_sessions
-                    self.failed_sessions.discard(session_id)
-                    self.session_failures.pop(session_id, None)
+                    self._clear_session_failure(session_id)
                 if was_blacklisted:
                     logger.info(
                         "Session %s recovered via probe; un-blacklisted",
@@ -2600,6 +2794,9 @@ class MooncakeKVReceiver(MooncakeFailureExceptionMixin, CommonKVReceiver):
             dst_kv_item_len = str(kv_item_len).encode("ascii")
             dst_dcp_size = str(self.kv_mgr.dcp_size).encode("ascii")
             dst_dcp_rank = str(self.kv_mgr.dcp_rank).encode("ascii")
+            dst_state_host_staging = (
+                b"1" if self.kv_mgr._host_staging_enabled() else b"0"
+            )
             if (
                 self.kv_mgr.enable_staging
                 and self.kv_mgr._staging_ctx.allocator is not None
@@ -2634,6 +2831,7 @@ class MooncakeKVReceiver(MooncakeFailureExceptionMixin, CommonKVReceiver):
                             staging_total_size_str,
                             dst_dcp_size,
                             dst_dcp_rank,
+                            dst_state_host_staging,
                         ]
                     )
             except zmq.ZMQError:
@@ -2655,6 +2853,7 @@ class MooncakeKVReceiver(MooncakeFailureExceptionMixin, CommonKVReceiver):
         device_kv_indices: Optional[npt.NDArray[np.int32]] = None,
     ):
         self._dst_kv_indices = kv_indices
+        self._dst_state_indices = state_indices if state_indices is not None else []
         if self.bootstrap_infos is None:
             self.kv_mgr.record_failure(
                 self.bootstrap_room,
@@ -2719,6 +2918,9 @@ class MooncakeKVReceiver(MooncakeFailureExceptionMixin, CommonKVReceiver):
             if status == KVPoll.Success and self.kv_mgr._host_staging_enabled():
                 self.kv_mgr._copy_host_to_gpu(
                     getattr(self, "_dst_kv_indices", None)
+                )
+                self.kv_mgr._copy_state_host_to_gpu(
+                    getattr(self, "_dst_state_indices", None)
                 )
             self.conclude_state = status
         elif status == KVPoll.WaitingForInput:
