@@ -443,6 +443,7 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
 
     def _copy_host_to_gpu(self, kv_indices=None) -> None:
         """Copy only the transferred KV pages from pinned host to GPU."""
+        # FIX(prefill-d2h-host-staging): never fall back to a full-pool copy.
         if not getattr(self, "_host_staging_ptrs", None):
             return
         if kv_indices is None or len(kv_indices) == 0:
