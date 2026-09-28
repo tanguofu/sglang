@@ -109,6 +109,19 @@ logger = logging.getLogger(__name__)
 _DSA_TRITON_PREFILL = get_bool_env_var("SGLANG_DSA_TRITON_PREFILL")
 _IS_GFX95 = is_gfx95_supported()
 
+
+def _reshape_split_mla_q(
+    q: torch.Tensor, q_rope: torch.Tensor, layer
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
+    q_rope = q_rope.reshape(
+        q_nope.shape[0],
+        layer.tp_q_head_num,
+        layer.head_dim - layer.v_head_dim,
+    )
+    return q_nope, q_rope
+
+
 if is_cuda():
     import deep_gemm
 
@@ -3138,10 +3151,7 @@ class DeepseekSparseAttnBackend(
         kv_cache = self.token_to_kv_pool.get_key_buffer(layer.layer_id)
 
         if q_rope is not None:
-            q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
-            q_rope = q_rope.reshape(
-                -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
-            )
+            q_nope, q_rope = _reshape_split_mla_q(q, q_rope, layer)
             # Caller passed split q_nope / q_rope; concat below only if the
             # chosen impl wants q_all. HIP tilelang can skip that concat when
             # the caller already handed concatenated q (q_rope=None).
@@ -3453,10 +3463,7 @@ class DeepseekSparseAttnBackend(
         # Do absorbed multi-latent attention
         kv_cache = self.token_to_kv_pool.get_key_buffer(layer.layer_id)
         if q_rope is not None:
-            q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
-            q_rope = q_rope.reshape(
-                -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
-            )
+            q_nope, q_rope = _reshape_split_mla_q(q, q_rope, layer)
             # Caller passed split q_nope / q_rope; we'll need to concat below if
             # the chosen impl wants q_all.
             q_all = None
