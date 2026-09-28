@@ -256,7 +256,7 @@ logger = logging.getLogger(__name__)
 _moe_quant_once_logged = False
 
 _enable_pcg_dsv2_dual_stream = (
-    _is_cuda and envs.SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM.get()
+    (_is_cuda or _is_hip) and envs.SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM.get()
 )
 
 
@@ -466,6 +466,13 @@ class DeepseekV2MLP(nn.Module):
         return x
 
 
+def _is_glm_moe_dsa_config(config) -> bool:
+    arch = getattr(config, "architectures", None) or []
+    return any(
+        name in ("GlmMoeDsaForCausalLM", "GlmMoeDsaForCausalLMNextN") for name in arch
+    )
+
+
 class MoEGate(nn.Module):
     def __init__(
         self,
@@ -487,7 +494,10 @@ class MoEGate(nn.Module):
 
         if config.topk_method == "noaux_tc" and not is_hash_moe:
             correction_bias_dtype = torch.float32
-            if quant_config is not None:
+            # GLM-5.2/5.3 bias sits at an offset where its spread is only a few
+            # bf16 ULPs wide, so bf16 collapses it and reorders top-k routing.
+            # HF stores it fp32.
+            if quant_config is not None and not _is_glm_moe_dsa_config(config):
                 if _use_aiter and quant_config.get_name() in (
                     "fp8",
                     "compressed_tensors",

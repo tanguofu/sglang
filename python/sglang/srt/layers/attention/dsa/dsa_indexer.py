@@ -39,9 +39,13 @@ from sglang.srt.model_executor.runner_backend_utils.breakable_cuda_graph.context
 from sglang.srt.model_executor.runner_backend_utils.tc_piecewise_cuda_graph import (
     is_in_tc_piecewise_cuda_graph,
 )
+from sglang.srt.layers.attention.dsa.dsa_projection_fusion import (
+    dsa_indexer_projection_fusion_enabled,
+)
 from sglang.srt.runtime_context import (
     get_device,
     get_exec,
+    get_lora,
     get_parallel,
     get_schedule,
 )
@@ -53,6 +57,7 @@ from sglang.srt.utils import (
     ceil_align,
     get_bool_env_var,
     is_cuda,
+    is_gfx942_supported,
     is_gfx95_supported,
     is_hip,
     is_npu,
@@ -61,6 +66,8 @@ from sglang.srt.utils import (
 from sglang.srt.utils.custom_op import register_custom_op
 
 logger = logging.getLogger(__name__)
+_MQA_I32_CHUNK_LOGGED = False
+_MQA_LOGITS_I32_MAX = 2147483647
 
 _is_cuda = is_cuda()
 _is_hip = is_hip()
@@ -239,6 +246,28 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
             and not envs.SGLANG_DISABLE_DSA_INDEXER_FUSION.get()
             and not is_neox_style
         )
+        # Projection fusion is independent of CUDA's fused rotary/cache path.
+        # HIP gfx942 stays opt-in and keeps the legacy Hadamard/cache contract.
+        enable_rocm_proj = envs.SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION.get()
+        enable_lora = False
+        if _is_hip and enable_rocm_proj:
+            enable_lora = bool(get_lora().enable_lora)
+        self.use_dsa_indexer_projection_fusion = dsa_indexer_projection_fusion_enabled(
+            cuda_full_fusion=self.use_dsa_indexer_fusion,
+            is_hip=_is_hip,
+            gfx942=is_gfx942_supported(),
+            enable_rocm_proj=enable_rocm_proj,
+            disable_fusion=envs.SGLANG_DISABLE_DSA_INDEXER_FUSION.get(),
+            is_neox_style=is_neox_style,
+            enable_lora=enable_lora,
+            quant_config=quant_config,
+        )
+        if (
+            self.use_dsa_indexer_projection_fusion
+            and not self.use_dsa_indexer_fusion
+            and layer_id == 0
+        ):
+            logger.info("ROCm DSA indexer projection fusion enabled (gfx942)")
         self.alt_stream = alt_stream
         self.dsa_enable_prefill_cp = is_dsa_enable_prefill_cp()
         if self.dsa_enable_prefill_cp:
@@ -261,7 +290,7 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
             prefix=add_prefix("wq_b", prefix),
         )
 
-        if self.use_dsa_indexer_fusion:
+        if self.use_dsa_indexer_projection_fusion:
             self.wk_weights_proj = ReplicatedLinear(
                 self.hidden_size,
                 self.head_dim + self.n_heads,
@@ -378,6 +407,16 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
         weights = weights_raw * self.n_heads**-0.5
         return weights.unsqueeze(-1) * q_scale * self.softmax_scale
 
+    @property
+    def _k_norm_weight_f32(self) -> torch.Tensor:
+        w = self.k_norm.weight
+        return w.float() if w.dtype != torch.float32 else w
+
+    @property
+    def _k_norm_bias_f32(self) -> torch.Tensor:
+        b = self.k_norm.bias
+        return b.float() if b is not None and b.dtype != torch.float32 else b
+
     def _fused_k_weights(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         kw, _ = self.wk_weights_proj(x)
         return kw.split([self.head_dim, self.n_heads], dim=-1)
@@ -478,7 +517,8 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
                     dim=-1,
                 )
             with torch.cuda.stream(self.alt_stream):
-                if self.use_dsa_indexer_fusion:
+                # TODO we should also put DeepGEMM half SM here?
+                if self.use_dsa_indexer_projection_fusion:
                     key, weights_raw = self._fused_k_weights(x)
                 else:
                     key, _ = self.wk(x)
@@ -497,7 +537,7 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
             q_rope, _ = torch.split(
                 query, [self.rope_head_dim, self.head_dim - self.rope_head_dim], dim=-1
             )
-            if self.use_dsa_indexer_fusion:
+            if self.use_dsa_indexer_projection_fusion:
                 key, weights_raw = self._fused_k_weights(x)
             else:
                 key, _ = self.wk(x)
@@ -566,8 +606,10 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
         x: torch.Tensor,
         positions: torch.Tensor,
     ):
-        # Non-fusion path only; self.wk does not exist when fusion is on.
-        key, _ = self.wk(x)
+        if self.use_dsa_indexer_projection_fusion:
+            key, _ = self._fused_k_weights(x)
+        else:
+            key, _ = self.wk(x)
         key = self.k_norm(key)
         k_rope, _ = torch.split(
             key, [self.rope_head_dim, self.head_dim - self.rope_head_dim], dim=-1
@@ -602,17 +644,22 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
             pool.invalidate_index_buffer_for_layer(layer_id)
         if hasattr(pool, "_is_layer_owned") and not pool._is_layer_owned(layer_id):
             return
+        # FIX(fused-store-length-guard): long-context safety on HIP
+        _max_ctx = 0
+        if forward_batch.seq_lens_cpu is not None and len(forward_batch.seq_lens_cpu) > 0:
+            _max_ctx = int(forward_batch.seq_lens_cpu.max().item())
         if (
             not _is_fp8_fnuz
             and out_cache_loc is not None
+            and _max_ctx <= 4096
             and can_use_dsa_fused_store(torch.bfloat16, out_cache_loc.dtype, page_size)
         ):
             fused_k_indexer_norm_rope_store(
                 key_raw,
                 pool.get_index_k_with_scale_buffer(layer_id=layer_id),
                 out_cache_loc,
-                self.k_norm.weight,
-                self.k_norm.bias,
+                self._k_norm_weight_f32,
+                self._k_norm_bias_f32,
                 self.k_norm.variance_epsilon,
                 self._indexer_cos_sin_cache,
                 positions,
@@ -623,8 +670,8 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
         # Fallback: separate K kernel + store kernel.
         key = fused_k_indexer_norm_rope(
             key_raw,
-            self.k_norm.weight,
-            self.k_norm.bias,
+            self._k_norm_weight_f32,
+            self._k_norm_bias_f32,
             self.k_norm.variance_epsilon,
             self._indexer_cos_sin_cache,
             positions,
@@ -1051,21 +1098,51 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
         self._mqa_logits_budget_bytes[device_index] = budget_bytes
         return budget_bytes
 
+    @staticmethod
+    def _mqa_i32_safe_max_rows(num_k: int) -> int:
+        # FlyDSL/Triton index logits with i32. The store offset is
+        # (row * num_k + col) * sizeof(fp32), so a 16k-token prefill chunk
+        # against k>~32k wraps i32 and corrupts DSA top-k (PD 64K→96K cliff).
+        if num_k <= 0:
+            return 1
+        return max(
+            1,
+            _MQA_LOGITS_I32_MAX // (num_k * Indexer._MQA_LOGITS_BYTES_PER_ELEM),
+        )
+
     def _should_chunk_mqa_logits(
         self, num_q: int, num_k: int, device_index: int
     ) -> Tuple[bool, int]:
         """
         Detect whether we need to chunk the MQA logits computation to avoid OOM
-        Return: (need_chunk, logits_budget_bytes)
+        or i32 index wrap. Return: (need_chunk, logits_budget_bytes)
         """
-        # Quick static check for normal batches
-        if num_q * num_k < self._MQA_LOGITS_STATIC_SKIP_ELEMS:
+        i32_safe_rows = self._mqa_i32_safe_max_rows(num_k)
+        i32_overflow = num_q > i32_safe_rows
+
+        # Quick static check for normal batches that also stay i32-safe.
+        if (not i32_overflow) and num_q * num_k < self._MQA_LOGITS_STATIC_SKIP_ELEMS:
             return False, 0
 
-        logits_bytes = num_q * num_k * self._MQA_LOGITS_BYTES_PER_ELEM
         logits_budget_bytes = self._get_mqa_logits_budget_bytes(device_index)
+        i32_safe_bytes = i32_safe_rows * max(num_k, 1) * self._MQA_LOGITS_BYTES_PER_ELEM
+        if logits_budget_bytes == 0:
+            logits_budget_bytes = i32_safe_bytes
+        else:
+            logits_budget_bytes = min(logits_budget_bytes, i32_safe_bytes)
 
-        need_chunk = logits_bytes > logits_budget_bytes
+        logits_bytes = num_q * num_k * self._MQA_LOGITS_BYTES_PER_ELEM
+        need_chunk = i32_overflow or logits_bytes > logits_budget_bytes
+        if i32_overflow:
+            global _MQA_I32_CHUNK_LOGGED
+            if not _MQA_I32_CHUNK_LOGGED:
+                logger.info(
+                    "FlyDSL MQA i32-safe chunk (prefill) q=%s k=%s max_rows=%s",
+                    num_q,
+                    num_k,
+                    i32_safe_rows,
+                )
+                _MQA_I32_CHUNK_LOGGED = True
         return need_chunk, logits_budget_bytes
 
     def _get_topk_ragged(
@@ -1159,7 +1236,13 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
             assert q_fp8[:q_offset].shape[0] != 0
             with self._with_real_sm_count():
                 if _is_hip:
-                    from aiter.ops.triton.fp8_mqa_logits import fp8_mqa_logits
+                    # WAVE1: FlyDSL gfx942 MQA logits (Triton fallback)
+                    try:
+                        from aiter.ops.flydsl.kernels.fp8_mqa_logits import (
+                            flydsl_fp8_mqa_logits as fp8_mqa_logits,
+                        )
+                    except ImportError:
+                        from aiter.ops.triton.fp8_mqa_logits import fp8_mqa_logits
 
                     kv, scale = kv_fp8
                     # Match the CUDA deep_gemm path (clean_logits=False): the topk
@@ -1197,7 +1280,7 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
 
         bytes_per_row = k_offset * self._MQA_LOGITS_BYTES_PER_ELEM
         max_rows = max(1, int(logits_budget_bytes // max(bytes_per_row, 1)))
-        max_rows = min(max_rows, q_offset)
+        max_rows = min(max_rows, q_offset, self._mqa_i32_safe_max_rows(k_offset))
 
         global_topk_offset = metadata.attn_metadata.topk_indices_offset
         cu_seqlens_q_full = None
@@ -1218,7 +1301,13 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
 
             with self._with_real_sm_count():
                 if _is_hip:
-                    from aiter.ops.triton.fp8_mqa_logits import fp8_mqa_logits
+                    # WAVE1: FlyDSL gfx942 MQA logits (Triton fallback)
+                    try:
+                        from aiter.ops.flydsl.kernels.fp8_mqa_logits import (
+                            flydsl_fp8_mqa_logits as fp8_mqa_logits,
+                        )
+                    except ImportError:
+                        from aiter.ops.triton.fp8_mqa_logits import fp8_mqa_logits
 
                     kv, scale = kv_fp8
                     # clean_logits=False: topk transform handles masking (see above)
@@ -1500,6 +1589,7 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
                     ke,
                     clean_logits=False,
                 )
+
             actual_seq_q = torch.tensor([actual_seq_q], dtype=torch.int32).to(
                 device="cuda", non_blocking=True
             )
@@ -1682,7 +1772,7 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
         # wrapper owns base+delta and no LoRA kernel runs under torch.compile.
         # Fusion folds weights_proj into wk_weights_proj, so weights_proj is
         # absent then; short-circuit before touching it.
-        weights_proj_lora = not self.use_dsa_indexer_fusion and getattr(
+        weights_proj_lora = not self.use_dsa_indexer_projection_fusion and getattr(
             self.weights_proj, "set_lora", False
         )
 
@@ -1735,7 +1825,7 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
         elif enable_dual_stream and forward_batch.forward_mode.is_decode_or_idle():
             current_stream = torch.cuda.current_stream()
             self.alt_stream.wait_stream(current_stream)
-            if not self.use_dsa_indexer_fusion:
+            if not self.use_dsa_indexer_projection_fusion:
                 if weights_proj_lora:
                     weights = self.weights_proj(x)[0].float() * self.n_heads**-0.5
                 else:
@@ -1752,7 +1842,7 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
                     act_quant=act_quant,
                 )
             current_stream.wait_stream(self.alt_stream)
-            if self.use_dsa_indexer_fusion:
+            if self.use_dsa_indexer_projection_fusion:
                 weights = self._scale_head_gates(weights_raw, q_scale)
             else:
                 weights = self._apply_q_scale_and_softmax_scale(weights, q_scale)
@@ -1842,6 +1932,8 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
                         self.softmax_scale,
                         q_scale,
                     )
+                elif self.use_dsa_indexer_projection_fusion:
+                    weights = self._scale_head_gates(weights_raw, q_scale)
                 else:
                     if weights_proj_lora:
                         raise RuntimeError(GRAPH_WEIGHTS_PROJ_LORA_ERROR)
@@ -1852,7 +1944,7 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
                         self.softmax_scale,
                         q_scale,
                     )
-            elif self.use_dsa_indexer_fusion:
+            elif self.use_dsa_indexer_projection_fusion:
                 weights = self._scale_head_gates(weights_raw, q_scale)
             elif weights_proj_lora:
                 weights = self.weights_proj(x_for_gate)[0].float() * self.n_heads**-0.5
@@ -1885,6 +1977,11 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
                 or forward_batch.forward_mode.is_target_verify()
                 or forward_batch.forward_mode.is_draft_extend_v2()
             ):
+                # FIX(breakable-target-verify): metadata None guard
+                if metadata is None:
+                    metadata = get_attn_backend().get_indexer_metadata(layer_id, forward_batch)
+                    if metadata is None:
+                        return None
                 topk_result = self._get_topk_paged(
                     forward_batch, layer_id, q_fp8, weights, metadata
                 )

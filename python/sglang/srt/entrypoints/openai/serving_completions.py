@@ -213,9 +213,10 @@ class OpenAIServingCompletion(OpenAIServingBase):
                 yield chunk
 
         return StreamingResponse(
-            prepend_first_chunk(),
+            self.tokenizer_manager.wrap_stream_with_abort(
+                adapted_request, prepend_first_chunk()
+            ),
             media_type="text/event-stream",
-            background=self.tokenizer_manager.create_abort_task(adapted_request),
         )
 
     async def _generate_completion_stream(

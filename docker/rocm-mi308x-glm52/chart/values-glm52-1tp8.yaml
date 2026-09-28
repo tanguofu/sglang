@@ -1,0 +1,149 @@
+# SGLang GLM-5.2 single-node TP8 on MI308X (gfx942)
+# Aligns with wiki v17 recommended config (https://iwiki.woa.com/p/4025410437)
+# with context_length reduced to 512K to save KV cache, and
+# hicache_write_policy set to write_through_selective.
+#
+# Node: node-21.234.170.32 (prod-1, ZW bare-metal)
+# Domain: glm52-1tp8.jmpti.woa.com
+
+# ---------------------------------------------------------------------------
+# Image — breakable (amd64, built via docker buildx)
+# Enables prefill CUDA graph with EAGLE by bypassing the tc_piecewise
+# disable in model_runner.py:2716. 6 patches baked into image:
+#   dsa_indexer.py: FP8->bf16, aiter tuple extract, FIX(breakable-target-verify)
+#   dsa/utils.py: is_cuda() or is_hip() on is_graph_dsa_split_op_surface
+#   radix_attention.py: MHA companion swap disabled
+# Expected: prefill speed 5-10x improvement (eager ~700-1400 tok/s -> CG ~5000-8000+ tok/s)
+# ---------------------------------------------------------------------------
+image: YOUR_REGISTRY/your-project/sglang-glm52-308x
+tag: breakable-v0.5.15
+
+# ---------------------------------------------------------------------------
+# Deployment
+# ---------------------------------------------------------------------------
+replicas: 1
+nodeName: node-21.234.170.32
+
+# ---------------------------------------------------------------------------
+# Resources — single node, 8x MI308X 192GB
+# ---------------------------------------------------------------------------
+resources:
+  requests:
+    cpu: 320
+    memory: 1900Gi
+    amd.com/gpu: 8
+  limits:
+    amd.com/gpu: 8
+
+# ---------------------------------------------------------------------------
+# Tolerations for prod dedicated nodes
+# ---------------------------------------------------------------------------
+tolerations:
+  - effect: NoSchedule
+    key: dedicated
+    operator: Equal
+    value: glm52-prod
+  - effect: NoSchedule
+    key: node.cvm.com/ptl-unsupported
+    operator: Equal
+    value: ""
+
+# ---------------------------------------------------------------------------
+# SGLang server parameters — wiki v17 recommended
+# ---------------------------------------------------------------------------
+sglang:
+  tpSize: 8
+  ppSize: 1
+  # Reduced from 1M to 512K to save KV cache memory
+  contextLength: "524288"
+  numaNode: "0 0 0 0 1 1 1 1"
+  # 0.88 (wiki v17 recommended — increased from 0.80)
+  memFractionStatic: 0.88
+  kvCacheDtype: fp8_e4m3
+  # Optimization: 32768→16384, smaller chunks reduce memory pressure and
+  # allow better interleaving of prefill/decode under concurrency
+  chunkedPrefillSize: 16384
+  # Wiki v17: 32 (was 48 in override)
+  maxRunningRequests: 32
+  # Optimization: 32→16, smaller prefill batch improves concurrent TTFT
+  prefillMaxRequests: 16
+  maxPrefillTokens: 32768
+  # Optimization: 0.5→0.7, reduce retraction overhead under concurrency
+  scheduleConservativeness: 0.7
+  cudaGraphBsDecode: "1 2 3 4 5 6 7 8 9 10 12 16"
+  cudaGraphMaxBsDecode: 16
+  # Wiki v17: "1 2 3 4 8 16 32" — added bs=1,2,3 for single-request long prefill
+  # Without bs=1 CUDA graph, long single-prompts (e.g. ~7000 tok) run in
+  # eager mode at ~66-126 tok/s vs ~8000+ tok/s with CUDA graph.
+  cudaGraphBsPrefill: "1 2 3 4 8 16 32"
+  # breakable — enables prefill CUDA graph with EAGLE by bypassing the
+  # tc_piecewise disable in model_runner.py:2716. Patches applied:
+  #   dsa_indexer.py: FP8->bf16, aiter tuple extract, FIX(breakable-target-verify)
+  #   dsa/utils.py: is_cuda() or is_hip() on is_graph_dsa_split_op_surface
+  #   radix_attention.py: MHA companion swap disabled
+  cudaGraphBackendPrefill: breakable
+  speculativeAlgorithm: NEXTN
+  speculativeNumSteps: 3
+  speculativeNumDraftTokens: 4
+  speculativeEagleTopk: 1
+  enableHierarchicalCache: true
+  hicacheRatio: 2.0
+  hicacheIoBackend: direct
+  hicacheMemLayout: page_first_direct
+  # User choice: write_through_selective (wiki recommended write_through)
+  hicacheWritePolicy: write_through_selective
+  enableAiterAllreduceFusion: true
+  # Mandatory for EAGLE on AMD (PR #29313): aiter custom all-reduce deadlocks
+  # at c>=16 during EAGLE target-verify; fall back to RCCL.
+  disableCustomAllreduce: true
+  # NOTE: preWarmNccl=true causes RCCL "invalidated stream" crash with breakable CG
+  # on gfx942. Disabled until breakable CG capture is compatible with RCCL pre-warm.
+  preWarmNccl: false
+  enableMixedChunk: true
+  enableFusedQkNormRope: true
+  enableMetrics: true
+  skipServerWarmup: true
+  # Wiki v17: 3600 (was 1200 in override — caused crashes on long requests)
+  watchdogTimeout: 3600
+  logLevel: info
+  toolCallParser: glm47
+  reasoningParser: glm45
+
+# ---------------------------------------------------------------------------
+# Router — disabled for single-node deployment
+# ---------------------------------------------------------------------------
+router:
+  enabled: false
+
+llmDRouter:
+  enabled: false
+
+# ---------------------------------------------------------------------------
+# Gateway — HTTPS via eg-tke
+# ---------------------------------------------------------------------------
+gateway:
+  enabled: true
+  gatewayName: eg-tke
+  gatewayNamespace: ti-cloud
+  hostname: glm52-1tp8.jmpti.woa.com
+  httpsSectionName: https-glm52-1tp8
+  lbAddress: 21.162.215.14
+
+# ---------------------------------------------------------------------------
+# Health checks — long initial delay for model loading + CUDA graph capture
+# ---------------------------------------------------------------------------
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 30000
+  initialDelaySeconds: 2400
+  periodSeconds: 60
+  timeoutSeconds: 10
+  failureThreshold: 5
+
+# ---------------------------------------------------------------------------
+# EAGLE patch — DISABLED (fix-eagle-coredump-v3 has PR #31478 baked in)
+# The runtime patch was Hack 1 causing NCCL deadlock on greedy verify.
+# ---------------------------------------------------------------------------
+eaglePatch:
+  enabled: false

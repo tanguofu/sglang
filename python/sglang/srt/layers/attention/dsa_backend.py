@@ -2153,12 +2153,14 @@ class DeepseekSparseAttnBackend(
             max_len = self._graph_page_table_width(metadata)
 
             if (
-                is_cuda()
-                and not _is_hip
+                (is_cuda() or _is_hip)
                 and (
                     self.dsa_index_kpool <= 1 or self.experimental_kpool_metadata_fusion
                 )
             ):
+                from sglang.kernels.ops.attention.dsa_metadata import (
+                    fused_dsa_decode_metadata,
+                )
                 fused_dsa_decode_metadata(
                     seq_lens=seq_lens,
                     req_pool_indices=req_pool_indices,
@@ -2199,13 +2201,10 @@ class DeepseekSparseAttnBackend(
         elif forward_mode.is_target_verify():
             max_seqlen_k = self._graph_page_table_width(metadata)
 
-            if (
-                is_cuda()
-                and not _is_hip
-                and (
-                    self.dsa_index_kpool <= 1 or self.experimental_kpool_metadata_fusion
+            if (is_cuda() or _is_hip) and self.dsa_index_kpool <= 1:
+                from sglang.kernels.ops.attention.dsa_metadata import (
+                    fused_dsa_target_verify_metadata,
                 )
-            ):
                 paged_mqa_ctx_lens_2d = None
                 if (
                     self.speculative_num_draft_tokens >= 2
@@ -2303,12 +2302,14 @@ class DeepseekSparseAttnBackend(
             )
 
             if (
-                is_cuda()
-                and not _is_hip
+                (is_cuda() or _is_hip)
                 and (
                     self.dsa_index_kpool <= 1 or self.experimental_kpool_metadata_fusion
                 )
             ):
+                from sglang.kernels.ops.attention.dsa_metadata import (
+                    fused_dsa_draft_extend_metadata,
+                )
                 fused_dsa_draft_extend_metadata(
                     seq_lens=seq_lens,
                     extend_seq_lens=extend_seq_lens,
@@ -3134,18 +3135,19 @@ class DeepseekSparseAttnBackend(
             )
 
         # Do absorbed multi-latent attention (MLA path)
-        assert q_rope is not None
         kv_cache = self.token_to_kv_pool.get_key_buffer(layer.layer_id)
 
         if q_rope is not None:
-            q_nope = q.view(-1, layer.tp_q_head_num, layer.v_head_dim)
-            q_rope = q_rope.view(
-                q_nope.shape[0],
-                layer.tp_q_head_num,
-                layer.head_dim - layer.v_head_dim,
+            q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
+            q_rope = q_rope.reshape(
+                -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
             )
+            # Caller passed split q_nope / q_rope; concat below only if the
+            # chosen impl wants q_all. HIP tilelang can skip that concat when
+            # the caller already handed concatenated q (q_rope=None).
+            q_all = None
         else:
-            q_all = q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim)
+            q_all = q.contiguous().reshape(-1, layer.tp_q_head_num, layer.head_dim)
             q_nope = q_all[:, :, : layer.v_head_dim]
             q_rope = q_all[:, :, layer.v_head_dim :]
 
@@ -3197,33 +3199,36 @@ class DeepseekSparseAttnBackend(
             ).to(torch.int32)
 
         if dsa_impl == "tilelang":
-            if q_rope is not None:
+            if (
+                q_all is None
+                and _DSA_TRITON_PREFILL
+                and _IS_GFX95
+                and kv_cache.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz)
+                and layer.tp_q_head_num == 16
+                and layer.v_head_dim == 512
+                and (layer.head_dim - layer.v_head_dim) == 64
+                and page_table_1.shape[-1] == 2048
+                and q_nope.shape[0] >= 512
+            ):
                 # Triton prefill kernel reads q_nope/q_rope directly, skipping
                 # the concat (it splits q into main/tail internally anyway).
                 # Gated to gfx950 + the validated shape (16 heads, d_v=512,
                 # tail=64, topk=2048); everything else uses TileLang.
-                if (
-                    _DSA_TRITON_PREFILL
-                    and _IS_GFX95
-                    and kv_cache.dtype in (torch.float8_e4m3fn, torch.float8_e4m3fnuz)
-                    and layer.tp_q_head_num == 16
-                    and layer.v_head_dim == 512
-                    and (layer.head_dim - layer.v_head_dim) == 64
-                    and page_table_1.shape[-1] == 2048
-                    and q_nope.shape[0] >= 512
-                ):
-                    from sglang.kernels.ops.attention.dsa.triton_sparse_mla import (
-                        triton_sparse_mla_fwd,
-                    )
+                from sglang.kernels.ops.attention.dsa.triton_sparse_mla import (
+                    triton_sparse_mla_fwd,
+                )
 
-                    return triton_sparse_mla_fwd(
-                        q_nope=q_nope,
-                        q_rope=q_rope,
-                        kv=kv_cache,
-                        indices=page_table_1.unsqueeze(1),
-                        sm_scale=layer.scaling,
-                        d_v=layer.v_head_dim,
-                    )
+                return triton_sparse_mla_fwd(
+                    q_nope=q_nope,
+                    q_rope=q_rope,
+                    kv=kv_cache,
+                    indices=page_table_1.unsqueeze(1),
+                    sm_scale=layer.scaling,
+                    d_v=layer.v_head_dim,
+                )
+            # Cat-skip (HIP-only): q_rope=None means the caller already handed
+            # concatenated q. `not _is_hip` keeps CUDA byte-identical.
+            if q_all is None or not _is_hip:
                 q_all = concat_mla_absorb_q_general(q_nope, q_rope)
             return self._forward_tilelang(
                 q_all=q_all,
@@ -3448,11 +3453,9 @@ class DeepseekSparseAttnBackend(
         # Do absorbed multi-latent attention
         kv_cache = self.token_to_kv_pool.get_key_buffer(layer.layer_id)
         if q_rope is not None:
-            q_nope = q.view(-1, layer.tp_q_head_num, layer.v_head_dim)
-            q_rope = q_rope.view(
-                q_nope.shape[0],
-                layer.tp_q_head_num,
-                layer.head_dim - layer.v_head_dim,
+            q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
+            q_rope = q_rope.reshape(
+                -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
             )
             # Caller passed split q_nope / q_rope; we'll need to concat below if
             # the chosen impl wants q_all.
@@ -3461,7 +3464,7 @@ class DeepseekSparseAttnBackend(
             # Caller passed already-concatenated q (q_all = q). Reuse it directly
             # via a zero-copy view; the impl-specific blocks below will skip the
             # otherwise redundant concat_mla_absorb_q_general call.
-            q_all = q.contiguous().view(-1, layer.tp_q_head_num, layer.head_dim)
+            q_all = q.contiguous().reshape(-1, layer.tp_q_head_num, layer.head_dim)
             q_nope = q_all[:, :, : layer.v_head_dim]
             q_rope = q_all[:, :, layer.v_head_dim :]
 
@@ -4447,7 +4450,7 @@ class DeepseekSparseAttnBackend(
         kv_cache = k_cache.view(-1, self.real_page_size, self.kv_cache_dim).unsqueeze(1)
 
         if merge_query:
-            q_nope = q.view(-1, layer.tp_q_head_num, layer.v_head_dim)
+            q_nope = q.reshape(-1, layer.tp_q_head_num, layer.v_head_dim)
             q_rope_reshaped = q_rope.view(
                 -1, layer.tp_q_head_num, layer.head_dim - layer.v_head_dim
             )

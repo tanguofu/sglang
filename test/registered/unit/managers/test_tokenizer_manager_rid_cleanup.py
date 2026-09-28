@@ -24,6 +24,7 @@ from sglang.test.test_utils import CustomTestCase, maybe_stub_sgl_kernel
 
 maybe_stub_sgl_kernel()
 
+from sglang.srt.disaggregation.utils import DisaggregationMode  # noqa: E402
 from sglang.srt.managers.io_struct import (  # noqa: E402
     AbortReq,
     BatchStrOutput,
@@ -127,6 +128,7 @@ def _make_tokenizer_manager(case) -> TokenizerManager:
     tm.server_args.weight_version = "1"
     tm.server_args.crash_dump_folder = ""
     tm.server_args.dp_size = 1
+    tm.server_args.tokenizer_worker_num = 1
     tm.disaggregation_mode = "none"
     tm.rid_to_state = {}
     tm.enable_metrics = False
@@ -138,6 +140,7 @@ def _make_tokenizer_manager(case) -> TokenizerManager:
     tm.dump_requests_folder = ""
     tm.crash_dump_folder = ""
     tm.send_to_scheduler = MagicMock()
+    tm.tokenizer_ipc_name = None
     return tm
 
 
@@ -218,6 +221,68 @@ def _make_batch_str_output(rid: str, finished_reason=None) -> BatchStrOutput:
 
 class TestRidToStateCleanupOnAbort(CustomTestCase):
     """Test that _handle_abort_req removes rid from rid_to_state."""
+
+    def test_abort_forwards_missing_state_in_decode_mode(self):
+        """PD decode may still be generating after tokenizer state cleanup."""
+        tm = _make_tokenizer_manager(self)
+        tm.disaggregation_mode = DisaggregationMode.DECODE
+        rid = "decode_missing_state_rid"
+
+        tm.abort_request(rid=rid)
+
+        tm.send_to_scheduler.send_pyobj.assert_called_once()
+        sent_req = tm.send_to_scheduler.send_pyobj.call_args.args[0]
+        self.assertEqual(sent_req.rid, rid)
+        self.assertFalse(sent_req.abort_all)
+
+    def test_abort_skips_missing_state_in_non_decode_mode(self):
+        """Non-decode aborts for finished requests do not reach the scheduler."""
+        tm = _make_tokenizer_manager(self)
+        rid = "non_decode_missing_state_rid"
+
+        tm.abort_request(rid=rid)
+
+        tm.send_to_scheduler.send_pyobj.assert_not_called()
+
+    def test_stream_abort_wrapper_skips_normal_completion(self):
+        """A completed stream must not be counted as an aborted request."""
+        tm = _make_tokenizer_manager(self)
+        obj = Mock(spec=GenerateReqInput)
+        obj.rid = "normal_completion_rid"
+        obj.is_single = True
+
+        async def source():
+            yield "chunk"
+
+        async def consume():
+            return [chunk async for chunk in tm.wrap_stream_with_abort(obj, source())]
+
+        self.assertEqual(asyncio.run(consume()), ["chunk"])
+
+        tm.send_to_scheduler.send_pyobj.assert_not_called()
+
+    def test_stream_abort_wrapper_forwards_cancellation(self):
+        """A disconnected stream must still abort the scheduler request."""
+        tm = _make_tokenizer_manager(self)
+        tm.disaggregation_mode = DisaggregationMode.DECODE
+        obj = Mock(spec=GenerateReqInput)
+        obj.rid = "cancelled_client_rid"
+        obj.is_single = True
+
+        async def source():
+            yield "chunk"
+            raise asyncio.CancelledError
+
+        async def consume():
+            async for _chunk in tm.wrap_stream_with_abort(obj, source()):
+                pass
+
+        with self.assertRaises(asyncio.CancelledError):
+            asyncio.run(consume())
+
+        tm.send_to_scheduler.send_pyobj.assert_called_once()
+        sent_req = tm.send_to_scheduler.send_pyobj.call_args.args[0]
+        self.assertEqual(sent_req.rid, obj.rid)
 
     def test_abort_removes_rid_from_state(self):
         """After _handle_abort_req, rid should be removed from rid_to_state."""

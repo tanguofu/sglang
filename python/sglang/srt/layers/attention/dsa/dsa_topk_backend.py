@@ -7,9 +7,17 @@ import torch
 
 from sglang.srt.environ import envs
 from sglang.srt.runtime_context import get_exec, get_spec
+from sglang.srt.utils import get_bool_env_var, is_hip
+
+_is_hip = is_hip()
 
 if TYPE_CHECKING:
     from sglang.srt.model_executor.model_runner import ModelRunner
+
+
+def _use_splitk_topk() -> bool:
+    """SplitK top-k fast path: HIP only, opt-in via SGLANG_DSA_TOPK_SPLITK."""
+    return is_hip() and get_bool_env_var("SGLANG_DSA_TOPK_SPLITK")
 
 _FLASHINFER_TIE_BREAK_VALUES = {
     "small": 1,
@@ -129,6 +137,44 @@ class DSATopKBackend(Enum):
         ):
             return _topk_transform_v2_paged(logits, lengths, topk, attn_metadata)
 
+        # Packed PAGED extend (GLM DSA prefill), ROCm-only: the packed-row v2
+        # kernel (PR #37889) needs no plan and no cluster path -- the level is
+        # picked per row at runtime -- so unlike the decode entry above it
+        # compiles on gfx942. Gated by its own env because
+        # SGLANG_OPT_USE_TOPK_V2 stays force-off for the DSA family on HIP
+        # (the paged/ragged entries need thread-block clusters, CDNA4 only).
+        # The row -> request map is `token_to_batch_idx` for a whole-forward
+        # call and the chunk's own `batch_idx_list` when the indexer split the
+        # logits (2 GiB aiter cap). The prefill-CP list selects requests, not
+        # rows: leave it on legacy.
+        if batch_idx_list is None:
+            row_to_batch = attn_metadata.token_to_batch_idx
+        elif isinstance(batch_idx_list, torch.Tensor):
+            row_to_batch = batch_idx_list
+        else:
+            row_to_batch = None
+        if (
+            _is_hip
+            and envs.SGLANG_DSA_USE_TOPK_V2_PACKED.get()
+            and topk_transform_method == TopkTransformMethod.PAGED
+            and 0 < topk <= 2048
+            and lengths.shape[0] == logits.shape[0]
+            and logits.dtype == torch.float32
+            and logits.stride(1) == 1
+            and logits.stride(0) % 4 == 0
+            and row_starts is not None
+            and row_to_batch is not None
+            and row_to_batch.shape[0] == logits.shape[0]
+        ):
+            return _topk_transform_v2_packed(
+                logits,
+                lengths,
+                topk,
+                attn_metadata,
+                row_starts=row_starts,
+                row_to_batch=row_to_batch,
+            )
+
         # Extend-shaped RAGGED top-k for the SGL backend routes to the same v2
         # kernel through its ragged entry point: no page table (the columns are
         # already flattened-KV positions), no plan (prefill has enough rows that
@@ -165,6 +211,27 @@ class DSATopKBackend(Enum):
                     if batch_idx_list is not None
                     else attn_metadata.page_table_1
                 )
+                # SplitK fast path: the AOT kernel runs one block per row
+                # (4 blocks at MTP verify on a 220-CU GPU) and serially
+                # scans the full logits row. torch.topk (CUB device sort)
+                # wins 1.4-2.9x for rows<=4 and max_len>=256K; the AOT
+                # kernel stays faster everywhere else. Gated by
+                # SGLANG_DSA_TOPK_SPLITK (default off).
+                # max_len comes from logits.shape[1] (the padded row
+                # stride, host-known) — NOT int(lengths.max()), whose
+                # D2H sync is illegal inside CUDA graph capture.
+                if _use_splitk_topk() and row_starts is None:
+                    from sglang.kernels.ops.attention.dsa.topk_splitk import (
+                        should_use_splitk_topk,
+                        splitk_topk_transform_decode,
+                    )
+
+                    if should_use_splitk_topk(
+                        logits.shape[0], logits.shape[1]
+                    ):
+                        return splitk_topk_transform_decode(
+                            logits, lengths, page_table_size_1, topk
+                        )
                 return fast_topk_transform_fused(
                     score=logits,
                     lengths=lengths,
@@ -336,6 +403,54 @@ def _topk_transform_v2_paged(
     page_size = attn_metadata.page_size
     out = logits.new_empty((num_rows, topk), dtype=torch.int32)
     topk_transform_512_v2(logits, lengths, page_table, out, page_size, plan)
+    return out
+
+
+def _topk_transform_v2_packed(
+    logits: torch.Tensor,
+    lengths: torch.Tensor,
+    topk: int,
+    attn_metadata,
+    row_starts: torch.Tensor,
+    row_to_batch: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Fused packed-row top-k + page-table transform (DSA extend prefill).
+
+    Same output contract as :func:`_topk_transform_v2_paged` -- ``(num_rows,
+    topk)`` int32 physical KV slots, ``-1`` padded -- but the scores are packed:
+    row ``i`` owns the window at ``row_starts[i]`` of one batch-global buffer and
+    maps through page-table row ``row_to_batch[i]`` (prefill expands one request
+    into many query-token rows). Selected indices stay row-local.
+
+    Being a prefill-only path it dispatches per row inside the kernel, so unlike
+    the paged entry point it needs no ``topk_v2_plan``.
+
+    NOTE: ``logits`` is MODIFIED IN PLACE (the <= 3 columns ahead of each window
+    are masked); the caller must not reuse it. ``lengths`` must be NON-NEGATIVE,
+    for the same reason as in :func:`_topk_transform_v2_paged`.
+    """
+    from sglang.kernels.ops.attention.dsv4.topk import topk_transform_packed_v2
+
+    num_rows = logits.shape[0]
+    assert (
+        logits.dtype == torch.float32
+        and logits.stride(1) == 1
+        and logits.stride(0) % 4 == 0
+    ), (
+        f"v2 top-k expects fp32 scores with unit row stride and 16B-aligned score_stride, got {logits.dtype=} {logits.stride()=}"
+    )
+    assert 0 < topk <= 2048, f"v2 top-k supports 0 < topk <= 2048, got {topk=}"
+
+    out = logits.new_empty((num_rows, topk), dtype=torch.int32)
+    topk_transform_packed_v2(
+        logits,
+        lengths,
+        attn_metadata.real_page_table,
+        out,
+        attn_metadata.page_size,
+        row_starts=row_starts.to(torch.int32),
+        row_to_batch=(None if row_to_batch is None else row_to_batch.to(torch.int32)),
+    )
     return out
 
 

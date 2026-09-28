@@ -198,7 +198,7 @@ _aiter_k3_opt = _use_aiter and get_bool_env_var("SGLANG_AITER_K3_OPT")
 _is_shuffle_moe_mxfp4 = is_gfx95_supported()
 _is_cpu_amx_available = cpu_has_amx_support()
 
-if _is_hip:
+if _is_hip and torch.cuda.is_available():
     # import aiter
     try:
         from aiter.ops.shuffle import (

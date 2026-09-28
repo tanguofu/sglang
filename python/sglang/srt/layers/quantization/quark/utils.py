@@ -17,9 +17,15 @@ class Nvfp4SourceConfig:
 
 import torch
 
-try:
-    from aiter.ops.triton.quant import dynamic_mxfp4_quant
-except ImportError:
+if torch.cuda.is_available():
+    try:
+        from aiter.ops.triton.quant import dynamic_mxfp4_quant
+    except ImportError:
+        dynamic_mxfp4_quant = None
+else:
+    dynamic_mxfp4_quant = None
+
+if dynamic_mxfp4_quant is None:
 
     def raise_aiter_import_error(*args, **kwargs):
         raise ImportError(
@@ -27,6 +33,7 @@ except ImportError:
         )
 
     dynamic_mxfp4_quant = raise_aiter_import_error
+
 from torch import nn
 
 

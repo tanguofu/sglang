@@ -35,7 +35,6 @@ _CHAT_TEMPLATE_CLIENT_ERRORS: tuple[type[BaseException], ...] = (
     TypeError,
 ) + _MISTRAL_COMMON_ERRORS
 from fastapi.responses import ORJSONResponse, StreamingResponse
-from jsonschema import Draft202012Validator, SchemaError
 
 from sglang.srt.entrypoints.openai import chat_encoding, encoding_dsv4, encoding_dsv32
 from sglang.srt.entrypoints.openai.protocol import (
@@ -86,7 +85,7 @@ from sglang.srt.function_call.function_call_parser import FunctionCallParser
 from sglang.srt.function_call.json_array_parser import JsonArrayParser
 from sglang.srt.function_call.utils import (
     get_json_schema_constraint,
-    normalize_json_schema_types,
+    validate_tool_parameters_schema,
 )
 from sglang.srt.managers.io_struct import GenerateReqInput
 from sglang.srt.parser.conversation import generate_chat_conv
@@ -999,20 +998,16 @@ class OpenAIServingChat(OpenAIServingBase):
         for i, tool in enumerate(effective_tools):
             if tool.function.parameters is None:
                 continue
-            try:
-                # Rewrite DB/ORM-style aliases (e.g. "varchar", "enum", "int")
-                # to standard JSON Schema types before validation. RecursionError
-                # guards against hand-crafted cyclic schemas so the request gets
-                # a 400 instead of crashing into a 500.
-                normalize_json_schema_types(tool.function.parameters)
-                Draft202012Validator.check_schema(tool.function.parameters)
-            except SchemaError as e:
-                return f"Tool {i} function has invalid 'parameters' schema: {str(e)}"
-            except RecursionError:
-                return (
-                    f"Tool {i} function 'parameters' schema is too deeply nested "
-                    "or contains a cycle."
-                )
+            # Structural check only. Do not enforce format:regex — Codex / Claude
+            # Code send JS \\p{Cc} patterns that Python re cannot compile.
+            err = validate_tool_parameters_schema(tool.function.parameters)
+            if err:
+                if "cycle" in err:
+                    return (
+                        f"Tool {i} function 'parameters' schema is too deeply nested "
+                        "or contains a cycle."
+                    )
+                return f"Tool {i} function has invalid 'parameters' schema: {err}"
 
         max_output_tokens = request.max_completion_tokens or request.max_tokens
         server_context_length = self.tokenizer_manager.server_args.context_length
@@ -1664,9 +1659,10 @@ class OpenAIServingChat(OpenAIServingBase):
                 yield chunk
 
         return StreamingResponse(
-            prepend_first_chunk(),
+            self.tokenizer_manager.wrap_stream_with_abort(
+                adapted_request, prepend_first_chunk()
+            ),
             media_type="text/event-stream",
-            background=self.tokenizer_manager.create_abort_task(adapted_request),
         )
 
     async def _generate_chat_stream(

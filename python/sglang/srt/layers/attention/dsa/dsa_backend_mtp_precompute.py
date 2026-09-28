@@ -124,7 +124,7 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
 
         if (
             _is_cuda
-            and not _is_hip
+            or _is_hip
             and (
                 self.dsa_index_kpool <= 1
                 or getattr(self, "experimental_kpool_metadata_fusion", False)
@@ -253,7 +253,7 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
         max_seqlen_k = self.decode_cuda_graph_metadata[bs].page_table_1.shape[1]
         seqlens_expanded_size = bs * self.speculative_num_draft_tokens
 
-        if _is_cuda and not _is_hip and self.dsa_index_kpool <= 1:
+        if (_is_cuda or _is_hip) and self.dsa_index_kpool <= 1:
             from sglang.kernels.ops.attention.dsa_metadata import (
                 fused_dsa_target_verify_metadata,
             )

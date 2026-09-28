@@ -440,9 +440,6 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             self._host_state_staging_lens = []
             self._gpu_state_ptrs = []
 
-        if hasattr(self, "connection_pool"):
-            with self.connection_lock:
-                self.connection_pool.clear()
 
     def _copy_host_to_gpu(self, kv_indices=None) -> None:
         """Copy only the transferred KV pages from pinned host to GPU."""
@@ -892,6 +889,60 @@ class MooncakeKVManager(StagingManagerMixin, CommonKVManager):
             return 0
 
         src_addrs, dst_addrs, lengths = zip(*transfer_blocks)
+        # FIX(gdr-l2-flush): cheap coherence for true GDR (no 23GB D2H).
+        if os.environ.get("SGLANG_PD_HOST_STAGING") != "1":
+            try:
+                from sglang.srt.disaggregation.mooncake.gdr_l2_flush import (
+                    ensure_read_sink,
+                    rdma_read_flush,
+                    writeback,
+                )
+            except ImportError:
+                import sys as _sys
+                if "/data/mooncake-patched" not in _sys.path:
+                    _sys.path.insert(0, "/data/mooncake-patched")
+                from gdr_l2_flush import ensure_read_sink, rdma_read_flush, writeback
+
+            gpu_id = getattr(self.kv_args, "gpu_id", 0)
+            if not writeback(gpu_id):
+                logger.error("_transfer_data: GDR L2 writeback failed dev=%s", gpu_id)
+            ret = self.engine.batch_transfer_sync(
+                mooncake_session_id, list(src_addrs), list(dst_addrs), list(lengths)
+            )
+            if ret == 0 and dst_addrs and lengths:
+                sink = ensure_read_sink(self.engine, gpu_id)
+                last_len = int(lengths[-1])
+                flush_src = int(dst_addrs[-1]) + max(last_len, 8) - 8
+                flush_src &= ~7
+                if sink:
+                    try:
+                        flush_ret = rdma_read_flush(
+                            self.engine, mooncake_session_id, sink, flush_src, 8
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "_transfer_data: GDR RDMA READ flush raised: %s", e
+                        )
+                        flush_ret = -1
+                    if flush_ret != 0:
+                        logger.error(
+                            "_transfer_data: GDR RDMA READ flush ret=%s "
+                            "dst=0x%x dev=%s",
+                            flush_ret,
+                            flush_src,
+                            gpu_id,
+                        )
+                    else:
+                        logger.info(
+                            "_transfer_data: GDR flush wb+READ 8B dst=0x%x "
+                            "blocks=%s bytes=%s dev=%s",
+                            flush_src,
+                            len(lengths),
+                            sum(int(x) for x in lengths),
+                            gpu_id,
+                        )
+            return ret
+
         return self.engine.batch_transfer_sync(
             mooncake_session_id, list(src_addrs), list(dst_addrs), list(lengths)
         )
@@ -2715,6 +2766,28 @@ class MooncakeKVSender(MooncakeFailureExceptionMixin, CommonKVSender):
             if status in (KVPoll.Success, KVPoll.Failed):
                 self.conclude_state = status
                 self.trace_ctx.trace_req_finish()
+                if (
+                    status == KVPoll.Success
+                    and os.environ.get("SGLANG_PD_HOST_STAGING") != "1"
+                ):
+                    # FIX(gdr-l2-flush): invalidate decode L2 after GDR WRITE.
+                    try:
+                        from sglang.srt.disaggregation.mooncake.gdr_l2_flush import (
+                            invalidate,
+                        )
+                    except ImportError:
+                        import sys as _sys
+                        if "/data/mooncake-patched" not in _sys.path:
+                            _sys.path.insert(0, "/data/mooncake-patched")
+                        from gdr_l2_flush import invalidate
+
+                    gpu_id = getattr(self.kv_mgr.kv_args, "gpu_id", 0)
+                    if not invalidate(gpu_id):
+                        logger.error(
+                            "poll: GDR L2 invalidate failed room=%s dev=%s",
+                            self.bootstrap_room,
+                            gpu_id,
+                        )
             elif status == KVPoll.Bootstrapping:
                 timeout_result = self._check_bootstrap_timeout()
                 if timeout_result is not None:

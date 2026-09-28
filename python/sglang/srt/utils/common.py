@@ -965,7 +965,7 @@ def get_device_core_count(device_id: int = 0) -> int:
 
 
 def get_device_capability(device_id: int = 0) -> Tuple[int, int]:
-    major, minor = None, None
+    major, minor = 0, 0
     if (hasattr(torch, "cuda") and torch.cuda.is_available()) or is_musa():
         major, minor = torch.cuda.get_device_capability(device_id)
 
@@ -1034,7 +1034,7 @@ def is_gfx95_supported():
 
     False on every non-HIP build, so callers do not need their own is_hip().
     """
-    if torch.version.hip:
+    if torch.version.hip and torch.cuda.is_available():
         gcn_arch = torch.cuda.get_device_properties(0).gcnArchName
         return any(gfx in gcn_arch for gfx in ["gfx95"])
     else:
@@ -1046,7 +1046,7 @@ def is_gfx942_supported():
     """
     Returns whether the current platform is AMD CDNA3 (gfx942 — MI300X / MI325X).
     """
-    if torch.version.hip:
+    if torch.version.hip and torch.cuda.is_available():
         gcn_arch = torch.cuda.get_device_properties(0).gcnArchName
         return any(gfx in gcn_arch for gfx in ["gfx942"])
     else:
