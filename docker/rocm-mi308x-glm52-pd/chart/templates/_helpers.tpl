@@ -26,6 +26,11 @@ tke.cloud.tencent.com/pod-type: eklet
   value: {{ $v | quote }}
 {{- end }}
 {{- end }}
+{{- $aiterJitDir := .root.Values.aiterJitDir | default (printf "/data/aiter-jit/%s" .root.Release.Name) }}
+{{- if and (not (hasKey .root.Values.workerEnv "AITER_JIT_DIR")) (not (hasKey $extra "AITER_JIT_DIR")) }}
+- name: AITER_JIT_DIR
+  value: {{ $aiterJitDir | quote }}
+{{- end }}
 - name: SGLANG_HOST_IP
   value: {{ .hostIP | quote }}
 {{- if .mooncakeLocal }}

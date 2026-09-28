@@ -2406,16 +2406,26 @@ def _freeze_gc_after_server_warmup(server_args: ServerArgs):
     freeze_headers = {}
     if freeze_key:
         freeze_headers["Authorization"] = f"Bearer {freeze_key}"
-    try:
-        res = requests.post(
-            server_args.url() + "/freeze_gc",
-            headers=freeze_headers,
-            timeout=10,
-            verify=server_args.ssl_verify(),
-        )
-        res.raise_for_status()
-    except requests.exceptions.RequestException:
-        logger.warning("post-warmup freeze_gc failed", exc_info=True)
+    for attempt in range(1, 6):
+        try:
+            res = requests.post(
+                server_args.url() + "/freeze_gc",
+                headers=freeze_headers,
+                timeout=10,
+                verify=server_args.ssl_verify(),
+            )
+            res.raise_for_status()
+            return
+        except requests.exceptions.RequestException:
+            if attempt == 5:
+                logger.warning(
+                    "post-warmup freeze_gc failed after %d attempts",
+                    attempt,
+                    exc_info=True,
+                )
+                return
+            logger.debug("post-warmup freeze_gc retry %d/5", attempt)
+            time.sleep(1)
 
 
 def _wait_and_warmup(
