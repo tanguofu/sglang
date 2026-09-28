@@ -105,7 +105,7 @@ assert 'zombie' in r('srt/mem_cache/unified_cache/unified_tree_core.py').lower()
 assert (R/'kernels/jit/csrc/kvcacheio/hicache.cuh').stat().st_size > 0, 'hicache-jit'; \
 dsa = r('srt/layers/attention/dsa_backend.py'); \
 assert 'fused_dsa_decode_metadata' in dsa, 'w1-fused-meta'; \
-assert 'is_cuda() and not _is_hip' not in dsa, 'w1-hip-gate'; \
+assert dsa.count('(is_cuda() or _is_hip)') >= 3, 'w1-hip-gate'; \
 assert 'format_checker=None' in r('srt/function_call/utils.py'), 'tool-schema-regex'; \
 assert '_is_glm_moe_dsa_config' in r('srt/models/deepseek_v2.py'), 'w1-bias-fp32'; \
 assert '_aiter_fp32_correction_bias_args' in r('srt/layers/moe/topk.py'), 'w1-bias-aiter-upcast'; \
