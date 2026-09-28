@@ -3,9 +3,11 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import requests
 from sglang.srt.disaggregation.utils import FAKE_BOOTSTRAP_HOST
 from sglang.srt.entrypoints.http_server import (
     _send_disaggregation_warmup_requests,
+    _freeze_gc_after_server_warmup,
 )
 from sglang.test.ci.ci_register import register_cpu_ci
 
@@ -77,6 +79,77 @@ class TestDisaggregationServerWarmup(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kwargs["json"]["bootstrap_host"], FAKE_BOOTSTRAP_HOST)
             self.assertEqual(kwargs["json"]["bootstrap_room"], dp_rank)
             self.assertFalse(kwargs["ssl"])
+
+
+class TestFreezeGcAfterServerWarmup(unittest.TestCase):
+    def test_retries_transient_connection_refused(self):
+        class ServerArgs:
+            api_key = "test-key"
+            admin_api_key = None
+
+            def url(self):
+                return "http://127.0.0.1:31000"
+
+            def ssl_verify(self):
+                return False
+
+        attempts = []
+        sleeps = []
+
+        def post(*args, **kwargs):
+            attempts.append((args, kwargs))
+            if len(attempts) < 3:
+                raise requests.exceptions.ConnectionError("connection refused")
+            return SimpleNamespace(raise_for_status=lambda: None)
+
+        with (
+            patch("sglang.srt.entrypoints.http_server.requests.post", side_effect=post),
+            patch(
+                "sglang.srt.entrypoints.http_server.time.sleep",
+                side_effect=sleeps.append,
+            ),
+        ):
+            _freeze_gc_after_server_warmup(ServerArgs())
+
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(sleeps, [1, 1])
+        self.assertEqual(
+            attempts[0][1]["headers"], {"Authorization": "Bearer test-key"}
+        )
+
+    def test_stops_after_five_failed_attempts(self):
+        class ServerArgs:
+            api_key = None
+            admin_api_key = None
+
+            def url(self):
+                return "http://127.0.0.1:31000"
+
+            def ssl_verify(self):
+                return False
+
+        attempts = []
+        sleeps = []
+
+        def post(*args, **kwargs):
+            attempts.append((args, kwargs))
+            raise requests.exceptions.ConnectionError("connection refused")
+
+        with (
+            patch("sglang.srt.entrypoints.http_server.requests.post", side_effect=post),
+            patch(
+                "sglang.srt.entrypoints.http_server.time.sleep",
+                side_effect=sleeps.append,
+            ),
+            self.assertLogs(
+                "sglang.srt.entrypoints.http_server", level="WARNING"
+            ) as logs,
+        ):
+            _freeze_gc_after_server_warmup(ServerArgs())
+
+        self.assertEqual(len(attempts), 5)
+        self.assertEqual(sleeps, [1, 1, 1, 1])
+        self.assertTrue(any("after 5 attempts" in message for message in logs.output))
 
 
 if __name__ == "__main__":
