@@ -208,6 +208,44 @@ python3 /opt/aiter-scripts/gen_bf16_gate_indexer.py install \
 {{- end }}
 {{- end -}}
 
+{{- define "sglang-1p1d.aiterJitEnsure" -}}
+{{- $extraKids := .Values.aiterJitOpusExtraKids | default list -}}
+{{- if $extraKids }}
+echo "--- AITER OPUS JIT cache ensure ---"
+AITER_OPUS_EXTRA_KIDS={{ $extraKids | join "," }} python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+required_kids = {
+    int(kid) for kid in os.environ["AITER_OPUS_EXTRA_KIDS"].split(",") if kid
+}
+sidecar = Path(os.environ["AITER_JIT_DIR"]) / "build" / "compiled_kids_opus.json"
+compiled_kids = set()
+if sidecar.exists():
+    try:
+        compiled_kids = set(json.loads(sidecar.read_text()))
+    except (OSError, ValueError, TypeError):
+        compiled_kids = set()
+
+missing_kids = required_kids - compiled_kids
+if not missing_kids:
+    print(f"AITER OPUS kids already compiled: {sorted(required_kids)}")
+    raise SystemExit(0)
+
+print(f"Rebuilding AITER OPUS module with extra kids: {sorted(missing_kids)}")
+from aiter.jit.core import build_module, get_args_of_build
+
+args = get_args_of_build("module_deepgemm_opus")
+args.pop("hip_clang_path", None)
+args["blob_gen_cmd"] += " --extra_kids " + " ".join(
+    str(kid) for kid in sorted(missing_kids)
+)
+build_module(**args)
+PY
+{{- end }}
+{{- end -}}
+
 {{- define "sglang-1p1d.pagedFlydslInstall" -}}
 echo "--- native paged FlyDSL overlay (guarded, decode-only) ---"
 python3 /opt/aiter-scripts/patch_paged_flydsl_native.py \

@@ -782,7 +782,8 @@ impl Tree {
             // Remove empty nodes
             if node.children.is_empty() && node.tenant_last_access_time.is_empty() {
                 if let Some(ref parent) = parent_opt {
-                    if let Some(fc) = node.text.read().unwrap().first_char() {
+                    let first_char = node.text.read().unwrap().first_char();
+                    if let Some(fc) = first_char {
                         parent.children.remove(&fc);
                     }
                 }
@@ -862,7 +863,8 @@ impl Tree {
             // Remove empty nodes
             if curr.children.is_empty() && curr.tenant_last_access_time.is_empty() {
                 if let Some(ref parent) = parent_opt {
-                    if let Some(fc) = curr.text.read().unwrap().first_char() {
+                    let first_char = curr.text.read().unwrap().first_char();
+                    if let Some(fc) = first_char {
                         parent.children.remove(&fc);
                     }
                 }
@@ -991,6 +993,7 @@ impl Tree {
 #[cfg(test)]
 mod tests {
     use std::{
+        sync::atomic::{AtomicBool, Ordering},
         thread,
         time::{Duration, Instant},
     };
@@ -1993,6 +1996,39 @@ mod tests {
         // Verify tree is still consistent
         let sizes = tree.get_used_size_per_tenant();
         assert!(!sizes.is_empty(), "Tree should have entries");
+    }
+
+    #[test]
+    fn test_insert_and_eviction_do_not_deadlock() {
+        let tree = Arc::new(Tree::new());
+        let stop = Arc::new(AtomicBool::new(false));
+        let mut handles = Vec::new();
+
+        tree.insert("shared_prefix_base", "tenant");
+
+        for thread_id in 0..8 {
+            let tree = Arc::clone(&tree);
+            handles.push(thread::spawn(move || {
+                for i in 0..200 {
+                    let text = format!("shared_prefix_{}_{}", thread_id, i);
+                    tree.insert(&text, "tenant");
+                }
+            }));
+        }
+
+        let eviction_tree = Arc::clone(&tree);
+        let eviction_stop = Arc::clone(&stop);
+        let eviction_handle = thread::spawn(move || {
+            while !eviction_stop.load(Ordering::Relaxed) {
+                eviction_tree.evict_tenant_by_size(1);
+            }
+        });
+
+        for handle in handles {
+            handle.join().expect("Insert thread panicked");
+        }
+        stop.store(true, Ordering::Relaxed);
+        eviction_handle.join().expect("Eviction thread panicked");
     }
 
     #[test]

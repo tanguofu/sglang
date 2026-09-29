@@ -76,6 +76,7 @@ spec:
               set -euo pipefail
               echo "=== GLM-5.2 DECODE-{{ $i }} {{ $d.ip }} (MI308X, baked GDR + DSA tilelang + NEXTN) ==="
               {{- include "sglang-1p1d.gemmCsvInstall" $root | nindent 14 }}
+              {{- include "sglang-1p1d.aiterJitEnsure" $root | nindent 14 }}
               {{- if $pagedFlydsl.enabled }}
               {{- include "sglang-1p1d.pagedFlydslInstall" $root | nindent 14 }}
               {{- end }}

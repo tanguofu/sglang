@@ -17,6 +17,8 @@ nameOverride: sglang-1p1d
 workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit
 routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0827-pot-loads
 aiterJitDir: ""
+aiterJitOpusExtraKids:
+  - 10006
 imagePullPolicy: Always
 imagePullSecrets:
   - tencent-registry
