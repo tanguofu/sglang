@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import math
 import time
 import uuid
+from collections import OrderedDict
 from enum import Enum
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Union
@@ -80,6 +82,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MEDIA_CONTENT_PART_TYPES = frozenset({"image_url", "video_url", "audio_url"})
+_VALID_TOOL_SCHEMAS_MAX_SIZE = 4096
+# Digests of tool parameter schemas that passed check_schema.
+_VALID_TOOL_SCHEMAS: OrderedDict[bytes, None] = OrderedDict()
+
+
+def _check_tool_schema_once(parameters: Any) -> Optional[str]:
+    """Validate a tool schema, and skip validation for one that already passed.
+
+    An agent sends the same tools on every request. check_schema is pure Python
+    and runs on the event loop of the API server. A schema that fails is not
+    remembered, so it is checked and reported every time.
+    """
+    try:
+        payload = orjson.dumps(parameters, option=orjson.OPT_SORT_KEYS)
+        if b"null" in payload:
+            # orjson writes NaN and Infinity as null. A schema with one of them
+            # must not share a digest with the schema that has a real null.
+            json.dumps(parameters, allow_nan=False)
+    except (TypeError, ValueError):
+        return validate_tool_parameters_schema(parameters)
+    digest = hashlib.blake2b(payload, digest_size=16).digest()
+    if digest in _VALID_TOOL_SCHEMAS:
+        _VALID_TOOL_SCHEMAS.move_to_end(digest)
+        return None
+    error = validate_tool_parameters_schema(parameters)
+    if error is not None:
+        return error
+    _VALID_TOOL_SCHEMAS[digest] = None
+    if len(_VALID_TOOL_SCHEMAS) > _VALID_TOOL_SCHEMAS_MAX_SIZE:
+        _VALID_TOOL_SCHEMAS.popitem(last=False)
+    return None
 
 
 def normalize_tool_content(role: str, content):
@@ -845,7 +878,7 @@ class OpenAIServingChat(OpenAIServingBase):
                 continue
             # Structural check only. Do not enforce format:regex — Codex / Claude
             # Code send JS \\p{Cc} patterns that Python re cannot compile.
-            err = validate_tool_parameters_schema(tool.function.parameters)
+            err = _check_tool_schema_once(tool.function.parameters)
             if err:
                 if "cycle" in err:
                     return (
