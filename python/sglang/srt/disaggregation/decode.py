@@ -1056,7 +1056,9 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
                 prefix_indices = None
                 prefix_len = 0
                 total_prefix_len = 0
-                required_alloc_tokens = self._pre_alloc_fill_len(decode_req.req)
+                required_alloc_tokens = self._required_alloc_tokens(
+                    fill_len=self._pre_alloc_fill_len(decode_req.req), prefix_len=0
+                )
 
             required_tokens_for_request = (
                 required_alloc_tokens + self.num_reserved_decode_tokens
