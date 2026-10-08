@@ -206,34 +206,38 @@ helm rollback sglang-1p1d -n kube-system
 
 ## 镜像构建（从源码复现）
 
-镜像由 `mi308x-1p1d-src` 分支构建（基础镜像 upstream 11d03eaeef + Dockerfile
+镜像由 `mi308x-1p1d-optimize` 分支构建（基础镜像 upstream 11d03eaeef + Dockerfile
 构建期 patch，55 个 assert 门禁保证 patch 全部命中）：
 
 ```bash
 # 1) 推分支（若未推）
-git push origin mi308x-1p1d-src
+git push origin mi308x-1p1d-optimize
 
 # 2) ti-builder（9.135.3.173）构建
 ssh ti-builder
 mkdir -p /data/sglang-build && cd /data/sglang-build
 if [ ! -d sglang-src ]; then
-  git clone --depth 1 --branch mi308x-1p1d-src \
+  git clone --depth 1 --branch mi308x-1p1d-optimize \
     https://github.com/tanguofu/sglang.git sglang-src
 else
-  cd sglang-src && git fetch origin mi308x-1p1d-src && \
-  git checkout -B mi308x-1p1d-src FETCH_HEAD
+  cd sglang-src && git fetch origin mi308x-1p1d-optimize && \
+  git checkout -B mi308x-1p1d-optimize FETCH_HEAD
 fi
 cd /data/sglang-build/sglang-src
-TAG=v0919c-src-cufix
+TAG=v1008-src-unified
 docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile \
   -t mirrors.tencent.com/ti-platform/sglang-glm52-308x:$TAG .
 docker push mirrors.tencent.com/ti-platform/sglang-glm52-308x:$TAG
+ROUTER_TAG=v1008-router-unified
+docker build -f docker/rocm-mi308x-glm52-pd/Dockerfile.router-slim \
+  -t mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:$ROUTER_TAG .
+docker push mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:$ROUTER_TAG
 # 构建时长 ~30-60 分钟（mooncake make -j64 为主），单镜像 ~64GB
 ```
 
-源码一致性已验证：本地分支 8 个关键文件 md5 与生产镜像内完全一致
-（fp8_utils / topk_v2.cuh / conn.py / deepseek_v2.py / dsa_indexer.py /
-eagle_worker_v2.py / tilelang_kernel.py / dsa_topk_backend.py）。
+统一镜像 `v1008-src-unified` 由该分支构建，包含 tool-args 容错、
+Mooncake 黑名单过期、router tree deadlock、AITER JIT cache 和 freeze_gc
+重试修复。
 
 ## 参考
 

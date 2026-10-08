@@ -26,7 +26,7 @@ Router args (matches live):
 
 `MOONCAKE_MASTER=sglang-1p1d-mooncake-master.kube-system.svc.cluster.local:50051`. The Service DNS follows the master pod if it is rescheduled; the RDMA data path remains P2P. `SGLANG_HOST_IP` / `MOONCAKE_LOCAL_HOSTNAME` are the worker host IPs.
 
-Router policies: `--prefill-policy cache_aware --decode-policy power_of_two` on `v0827-pot-loads`. Prefill uses cache-aware routing for prefix reuse; decode uses power-of-two load balancing. Cross-prefill prefix reuse is Mooncake L3.
+Router policies: `--prefill-policy cache_aware --decode-policy power_of_two` on `v1008-router-unified`. Prefill uses cache-aware routing for prefix reuse; decode uses power-of-two load balancing. Cross-prefill prefix reuse is Mooncake L3.
 
 Public HTTPRoute: `https://glm52-pd-1p1d.jmpti.woa.com` → Service `sglang-1p1d-router:30001`.
 
@@ -125,7 +125,7 @@ A per-node master would partition L3 and make cross-P prefix sharing impossible.
 - Prefill-0 / prefill-1: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0919c-src-cufix`
 - Decode-0: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0919c-src-cufix`
 - Decode-1: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0922-src-stream-abort-prod`
-- Router: `mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0827-pot-loads`
+- Router: `mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v1008-router-unified`
 - Rollback workers: keep the tag that was running immediately before the change
 
 The current lineage keeps the FlyDSL gfx942 ragged/prefill MQA kernel, HIP event optimization, BF16 gate/indexer overlay, and decode MoE CSV. `SGLANG_DSA_HIP_DISABLE_PRESHUFFLE=0` keeps AITER preshuffle enabled, which is why serving remains on `page_size=64`. The TP8 canary enables the native paged FlyDSL kernel on that layout.

@@ -14,8 +14,8 @@
 
 nameOverride: sglang-1p1d
 
-workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-hicache-jit
-routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v0827-pot-loads
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1008-src-unified
+routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v1008-router-unified
 aiterJitDir: ""
 aiterJitOpusExtraKids:
   - 10006
@@ -33,7 +33,7 @@ prefills:
   - nodeName: node-21.151.225.144
     ip: 21.151.225.144
     # Prefill long-context (FlyDSL MQA i32-safe chunk). Fusion env off.
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0924-src-mooncake-fix
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1008-src-unified
     extraEnv:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
       AITER_LOG_TUNED_CONFIG: "1"
@@ -44,7 +44,7 @@ prefills:
   - nodeName: node-21.151.225.152
     ip: 21.151.225.152
     # Prefill long-context (FlyDSL MQA i32-safe chunk). Fusion env off.
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0924-src-mooncake-fix
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1008-src-unified
     extraEnv:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
       AITER_LOG_TUNED_CONFIG: "1"
@@ -65,7 +65,7 @@ decodes:
     # "state was deleted in TokenizerManager" (observed 4726 lines for one rid).
     # v0922/v0924 replace create_abort_task() with wrap_stream_with_abort()
     # (abort on asyncio.CancelledError) plus a `!= DECODE` guard.
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0924-src-mooncake-fix
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1008-src-unified
     extraEnv:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
       AITER_LOG_TUNED_CONFIG: "1"
@@ -75,7 +75,7 @@ decodes:
   - nodeName: node-21.151.225.172
     ip: 21.151.225.172
     # CK dense GEMM canary first (07:11), then decode-0. Pin so helm does not revert.
-    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0922-src-stream-abort-prod
+    workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1008-src-unified
     extraEnv:
       AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
       AITER_LOG_TUNED_CONFIG: "1"
@@ -249,7 +249,7 @@ commonArgs:
   - --log-level info
 
 prefill:
-  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0924-src-mooncake-fix
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1008-src-unified
   # Agent-context fix (2026-09-07): prefix nodes >= SGLANG_HICACHE_BIG_NODE_TOKENS
   # (default 65536) back up D->H on the FIRST insert instead of waiting for the
   # write_through_selective 2nd hit. Codex turn-3 was cold-prefilling 81s when
@@ -292,7 +292,7 @@ prefill:
       memory: 1800Gi
 
 decode:
-  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0826-fused-topk
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1008-src-unified
   # Native paged FlyDSL now supports page_size=1 and AITER preshuffle
   # page_size=16/32/64. Keep it disabled by default so a canary can opt in.
   pagedFlydsl:
