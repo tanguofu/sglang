@@ -243,6 +243,22 @@ Prefill 必须关闭 AITER allreduce fusion；chart 已将该参数收敛到 dec
 2026-10-08 实测：prefill 开启 fusion 会使 200K 冷 prefill 从约 78s 回归到
 102s，关闭后 prefill-1 相比混合基线提升约 16%。
 
+## 2026-10-08 rev89 发布记录
+
+- Worker / Mooncake master：`sglang-glm52-308x:v1008-src-unified`
+- Router：`sglang-glm52-308x-pd-router:v1008-router-unified`
+- 关键配置：prefill 关闭 AITER allreduce fusion，decode 保留；
+  `router.balanceAbsThreshold=1`；Mooncake session 失败阈值 3 + TTL 300s。
+- 发布命令必须带 `--force-conflicts`，否则历史 `kubectl patch/set` 的
+  field-manager ownership 会阻塞 Helm server-side apply。
+- 验证结果：Rust 835 passed；worker pytest 7 passed；Helm lint/render/server
+  dry-run 通过；坏 tool-args 与 JS Unicode regex 回放均 200；200K needle 通过。
+- 官方有界评测（MAX_TOKENS=16384）：46/46 HTTP 200，AIME 2025 66.7%，
+  GPQA-Diamond 68.8%；16K 截断会压低分数，不能替代官方 163840-token 分数。
+- 200K 冷 prefill：发布前 median 78.55s，发布后 76.785s。
+- 4 并发 200K：最大 TTFT 229.87s → 153.32s，长尾明显收敛。
+- 发布后 router 计数：138/138 HTTP 200，无 4xx/5xx。
+
 ## 参考
 
 - [P0 MoE tuned 修复详情](../../../docs/pd_200k_cold_cache_fix_progress.md)
