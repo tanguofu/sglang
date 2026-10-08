@@ -236,7 +236,6 @@ commonArgs:
   - --attention-backend dsa
   - --dsa-prefill-backend tilelang
   - --dsa-decode-backend tilelang
-  - --enable-aiter-allreduce-fusion
   - --enable-fused-qk-norm-rope
   - --schedule-conservativeness 0.8
   - --kv-cache-dtype fp8_e4m3
@@ -299,6 +298,7 @@ decode:
     enabled: false
   extraEnv: {}
   args:
+    - --enable-aiter-allreduce-fusion
     - --mem-fraction-static 0.92
     - --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32
     - --cuda-graph-max-bs-decode 32

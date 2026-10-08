@@ -1,6 +1,6 @@
 # GLM-5.3 MI308X 2P2D Helm chart
 
-Live snapshot of `kube-system/sglang-1p1d` as of 2026-09-23. Two TP8 prefills and two TP8 decodes, with GDR PD, DSA tilelang + FlyDSL MQA, NEXTN, and Mooncake L3 HiCache. Serving uses `page_size=64`; Mooncake store sidecars and router `power_of_two` remain enabled.
+Live snapshot of `kube-system/sglang-1p1d` as of 2026-10-08. Two TP8 prefills and two TP8 decodes, with GDR PD, DSA tilelang + FlyDSL MQA, NEXTN, and Mooncake L3 HiCache. Serving uses `page_size=64`; Mooncake store sidecars and router `power_of_two` remain enabled.
 
 Use this chart to rebuild the **current** cluster from zero. Worker discovery is the live scheme: **hostNetwork + node host IPs** (not STS DNS). Prefill and decode all bind `:30000` / `:8998` because they sit on different nodes.
 
@@ -122,10 +122,9 @@ A per-node master would partition L3 and make cross-P prefix sharing impossible.
 
 ## Images
 
-- Prefill-0 / prefill-1: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0919c-src-cufix`
-- Decode-0: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0919c-src-cufix`
-- Decode-1: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v0922-src-stream-abort-prod`
+- Prefill-0 / prefill-1: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1008-src-unified`
+- Decode-0 / decode-1: `mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1008-src-unified`
 - Router: `mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v1008-router-unified`
 - Rollback workers: keep the tag that was running immediately before the change
 
-The current lineage keeps the FlyDSL gfx942 ragged/prefill MQA kernel, HIP event optimization, BF16 gate/indexer overlay, and decode MoE CSV. `SGLANG_DSA_HIP_DISABLE_PRESHUFFLE=0` keeps AITER preshuffle enabled, which is why serving remains on `page_size=64`. The TP8 canary enables the native paged FlyDSL kernel on that layout.
+The current lineage keeps the FlyDSL gfx942 ragged/prefill MQA kernel, HIP event optimization, BF16 gate/indexer overlay, and decode MoE CSV. `SGLANG_DSA_HIP_DISABLE_PRESHUFFLE=0` keeps AITER preshuffle enabled, which is why serving remains on `page_size=64`. AITER allreduce fusion is decode-only: enabling it on prefill regressed 200K cold prefill by about 24%, while disabling it on prefill improved prefill-1 by about 16% versus the v0924/v0930 mixed baseline.

@@ -239,6 +239,10 @@ docker push mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:$ROUTER_
 Mooncake 黑名单过期、router tree deadlock、AITER JIT cache 和 freeze_gc
 重试修复。
 
+Prefill 必须关闭 AITER allreduce fusion；chart 已将该参数收敛到 decode-only。
+2026-10-08 实测：prefill 开启 fusion 会使 200K 冷 prefill 从约 78s 回归到
+102s，关闭后 prefill-1 相比混合基线提升约 16%。
+
 ## 参考
 
 - [P0 MoE tuned 修复详情](../../../docs/pd_200k_cold_cache_fix_progress.md)
