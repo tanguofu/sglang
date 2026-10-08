@@ -663,6 +663,38 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_cache_aware_small_threshold_triggers_load_balancing() {
+        let policy = CacheAwarePolicy::with_config(CacheAwareConfig {
+            cache_threshold: 0.5,
+            balance_abs_threshold: 1,
+            balance_rel_threshold: 1.5,
+            eviction_interval_secs: 0,
+            max_tree_size: 10000,
+        });
+
+        let worker1 = BasicWorkerBuilder::new("http://w1:8000")
+            .worker_type(WorkerType::Regular)
+            .build();
+        let worker2 = BasicWorkerBuilder::new("http://w2:8000")
+            .worker_type(WorkerType::Regular)
+            .build();
+
+        worker1.increment_load();
+        worker1.increment_load();
+
+        let workers: Vec<Arc<dyn Worker>> = vec![Arc::new(worker1), Arc::new(worker2)];
+        policy.init_workers(&workers);
+
+        let info = SelectWorkerInfo {
+            request_text: Some("test"),
+            ..Default::default()
+        };
+        let idx = policy.select_worker(&workers, &info).await.unwrap();
+
+        assert_eq!(idx, 1);
+    }
+
     // In imbalanced mode the overloaded worker must be avoided AND the remaining
     // tied (min-load) workers must be spread across via random tie-breaking.
     #[tokio::test]

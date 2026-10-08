@@ -1825,6 +1825,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_select_pd_pair_large_text_cache_aware() {
+        use std::time::{Duration, Instant};
+
+        let worker_registry = Arc::new(WorkerRegistry::new());
+        let policy_registry = Arc::new(PolicyRegistry::new(
+            crate::config::PolicyConfig::CacheAware {
+                cache_threshold: 0.8,
+                balance_abs_threshold: 0,
+                balance_rel_threshold: 1.5,
+                eviction_interval_secs: 300,
+                max_tree_size: 10_000,
+            },
+        ));
+        let router = PDRouter {
+            worker_registry: Arc::clone(&worker_registry),
+            policy_registry,
+            client: Client::new(),
+            retry_config: RetryConfig::default(),
+            api_key: Some("test_api_key".to_string()),
+            enable_igw: false,
+        };
+
+        worker_registry.register(Arc::from(create_test_worker(
+            "http://prefill".to_string(),
+            WorkerType::Prefill {
+                bootstrap_port: Some(8998),
+            },
+            true,
+        )));
+        worker_registry.register(Arc::from(create_test_worker(
+            "http://decode".to_string(),
+            WorkerType::Decode,
+            true,
+        )));
+
+        let text = "x".repeat(200_000);
+        let started = Instant::now();
+        let result = router
+            .select_pd_pair(Some(&text), Some("test-model"), None)
+            .await;
+        let elapsed = started.elapsed();
+
+        assert!(result.is_ok());
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "large-text PD selection took too long: {elapsed:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_empty_worker_lists() {
         let router = create_test_pd_router();
 

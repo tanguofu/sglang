@@ -61,6 +61,18 @@ Before every Helm change:
 
 Each GPU node needs `/data/model/glm52-fp8` and `/data/aiter_configs/a8w8_blockscale_tuned_fmoe_glm5_1_cu80.csv` (cu_num=80 **and** decode tiles `expert=256,topk=8` for token 1..128; see `scripts/merge_decode_fmoe_256_8.py`). Prefill will try `/data/mooncake-patched/patch_evict_backup.py` (v2) and `patch_prefetch_log.py` and continue if they are missing.
 
+Run the 200K TTFT/TFOT benchmark from a worker Pod with the model tokenizer mounted:
+
+```bash
+python3 /tmp/bench_200k_ttft_tfot.py \
+  --url http://<router-ip>:30001 \
+  --model glm-5.3 \
+  --tokenizer /data/model/glm53-fp8 \
+  --target-tokens 200000 \
+  --cold-runs 1 \
+  --warm-runs 0
+```
+
 ## BF16 gate / indexer overlay (chart 0.3.6, GLM-5.3, 2xTP8 decode overlay)
 
 Do **not** merge the fat `/data/aiter_configs/bf16_tuned_gemm.csv`. Init generates a thin table (threaded, `--workers 8`) and the main container **overwrites** the image file:

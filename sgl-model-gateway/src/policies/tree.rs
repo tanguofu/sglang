@@ -1870,6 +1870,29 @@ mod tests {
         assert_eq!(result.input_char_count, 9); // "hello你好世界" = 9 chars
     }
 
+    #[test]
+    fn test_prefix_match_with_counts_large_text() {
+        let tree = Tree::new();
+        let filler = "x".repeat(200_000);
+        let texts: Vec<String> = (0..10)
+            .map(|index| format!("[salt-{index:02}]{filler}"))
+            .collect();
+
+        let started = Instant::now();
+        for text in &texts {
+            tree.insert(text, "tenant1");
+        }
+        let result = tree.prefix_match_with_counts(&texts[0]);
+        let elapsed = started.elapsed();
+
+        assert_eq!(result.input_char_count, texts[0].chars().count());
+        assert!(result.matched_char_count > 0);
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "large-text operations took too long: {elapsed:?}"
+        );
+    }
+
     // ==================== Node Splitting Edge Cases ====================
 
     #[test]

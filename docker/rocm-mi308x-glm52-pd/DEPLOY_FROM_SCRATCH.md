@@ -59,6 +59,7 @@ kubectl get ds -n kube-system amdgpu-device-plugin-daemonset
 /data/mooncake-patched/patch_evict_backup.py        # prefill: 驱逐前 D->H 备份
 /data/mooncake-patched/patch_prefetch_log.py        # prefill: L3 prefetch 日志
 /data/mooncake-patched/patch_tool_schema_regex.py   # 全部: 跳过 format:regex
+/data/mooncake-patched/patch_tool_args_tolerant.py  # 全部: 容忍历史 tool_call 参数 JSON 截断
 ```
 
 **关键**：MI308X 报 `cu_num=80`，aiter 的 glm5_1 tuned 配置写 `cu_num=304`。

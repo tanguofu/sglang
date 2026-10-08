@@ -50,6 +50,11 @@ spec:
       # spawned the leftover storm. Same as mooncake-master / workers.
       tolerations:
         - operator: Exists
+      volumes:
+        - name: data
+          hostPath:
+            path: {{ .Values.hostPathData }}
+            type: Directory
       containers:
         - name: router
           image: {{ .Values.routerImage }}
@@ -118,6 +123,10 @@ spec:
                 - ALL
             seccompProfile:
               type: RuntimeDefault
+          volumeMounts:
+            - name: data
+              mountPath: {{ .Values.hostPathData }}
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /health

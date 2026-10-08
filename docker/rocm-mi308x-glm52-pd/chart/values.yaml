@@ -150,7 +150,8 @@ router:
   cbTimeoutSecs: 60
   prefillPolicy: cache_aware
   decodePolicy: power_of_two
-  balanceAbsThreshold: 16
+  # Must stay below maxRunningRequests; otherwise the load-balancing branch can never trigger.
+  balanceAbsThreshold: 1
   balanceRelThreshold: 1.5
 
 ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
