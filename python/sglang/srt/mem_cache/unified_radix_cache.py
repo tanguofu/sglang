@@ -425,6 +425,19 @@ class UnifiedRadixCache(BasePrefixCache):
         assert not result.cache_actions
         return result
 
+    def supports_fast_match_prefix(self) -> bool:
+        return self.tree_core.supports_fast_match_prefix()
+
+    def touch_prefix(self, key: RadixKey) -> None:
+        # Tree walk only; skips match_prefix's session shortcut, finalizers and linker.
+        if self.disable:
+            return
+        result = self.tree_core.match_prefix(MatchPrefixParams(key=key))
+        self._apply_cache_actions(result.cache_actions)
+
+    def supports_prefix_sharing(self) -> bool:
+        return not self.disable
+
     def insert(self, params: InsertParams) -> InsertResult:
         if self.disable:
             return InsertResult(prefix_len=0)

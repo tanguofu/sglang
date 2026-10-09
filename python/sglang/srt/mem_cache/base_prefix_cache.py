@@ -273,6 +273,10 @@ class BasePrefixCache(ABC, PrefixCacheTrait):
     def supports_fast_match_prefix(self) -> bool:
         return False
 
+    def touch_prefix(self, key: RadixKey) -> None:
+        """Bump LRU recency along ``key``'s cached path. Unlike ``match_prefix``,
+        never allocates, loads, or queries external tiers."""
+
     def resolve_node_handle(self, node_handle: Any) -> Any:
         """Map a node handle to its node -- e.g. UnifiedRadixCache looks up the
         node object from its NodeId. Temporary API for the Unified Radix Cache

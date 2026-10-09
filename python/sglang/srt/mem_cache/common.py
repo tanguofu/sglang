@@ -16,6 +16,7 @@ from sglang.srt.hardware_backend.npu.dsv4.dsv4_common_hooks import (
 from sglang.srt.mem_cache.allocator.swa import SWATokenToKVPoolAllocator
 from sglang.srt.mem_cache.base_prefix_cache import BasePrefixCache, EvictParams
 from sglang.srt.mem_cache.memory_pool import HybridReqToTokenPool, ReqToTokenPool
+from sglang.srt.mem_cache.radix_cache import RadixKey
 from sglang.srt.runtime_context import get_serving, get_spec
 from sglang.srt.utils.common import ceil_align
 
@@ -93,6 +94,15 @@ def free_swa_out_of_window_slots(
             token_to_kv_pool_allocator, req_to_token_pool, req, new_swa_evicted_seqlen
         )
         req.kv.swa_evicted_seqlen = new_swa_evicted_seqlen
+
+
+def touch_waiting_prefix(req: Req, tree_cache: BasePrefixCache) -> None:
+    tree_cache.touch_prefix(
+        RadixKey(
+            token_ids=req.origin_input_ids + req.output_ids,
+            extra_key=req.extra_key,
+        )
+    )
 
 
 def maybe_cache_unfinished_req(req: Req, tree_cache: BasePrefixCache, **kwargs):
