@@ -139,7 +139,11 @@ def normalize_assistant_tool_call_arguments(
                 function["arguments"] = parse_tool_call_arguments(function["arguments"])
             except ValueError:
                 if strict:
-                    raise
+                    # FIX(tool-args-tolerant): a replayed assistant tool call
+                    # with invalid JSON arguments (truncated stream, degenerate
+                    # value) must not 400 the whole conversation. Degrade to a
+                    # single _raw argument so the chat template still renders.
+                    function["arguments"] = {"_raw": function["arguments"]}
 
 
 def _extract_max_dynamic_patch(request: ChatCompletionRequest):
