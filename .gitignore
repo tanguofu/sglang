@@ -283,3 +283,8 @@ artifacts/
 
 # Internal, non-published docs
 internal-docs/
+
+# Docker build: upstream tracks this as a symlink, which makes the
+# python/sglang COPY fail with "cannot replace to directory ... with file".
+python/sglang/multimodal_gen/.claude/skills
+python/sglang/multimodal_gen/.claude/CLAUDE.md
