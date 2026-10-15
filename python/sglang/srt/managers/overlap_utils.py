@@ -506,10 +506,10 @@ class FutureMap:
         if n == 0:
             return
         if self.publish_ready is not None:
-            if _is_hip:
-                self.publish_ready.synchronize()
-            else:
-                self.publish_ready.wait()
+            # HIP: keep the non-blocking wait. Upstream added a
+            # `synchronize()` branch for HIP, but synchronize() blocks the CPU
+            # until the event completes and regressed TPOT on this deployment.
+            self.publish_ready.wait()
         fresh = self.new_seq_lens_buf[idx]
         seq_lens = batch.seq_lens.clone()
         seq_lens[-n:] = fresh + 1
