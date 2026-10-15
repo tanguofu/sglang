@@ -1,0 +1,231 @@
+aiterBf16Gemm:
+  enabled: true
+  hostCsv: /data/aiter_configs/mi308x_bf16_gate_indexer.csv
+  imageCsv: /sgl-workspace/aiter/aiter/configs/model_configs/mi308x_gfx942_bf16_tuned_gemm.csv
+  version: "1"
+  workers: 8
+aiterJitDir: ""
+aiterJitOpusExtraKids:
+- 10006
+allowHostPathOverlay: "0"
+apiKey: sk-46faecc9d0bc4dcd9db6a15c73ae91c8
+commonArgs:
+- --model-path /data/model/glm53-fp8
+- --model-impl sglang
+- --served-model-name glm-5.3
+- --tp-size 8
+- --pp-size 1
+- --trust-remote-code
+- --host 0.0.0.0
+- --context-length 1048576
+- --tool-call-parser glm47
+- --reasoning-parser glm45
+- --preferred-sampling-params '{"max_new_tokens":163840}'
+- --attention-backend dsa
+- --dsa-prefill-backend tilelang
+- --dsa-decode-backend tilelang
+- --enable-fused-qk-norm-rope
+- --schedule-conservativeness 0.8
+- --kv-cache-dtype fp8_e4m3
+- --max-running-requests 16
+- --disaggregation-transfer-backend mooncake
+- --num-reserved-decode-tokens 1024
+- --enable-metrics
+- --log-level info
+decode:
+  args:
+  - --enable-aiter-allreduce-fusion
+  - --mem-fraction-static 0.92
+  - --cuda-graph-bs-decode 1 2 3 4 5 6 7 8 9 10 12 16 20 24 32
+  - --cuda-graph-max-bs-decode 32
+  - --speculative-algorithm NEXTN
+  - --speculative-num-steps 2
+  - --speculative-num-draft-tokens 4
+  - --speculative-eagle-topk 1
+  - --num-continuous-decode-steps 4
+  - --stream-interval 2
+  - --skip-server-warmup
+  - --watchdog-timeout 1800
+  - --load-balance-method follow_bootstrap_room
+  - --disaggregation-mode decode
+  extraEnv: {}
+  pagedFlydsl:
+    enabled: false
+  resources:
+    limits:
+      amd.com/gpu: "8"
+    requests:
+      amd.com/gpu: "8"
+      cpu: "360"
+      memory: 2100Gi
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1011-src-ports
+decodes:
+- extraEnv:
+    AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
+    AITER_LOG_TUNED_CONFIG: "1"
+    SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION: "1"
+    SGLANG_ROCM_USE_CK_GEMM_GFX942: "1"
+  ip: 21.151.225.132
+  nodeName: node-21.151.225.132
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1011-src-ports
+- extraEnv:
+    AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
+    AITER_LOG_TUNED_CONFIG: "1"
+    SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION: "1"
+    SGLANG_ROCM_USE_CK_GEMM_GFX942: "1"
+  ip: 21.151.225.172
+  nodeName: node-21.151.225.172
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1011-src-ports
+gateway:
+  hostname: glm52-pd-1p1d.jmpti.woa.com
+  httprouteName: glm52-pd-1p1d
+  parentGateway: eg-tke
+  parentNamespace: ti-cloud
+hicache:
+  enabled: true
+  extraConfig:
+    prefetch_threshold: 1
+  memLayout: page_first_direct
+  prefetchPolicy: wait_complete
+  ratio: 1.5
+  storageBackend: mooncake
+  writePolicy: write_through_selective
+hostPathData: /data
+ibDevice: '{"0":"bnxt_re_bond0","1":"bnxt_re_bond1","2":"bnxt_re_bond2","3":"bnxt_re_bond3","4":"bnxt_re_bond4","5":"bnxt_re_bond5","6":"bnxt_re_bond6","7":"bnxt_re_bond7"}'
+imagePullPolicy: Always
+imagePullSecrets:
+- tencent-registry
+modelName: glm-5.3
+modelPath: /data/model/glm53-fp8
+mooncake:
+  globalSegmentSize: 64gb
+  master:
+    enabled: true
+    evictionHighWatermark: "0.95"
+    ip: 21.151.225.152
+    metricsPort: 9003
+    nodeName: node-21.151.225.152
+    port: 50051
+  metadataServer: P2PHANDSHAKE
+  mmapArenaPoolSize: 4gb
+  store:
+    decodeSegmentSize: 256GB
+    enabled: true
+    port: 50052
+    prefillSegmentSize: 64GB
+    standalonePrefill: false
+nameOverride: sglang-1p1d
+ports:
+  decode:
+    bootstrap: 8998
+    http: 30000
+  mooncake:
+    metrics: 9003
+    rpc: 50051
+  prefill:
+    bootstrap: 8998
+    http: 30000
+  router:
+    http: 30001
+    metrics: 19096
+prefill:
+  args:
+  - --mem-fraction-static 0.85
+  - --chunked-prefill-size 16384
+  - --prefill-max-requests 32
+  - --max-prefill-tokens 32768
+  - --disable-decode-cuda-graph
+  - --disaggregation-mode prefill
+  - --watchdog-timeout 7200
+  bigNodeBackup: true
+  extraEnv:
+    MC_MMAP_ARENA_POOL_SIZE: 4gb
+    MOONCAKE_GLOBAL_SEGMENT_SIZE: 64gb
+    MOONCAKE_TE_META_DATA_SERVER: P2PHANDSHAKE
+    SGLANG_ENABLE_FAILED_SESSION_PROBE: "1"
+    SGLANG_ENABLE_STRICT_MEM_CHECK_DURING_IDLE: "0"
+    SGLANG_HICACHE_HOST_ALLOCATOR: default
+    SGLANG_MOONCAKE_FAILED_SESSION_TTL_S: "300"
+    SGLANG_MOONCAKE_SESSION_FAILURE_THRESHOLD: "3"
+  resources:
+    limits:
+      amd.com/gpu: "8"
+    requests:
+      amd.com/gpu: "8"
+      cpu: "360"
+      memory: 1800Gi
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1011-src-ports
+  zombieFreeFix: true
+prefills:
+- extraEnv:
+    AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
+    AITER_LOG_TUNED_CONFIG: "1"
+    SGLANG_DSA_USE_TOPK_V2_PACKED: "1"
+    SGLANG_ENABLE_FAILED_SESSION_PROBE: "1"
+    SGLANG_MOONCAKE_FAILED_SESSION_TTL_S: "300"
+    SGLANG_MOONCAKE_SESSION_FAILURE_THRESHOLD: "3"
+  ip: 21.151.225.144
+  nodeName: node-21.151.225.144
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1011-src-ports
+- extraEnv:
+    AITER_CONFIG_GEMM_A8W8_BLOCKSCALE: /data/aiter_configs/a8w8_blockscale_tuned_gemm_glm5_1_cu80.csv
+    AITER_LOG_TUNED_CONFIG: "1"
+    SGLANG_DSA_USE_TOPK_V2_PACKED: "1"
+    SGLANG_ENABLE_FAILED_SESSION_PROBE: "1"
+    SGLANG_MOONCAKE_FAILED_SESSION_TTL_S: "300"
+    SGLANG_MOONCAKE_SESSION_FAILURE_THRESHOLD: "3"
+  ip: 21.151.225.152
+  nodeName: node-21.151.225.152
+  workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1011-src-ports
+probes:
+  failureThreshold: 40
+  initialDelaySeconds: 900
+  periodSeconds: 30
+  timeoutSeconds: 60
+router:
+  balanceAbsThreshold: 8
+  balanceRelThreshold: 3.0
+  cbTimeoutSecs: 60
+  decodePolicy: power_of_two
+  decodes: []
+  hostNetwork: true
+  metricsPort: 19096
+  nodeName: node-21.151.225.152
+  port: 30001
+  prefillPolicy: cache_aware
+routerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v1008-router-unified
+workerEnv:
+  AITER_CONFIG_FMOE: /data/aiter_configs/a8w8_blockscale_tuned_fmoe_glm5_1_cu80.csv
+  FLYDSL_FP8_MQA_LOGITS_VARIANT: mfma_r4_w4
+  HIP_FORCE_DEV_KERNARG: "1"
+  HIP_VISIBLE_DEVICES: 0,1,2,3,4,5,6,7
+  HSA_ENABLE_SDMA: "0"
+  MC_DISABLE_HIP_TRANSPORT: "1"
+  MC_GID_INDEX: "3"
+  MOONCAKE_PROTOCOL: rdma
+  NCCL_CUMEM_ENABLE: "0"
+  NCCL_DEBUG: WARN
+  NCCL_IB_GID_INDEX: "3"
+  NCCL_MIN_NCHANNELS: "112"
+  NCCL_NVLS_ENABLE: "0"
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  PYTORCH_ROCM_ARCH: gfx942
+  ROCM_QUICK_REDUCE_QUANTIZATION: INT8
+  SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN: "1"
+  SGLANG_DISABLE_CUDNN_CHECK: "1"
+  SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT: "600"
+  SGLANG_DISAGGREGATION_WAITING_TIMEOUT: "1800"
+  SGLANG_DSA_HIP_DISABLE_PRESHUFFLE: "0"
+  SGLANG_ENABLE_PCG_DSV2_DUAL_STREAM: "1"
+  SGLANG_HEALTH_CHECK_TIMEOUT: "300"
+  SGLANG_INT4_WEIGHT: "0"
+  SGLANG_MOE_PADDING: "1"
+  SGLANG_MOONCAKE_SEND_AUX_TCP: "1"
+  SGLANG_OPT_USE_TOPK_V2: "0"
+  SGLANG_PD_HOST_STAGING: "0"
+  SGLANG_ROCM_DISABLE_LINEARQUANT: "0"
+  SGLANG_ROCM_FUSED_DECODE_MLA: "1"
+  SGLANG_SET_CPU_AFFINITY: "1"
+  SGLANG_USE_AITER: "1"
+  SGLANG_USE_ROCM700A: "1"
+workerImage: mirrors.tencent.com/ti-platform/sglang-glm52-308x:v1008-src-unified

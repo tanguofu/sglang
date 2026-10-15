@@ -138,26 +138,21 @@ RUN set -eux; \
     python3 -c "from sgl_kernel import fast_topk_v2; print('fast_topk_v2 OK')"
 
 # ============================================================
-# Layer 2c: aiter upgrade d9e5ef7 -> 4f613c2 (2026-09-19).
-# Brings: opt dynmic_per_group_scaled_quant (#5631), indexer_qk_rope_quant
-# rewrite (#5576), flydsl radix topk one-block (#5363), topk_select half
-# formats (#5526), FMoE GEMM2 A addressing fix (#5519), triton 3.8 configs
-# (#5612), cu80 rows in tuned_fmoe_glm5_1 (covers the 256/8 routed-only path
-# left on default since 2026-08-23), and the flydsl fp8_mqa_logits BLOCK_KV=128
-# + variant system + FNUZ fix that our Layer-3 overlays used to carry
-# (upstreamed — overlays dropped).
-# JIT .so modules rebuild on first use (~60-90s per kernel, once).
+# Layer 2c: AIter upstream main ee72a9516 + GLM-5.3 non-Flash retune.
+# The wheel is built once on gfx942.  It keeps the production-equivalent JIT
+# packaging model, but ships the GLM-5.3 hot-path modules prebuilt so worker
+# restarts do not spend minutes in hipcc.
 # ============================================================
+COPY docker/rocm-mi308x-glm52-pd/artifacts/aiter/amd_aiter-glm53-perf20.whl /tmp/amd_aiter-0.1.0-cp310-cp310-linux_x86_64.whl
+COPY docker/rocm-mi308x-glm52-pd/artifacts/aiter/flydsl-0.3.4.1-cp310-cp310-manylinux_2_27_x86_64.whl /tmp/flydsl-0.3.4.1-cp310-cp310-manylinux_2_27_x86_64.whl
 RUN set -eux; \
-    cd /sgl-workspace/aiter; \
-    git fetch origin 4f613c281acd3fb9e47429a468458501ec966c15; \
-    git checkout 4f613c281acd3fb9e47429a468458501ec966c15; \
-    GPU_ARCHS=gfx942 pip install -e . --no-deps --no-build-isolation; \
-    find aiter/jit -maxdepth 1 -name '*.so' -delete; \
-    echo '/sgl-workspace/aiter' > /opt/venv/lib/python3.10/site-packages/aiter_repo_path.pth; \
-    rm -f /opt/venv/lib/python3.10/site-packages/__editable__.amd_aiter*.pth \
-          /opt/venv/lib/python3.10/site-packages/__editable___amd_aiter*finder.py; \
-    python3 -c "import importlib.metadata as md; print('aiter', md.version('amd-aiter'))"
+    python3 -m pip install --force-reinstall --no-deps /tmp/flydsl-0.3.4.1-cp310-cp310-manylinux_2_27_x86_64.whl; \
+    python3 -m pip install --force-reinstall --no-deps /tmp/amd_aiter-0.1.0-cp310-cp310-linux_x86_64.whl; \
+    python3 -c "import importlib.metadata as md; print('aiter', md.version('amd-aiter'))"; \
+    test -s /opt/venv/lib/python3.10/site-packages/aiter/jit/module_norm.so; \
+    test -s /opt/venv/lib/python3.10/site-packages/aiter/jit/module_fused_qk_norm_rope_cache_quant_shuffle.so; \
+    test -s /opt/venv/lib/python3.10/site-packages/aiter/jit/module_rope_2c_cached_positions_fwd.so; \
+    test -s /opt/venv/lib/python3.10/site-packages/aiter/jit/module_sample.so
 
 # Upstream moved fp8_mqa_logits into kernels/mqa_logits/; sglang still imports
 # the old flat path. Re-export until the sglang side moves.
@@ -178,6 +173,12 @@ COPY docker/rocm-mi308x-glm52-pd/patches/mi308x_gfx942_bf16_gate_indexer.csv \
      /sgl-workspace/aiter/aiter/configs/model_configs/mi308x_gfx942_bf16_tuned_gemm.csv
 COPY docker/rocm-mi308x-glm52-pd/scripts/gen_bf16_gate_indexer.py \
      /opt/aiter-scripts/gen_bf16_gate_indexer.py
+
+# GLM-5.3 non-Flash cu80 retune: 1510 GEMM shapes, 14 normal fused-MoE
+# shapes, and 17 shared/decode fused-MoE shapes.
+COPY docker/rocm-mi308x-glm52-pd/patches/aiter-glm53-perf20/glm53_perf20_tuned_gemm.csv /opt/aiter-configs/glm53_perf20_tuned_gemm.csv
+COPY docker/rocm-mi308x-glm52-pd/patches/aiter-glm53-perf20/glm53_perf20_tuned_fmoe_normal.csv /opt/aiter-configs/glm53_perf20_tuned_fmoe_normal.csv
+COPY docker/rocm-mi308x-glm52-pd/patches/aiter-glm53-perf20/glm53_perf20_tuned_fmoe_shared.csv /opt/aiter-configs/glm53_perf20_tuned_fmoe_shared.csv
 
 # ============================================================
 # Layer 5: libbnxt_re-rdmav34.so 238.1.138.5 (ts4 kernel bnxt_re ABI match)
@@ -227,5 +228,7 @@ ENV SGLANG_DSA_HIP_DISABLE_PRESHUFFLE=1
 ENV SGLANG_PD_HOST_STAGING=0
 ENV MC_DISABLE_HIP_TRANSPORT=1
 ENV MOONCAKE_PROTOCOL=rdma
+ENV AITER_CONFIG_GEMM_A8W8_BLOCKSCALE=/opt/aiter-configs/glm53_perf20_tuned_gemm.csv
+ENV AITER_CONFIG_FMOE=/opt/aiter-configs/glm53_perf20_tuned_fmoe_normal.csv:/opt/aiter-configs/glm53_perf20_tuned_fmoe_shared.csv
 
 CMD ["/bin/bash"]

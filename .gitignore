@@ -184,6 +184,7 @@ tl_out/
 # personnal
 work_dirs/
 *.csv
+!docker/rocm-mi308x-glm52-pd/patches/aiter-glm53-perf20/*.csv
 
 !logo.png
 !docs/images/*.png
@@ -275,6 +276,9 @@ test/registered/xpu/test_nvidia_nemotron_3_nano.py
 *.ply
 *.npz
 artifacts/
+!docker/rocm-mi308x-glm52-pd/artifacts/
+!docker/rocm-mi308x-glm52-pd/artifacts/aiter/
+!docker/rocm-mi308x-glm52-pd/artifacts/aiter/*.whl
 .claude/scheduled_tasks.lock
 .humanize/
 

@@ -59,7 +59,7 @@ Before every Helm change:
 5. Check the peer worker's `token_usage < 0.55`, retract count, and preallocation
    before deleting a worker pod.
 
-Each GPU node needs `/data/model/glm52-fp8` and `/data/aiter_configs/a8w8_blockscale_tuned_fmoe_glm5_1_cu80.csv` (cu_num=80 **and** decode tiles `expert=256,topk=8` for token 1..128; see `scripts/merge_decode_fmoe_256_8.py`). Prefill will try `/data/mooncake-patched/patch_evict_backup.py` (v2) and `patch_prefetch_log.py` and continue if they are missing.
+Each GPU node needs `/data/model/glm53-fp8`. The GLM-5.3 non-Flash GEMM and fused-MoE cu80 tables are bundled in the candidate image under `/opt/aiter-configs/`; no node-local AIter CSV is required. Prefill will try `/data/mooncake-patched/patch_evict_backup.py` (v2) and `patch_prefetch_log.py` and continue if they are missing.
 
 ## BF16 gate / indexer overlay (chart 0.3.6, GLM-5.3, 2xTP8 decode overlay)
 
