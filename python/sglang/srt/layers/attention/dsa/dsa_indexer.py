@@ -307,6 +307,23 @@ class Indexer(DSANPUIndexerMixin, BaseFusedOp):
             and not envs.SGLANG_DISABLE_DSA_INDEXER_FUSION.get()
             and not is_neox_style
         )
+        index_k_uses_rmsnorm = (
+            config is not None
+            and getattr(config, "index_k_norm_type", "layer") == "rms"
+        )
+        aiter_fused_fp8_requested = (
+            _is_hip
+            and _use_aiter
+            and not envs.SGLANG_DISABLE_AITER_FUSED_FP8_DSA_INDEXER.get()
+        )
+        self.use_aiter_fused_fp8_writer = (
+            aiter_fused_fp8_requested
+            and not index_k_uses_rmsnorm
+            and fused_fp8_writer_geometry_supported(
+                self.head_dim, self.rope_head_dim, self.block_size
+            )
+            and aiter_fused_fp8_writer_available()
+        )
         # Projection fusion is independent of CUDA's fused rotary/cache path.
         # HIP gfx942 stays opt-in and keeps the legacy Hadamard/cache contract.
         enable_rocm_proj = envs.SGLANG_ROCM_DSA_INDEXER_PROJECTION_FUSION.get()
