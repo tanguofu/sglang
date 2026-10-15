@@ -1,4 +1,6 @@
 import functools
+import json
+import os
 from functools import lru_cache
 from typing import Any, Optional, Tuple
 
@@ -2477,6 +2479,38 @@ with optional second cache (`extra_k_cache`).
 """
 
 
+def _poc_dump_attn_inputs(call_index: int, payload: dict) -> None:
+    """PoC-only: persist one real prefill-attention call for offline replay.
+
+    Gated by SGLANG_POC_DUMP_ATTN=1 and SGLANG_POC_DUMP_DIR. It only writes
+    files; it never changes what the kernel computes. Used to obtain real
+    shapes and metadata so tile parameters (block_I / inner_iter) can be swept
+    offline instead of guessed.
+    """
+    import os
+
+    out_dir = os.environ.get("SGLANG_POC_DUMP_DIR", "/tmp/poc_attn")
+    os.makedirs(out_dir, exist_ok=True)
+    meta: dict = {"call": call_index}
+    for name, value in payload.items():
+        if isinstance(value, torch.Tensor):
+            meta[name] = {
+                "shape": list(value.shape),
+                "dtype": str(value.dtype),
+                "stride": list(value.stride()) if value.is_contiguous() else None,
+            }
+            torch.save(
+                value.detach().to("cpu"), os.path.join(out_dir, f"{call_index}_{name}.pt")
+            )
+        else:
+            meta[name] = value
+    with open(os.path.join(out_dir, f"{call_index}_meta.json"), "w") as handle:
+        json.dump(meta, handle, indent=1)
+
+
+_POC_DUMP_STATE = {"enabled": None, "max_calls": 2, "n": 0}
+
+
 def dpsk_v4_fp8_attention_fwd(
     q: torch.Tensor,
     k_cache: torch.Tensor,
@@ -2498,6 +2532,37 @@ def dpsk_v4_fp8_attention_fwd(
     """
     Follows the original `flash_mla.flash_mla_with_kvcache` signature.
     """
+    if _POC_DUMP_STATE["enabled"] is None:
+        import os
+
+        _POC_DUMP_STATE["enabled"] = os.environ.get("SGLANG_POC_DUMP_ATTN") == "1"
+        _POC_DUMP_STATE["max_calls"] = int(os.environ.get("SGLANG_POC_DUMP_CALLS", "2"))
+    if _POC_DUMP_STATE["enabled"] and _POC_DUMP_STATE["n"] < _POC_DUMP_STATE["max_calls"]:
+        try:
+            _poc_dump_attn_inputs(
+                _POC_DUMP_STATE["n"],
+                dict(
+                    q=q,
+                    k_cache=k_cache,
+                    block_table=block_table,
+                    cache_seqlens=cache_seqlens,
+                    indices=indices,
+                    attn_sink=attn_sink,
+                    extra_k_cache=extra_k_cache,
+                    extra_indices_in_kvcache=extra_indices_in_kvcache,
+                    topk_length=topk_length,
+                    extra_topk_length=extra_topk_length,
+                    head_dim_v=head_dim_v,
+                    softmax_scale=softmax_scale,
+                    causal=causal,
+                    is_fp8_kvcache=is_fp8_kvcache,
+                ),
+            )
+            _POC_DUMP_STATE["n"] += 1
+        except Exception as exc:  # never let the probe break the forward
+            logger.warning("poc attn dump failed: %s", exc)
+            _POC_DUMP_STATE["enabled"] = False
+
     if _is_gfx95_supported:
         block_I, threads, num_stages, block_per_cu, cu = 64, 512, 0, 2, 256
     else:
