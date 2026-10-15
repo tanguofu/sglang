@@ -35,6 +35,7 @@ class PrecomputedMetadata:
     # Basic seqlens
     cache_seqlens: torch.Tensor  # int32, [bs]
     cu_seqlens_k: torch.Tensor  # int32, [bs+1]
+    req_pool_indices: torch.Tensor  # int64, [bs]
 
     # Page table
     page_indices: torch.Tensor  # int32, [bs, max_len] or [expanded_bs, max_len]
@@ -135,8 +136,10 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
             dsa_cu_seqlens_k = torch.empty(
                 bs + 1, dtype=torch.int32, device=self.device
             )
-            if self.real_page_size > 1:
-                real_cols = (max_len + self.real_page_size - 1) // self.real_page_size
+            if self.physical_page_size > 1:
+                real_cols = (
+                    max_len + self.physical_page_size - 1
+                ) // self.physical_page_size
                 real_page_table = torch.empty(
                     (bs, real_cols), dtype=torch.int32, device=self.device
                 )
@@ -145,7 +148,7 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
                 real_page_table = None
                 real_page_table_arg = page_indices
 
-            fused_dsa_decode_metadata(
+            self._fused_decode_metadata(
                 seq_lens=seq_lens,
                 req_pool_indices=req_pool_indices,
                 req_to_token=self.req_to_token,
@@ -158,7 +161,7 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
                 bs=bs,
                 max_len=max_len,
                 dsa_index_topk=self.dsa_index_topk,
-                real_page_size=self.real_page_size,
+                physical_page_size=self.physical_page_size,
             )
             seqlens_expanded = cache_seqlens
             seqlens_expanded_size = bs
@@ -173,6 +176,7 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
             return PrecomputedMetadata(
                 cache_seqlens=cache_seqlens,
                 cu_seqlens_k=cu_seqlens_k,
+                req_pool_indices=req_pool_indices,
                 page_indices=page_indices,
                 real_page_table=real_page_table,
                 seqlens_expanded=seqlens_expanded,
@@ -193,7 +197,9 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
 
         # Compute DSA seqlens
         dsa_cache_seqlens = compute_dsa_seqlens(
-            cache_seqlens, dsa_index_topk=self.dsa_index_topk
+            cache_seqlens,
+            dsa_index_topk=self.dsa_index_topk,
+            index_kpool=self.dsa_index_kpool,
         )
         seqlens_expanded = cache_seqlens
         seqlens_expanded_size = seqlens_expanded.shape[0]
@@ -202,7 +208,7 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
         dsa_cu_seqlens_k = compute_cu_seqlens(dsa_cache_seqlens)
 
         # Transform page table if needed
-        if self.real_page_size > 1:
+        if self.physical_page_size > 1:
             real_page_table = self._transform_table_1_to_real(page_indices)
         else:
             real_page_table = None  # Will use page_indices directly
@@ -218,6 +224,7 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
         return PrecomputedMetadata(
             cache_seqlens=cache_seqlens,
             cu_seqlens_k=cu_seqlens_k,
+            req_pool_indices=req_pool_indices,
             page_indices=page_indices,
             real_page_table=real_page_table,
             seqlens_expanded=seqlens_expanded,
@@ -263,10 +270,10 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
                 dtype=torch.int32,
                 device=self.device,
             )
-            if self.real_page_size > 1:
+            if self.physical_page_size > 1:
                 real_cols = (
-                    max_seqlen_k + self.real_page_size - 1
-                ) // self.real_page_size
+                    max_seqlen_k + self.physical_page_size - 1
+                ) // self.physical_page_size
                 real_page_table = torch.empty(
                     (seqlens_expanded_size, real_cols),
                     dtype=torch.int32,
@@ -277,7 +284,7 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
                 real_page_table = None
                 real_page_table_arg = page_indices
 
-            fused_dsa_target_verify_metadata(
+            self._fused_verify_metadata(
                 seq_lens=seq_lens,
                 req_pool_indices=req_pool_indices,
                 req_to_token=self.req_to_token,
@@ -291,7 +298,7 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
                 bs=bs,
                 max_seqlen_k=max_seqlen_k,
                 dsa_index_topk=self.dsa_index_topk,
-                real_page_size=self.real_page_size,
+                physical_page_size=self.physical_page_size,
                 next_n=self.speculative_num_draft_tokens,
             )
 
@@ -305,6 +312,7 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
             return PrecomputedMetadata(
                 cache_seqlens=cache_seqlens,
                 cu_seqlens_k=cu_seqlens_k,
+                req_pool_indices=req_pool_indices,
                 page_indices=page_indices,
                 real_page_table=real_page_table,
                 seqlens_expanded=seqlens_expanded,
@@ -342,14 +350,18 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
         )
 
         # Compute DSA seqlens
-        dsa_cache_seqlens = compute_dsa_seqlens(seqlens_expanded, self.dsa_index_topk)
+        dsa_cache_seqlens = compute_dsa_seqlens(
+            seqlens_expanded,
+            self.dsa_index_topk,
+            index_kpool=self.dsa_index_kpool,
+        )
         seqlens_expanded_size = seqlens_expanded.shape[0]
 
         # DSA cumsum
         dsa_cu_seqlens_k = compute_cu_seqlens(dsa_cache_seqlens)
 
         # Transform page table
-        if self.real_page_size > 1:
+        if self.physical_page_size > 1:
             real_page_table = self._transform_table_1_to_real(page_indices)
         else:
             real_page_table = None
@@ -365,6 +377,7 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
         return PrecomputedMetadata(
             cache_seqlens=cache_seqlens,
             cu_seqlens_k=cu_seqlens_k,
+            req_pool_indices=req_pool_indices,
             page_indices=page_indices,
             real_page_table=real_page_table,
             seqlens_expanded=seqlens_expanded,
@@ -375,9 +388,3 @@ class DeepseekSparseAttnBackendMTPPrecomputeMixin:
             max_seqlen_k=max_seqlen_k,
             flashmla_metadata=flashmla_metadata,
         )
-
-
-# Backward-compat alias
-DeepseekSparseAttnBackendMTPPrecomputeMixin = (
-    DeepseekSparseAttnBackendMTPPrecomputeMixin
-)

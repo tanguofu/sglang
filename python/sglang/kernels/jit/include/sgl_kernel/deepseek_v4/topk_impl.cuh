@@ -14,7 +14,8 @@
 ///  - the dispatcher selects cluster size 8 or 16 from the probed occupancy.
 ///
 /// Algorithm: fp16 coarse histogram -> threshold bin -> fp32-boundary collect ->
-/// exact radix tie-break.
+/// exact radix tie-break, plus an exact-key refinement when the threshold bin
+/// overflows the staging buffer (refine_ties).
 
 #pragma once
 
@@ -105,7 +106,7 @@ SGL_DEVICE uint16_t coarse_bin_to_bits_finite(uint32_t bin) {
 // exactly on a boundary included. Two pairs no fp32 threshold can separate are
 // left: -0.0 at the zero bin, and +inf at a NaN-key bin.
 template <uint32_t kBits>
-SGL_DEVICE float coarse_bin_lower_bound(uint32_t bin) {
+SGL_DEVICE float2 coarse_bin_bounds(uint32_t bin) {
   constexpr uint32_t kShift = 16 - kBits;
   constexpr uint32_t kInfBin = 0xFC00u >> kShift;  // bin holding the +inf key
   const uint32_t key = bin << kShift;              // ordered16 key at the low edge
@@ -216,6 +217,17 @@ struct TopKConfig {
   // by downstream sparse attention.
   static constexpr uint32_t kMaxNumTie = 2048;
   static constexpr uint32_t kRadixSize = 1 << 8;
+  // Radix width of the threshold-bin refinement (refine_ties). Wider
+  // than kRadixSize so that ceil(32 / kRefineBits) == 3 rounds cover the whole
+  // key: the histogram overlays the tie staging buffer, which that path
+  // re-derives anyway, so the extra bins are free. 12 is the widest that fits.
+  static constexpr uint32_t kRefineBits = 12;
+  static constexpr uint32_t kRefineSize = 1 << kRefineBits;
+  static constexpr uint32_t kRefineItems = kRefineSize / kBlockSize;
+  static_assert(
+      kRefineSize * sizeof(uint32_t) <= kMaxNumTie * sizeof(TieValue),
+      "the refinement histogram must fit the tie staging buffer it overlays");
+  static_assert(kRefineSize % kBlockSize == 0);
   static constexpr uint32_t kTopKItems = (kMaxTopK + kBlockSize - 1) / kBlockSize;
   // tie candidates owned per thread in the strided handle_tie loops
   static constexpr uint32_t kTieItems = kMaxNumTie / kBlockSize;
@@ -324,6 +336,44 @@ struct TopKConfig {
     }
   }
 
+  /// Threshold-digit search over the kRefineSize-bin refinement histogram in
+  /// `hist`, by the same rule radix_tie_select uses. One thread owns kRefineItems
+  /// contiguous bins. Publishes the result in `smem->match`. Block-wide; ends
+  /// with a barrier.
+  SGL_DEVICE static void refine_find_threshold(  //
+      const uint32_t* hist,
+      const uint32_t total_active,
+      const uint32_t topk_remain,
+      TieHandleSmem* smem) {
+    const auto tx = threadIdx.x;
+    const auto lane_id = tx % kWarpSize;
+    const auto warp_id = broadcast(tx / kWarpSize);
+
+    uint32_t counts[kRefineItems];
+    uint32_t local_sum = 0;
+#pragma unroll
+    for (uint32_t i = 0; i < kRefineItems; ++i) {
+      counts[i] = hist[tx * kRefineItems + i];
+      local_sum += counts[i];
+    }
+    const auto warp_inc = warp::inclusive_sum(local_sum, lane_id);
+    if (lane_id == kWarpSize - 1) smem->warp_sum[warp_id] = warp_inc;
+    __syncthreads();
+
+    // Inclusive prefix over all bins below this thread's first one.
+    uint32_t prefix = warp::reduce_sum(lane_id < warp_id ? smem->warp_sum[lane_id] : 0);
+    prefix += warp_inc - local_sum;
+#pragma unroll
+    for (uint32_t i = 0; i < kRefineItems; ++i) {
+      prefix += counts[i];
+      const auto above = total_active - prefix;  // active elements in bins ABOVE this one
+      if (above < topk_remain && above + counts[i] >= topk_remain) {
+        smem->match = {tx * kRefineItems + i, above, counts[i]};
+      }
+    }
+    __syncthreads();
+  }
+
   /// Exact radix select over the tie candidates: each thread owns kItems
   /// strided elements (inactive beyond num_ties). Requires
   /// num_ties <= kItems * kBlockSize.
@@ -377,7 +427,7 @@ struct TopKConfig {
       uint32_t warp_inc = 0;
       if (tx < kRadixSize) {
         hist_val = histogram[tx];
-        warp_inc = warp_inclusive_sum(lane_id, hist_val);
+        warp_inc = warp::inclusive_sum(hist_val, lane_id);
         if (lane_id == kWarpSize - 1) smem->warp_sum[warp_id] = warp_inc;
       }
       __syncthreads();

@@ -1,5 +1,11 @@
 [build-system]
-requires = ["setuptools>=61.0", "setuptools-rust>=1.10", "setuptools-scm>=8.0", "wheel"]
+requires = [
+  "setuptools>=61.0",
+  "setuptools-rust>=1.11",
+  "setuptools-scm>=8.0",
+  "torch==2.14.1",
+  "wheel",
+]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +13,7 @@ name = "sglang"
 dynamic = ["version"]
 description = "SGLang is a fast serving framework for large language models and vision language models."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -55,13 +61,13 @@ runtime_base = [
   "pyzmq>=25.1.2",
   "requests",
   "scipy",
-  "sentencepiece",
+  "sentencepiece==0.2.1",  # 0.2.2 rejects null pieces in InternVL tokenizers.
   "setproctitle",
   "smg-grpc-servicer>=0.5.0",
   "soundfile==0.13.1",
   "tiktoken",
   "tqdm",
-  "transformers==5.12.1",
+  "transformers==5.19.0",
   "uvicorn",
   "uvloop",
   "xxhash",
@@ -202,6 +208,8 @@ dev_mps = ["sglang[all_mps]", "sglang[test]"]
 
 [project.urls]
 "Homepage" = "https://github.com/sgl-project/sglang"
+"Documentation" = "https://docs.sglang.io"
+"Cookbook" = "https://docs.sglang.io/cookbook"
 "Bug Tracker" = "https://github.com/sgl-project/sglang/issues"
 
 [project.scripts]
@@ -221,6 +229,8 @@ rust-extensions = ["multimodal"]
   "srt/**/*",
   "kernels/**/*"
 ]
+# .claude/skills is a directory symlink; setuptools build_py cannot copy it.
+"sglang.multimodal_gen" = [".claude/*"]
 
 [tool.setuptools.packages.find]
 exclude = [
@@ -247,6 +257,6 @@ exclude = [
 [tool.setuptools_scm]
 root = ".."
 version_file = "sglang/_version.py"
-git_describe_command = ["python3", "python/tools/get_version_tag.py"]
+git_describe_command = ["python3", "scripts/release/get_version_tag.py"]
 # Allow editable installs even when .git metadata is not available.
 fallback_version = "0.0.0.dev0"
