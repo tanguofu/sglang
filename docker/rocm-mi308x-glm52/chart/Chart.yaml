@@ -1,0 +1,16 @@
+apiVersion: v2
+name: sglang-glm52-308x
+description: SGLang GLM-5.2-FP8 inference service on AMD MI308X (gfx942) with envoy gateway
+type: application
+version: 0.1.0
+appVersion: "0.5.14"
+keywords:
+  - sglang
+  - glm-5.2
+  - amd
+  - mi308x
+  - gfx942
+  - rocm
+  - llm
+maintainers:
+  - name: guofutan

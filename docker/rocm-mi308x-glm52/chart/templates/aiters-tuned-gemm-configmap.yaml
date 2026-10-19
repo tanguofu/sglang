@@ -1,0 +1,21 @@
+{{- if .Values.aitersTunedGemm.enabled }}
+# Aiter tuned GEMM ConfigMap — pre-tuned bf16 GEMM shapes for GLM-5.2 on gfx942.
+# The CSV is stored in chart/files/bf16_tuned_gemm.csv (2385 lines, 200 gfx942 rows).
+# Without this ConfigMap, the pod only has 7 gfx942 K=6144 rows (all N=32) and many
+# GLM-5.2 shapes fall back to torch GEMM (30-50% slower).
+# Mounted via AITER_CONFIG_GEMM_BF16 env var so it survives pod restarts
+# (writing to /sgl-workspace is lost on restart — image layer).
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.aitersTunedGemm.configMapName }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sglang.labels" . | nindent 4 }}
+    app: sglang
+    accelerator: amd-gpu
+data:
+  bf16_tuned_gemm.csv: |
+{{ .Files.Get "files/bf16_tuned_gemm.csv" | indent 4 }}
+{{- end }}
