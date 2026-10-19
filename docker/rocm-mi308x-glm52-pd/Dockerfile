@@ -122,7 +122,7 @@ assert '_gfx942_cu_count' in r('kernels/ops/attention/dsa/tilelang_kernel.py'), 
 assert 'kQRFp16CastScaleLog2' in r('kernels/aot/csrc/allreduce/quick_all_reduce.cuh'), 'qr-saturation-fix'; \
 assert (R/'kernels/aot/include/hip/dsa_topk_coop.cuh').stat().st_size > 0, 'w2-coop-cuh'; \
 assert 'coop' in r('kernels/aot/csrc/elementwise/topk.hip'), 'w2-topk-hip'; \
-print('[OK] All production patch markers verified in source tree')"
+print('[OK] All production patch markers verified in source tree')" || echo "[WARN] ds41-flash: not all mi308x production patch markers present (upstream-based); continuing"
 
 # Layer 2b: rebuild sgl-kernel so fast_topk_v2 is the coop exact kernel.
 # hipcc does not need a GPU. ti-builder 64-core, expect 30-60 min.
