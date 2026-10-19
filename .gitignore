@@ -280,3 +280,7 @@ artifacts/
 
 # Internal, non-published docs
 internal-docs/
+
+# upstream tracks these as symlinks -> breaks docker COPY
+python/sglang/multimodal_gen/.claude/skills
+python/sglang/multimodal_gen/.claude/CLAUDE.md
