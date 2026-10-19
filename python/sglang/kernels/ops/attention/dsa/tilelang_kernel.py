@@ -46,6 +46,11 @@ elif hasattr(tilelang.PassConfigKey, "TL_ENABLE_FAST_MATH"):
 _is_hip = is_hip()
 _is_gfx95_supported = is_gfx95_supported()
 _is_fp8_fnuz = is_fp8_fnuz()
+# Exponent bias of the FP8 KV payload: OCP e4m3 biases at 7, the ROCm e4m3fnuz
+# alias biases at 8. The decoder below rebuilds the bf16 exponent from the fp8
+# exponent plus the e8m0 tile scale, so it has to subtract the right bias or
+# every K element comes back off by a factor of two.
+_FP8_EXP_BIAS = 8 if _is_fp8_fnuz else 7
 
 BF16 = "bfloat16"
 FP8 = "float8_e4m3fnuz" if _is_fp8_fnuz else "float8_e4m3fn"
@@ -86,6 +91,21 @@ def _pick_inner_iter(seq: int, ni: int, cu: int, block_per_cu: int) -> int:
             return it
         it //= 2
     return 1
+
+
+def _pipelined(n, num_stages: int):
+    """Lower a single-stage ``T.Pipelined`` to ``T.serial``.
+
+    A ``T.Pipelined`` loop with ``num_stages <= 1`` has no cross-iteration
+    overlap, but tilelang still runs ``InjectSoftwarePipeline`` on it and that
+    pass rejects the read-after-write chains inside the DSV4 partial kernel
+    ("two statements with buffer access dependency in the same stage of the
+    software pipeline cannot be reordered"). Emitting a plain serial loop is
+    semantically identical and sidesteps the pass.
+    """
+    if num_stages is not None and num_stages > 1:
+        return T.Pipelined(n, num_stages=num_stages)
+    return T.serial(n)
 
 
 @tilelang.jit(pass_configs=pass_configs)
@@ -1775,7 +1795,7 @@ def dpsk_v4_fp8_partial_kernel(
                     # Phase 1 active: SWA cache work + Partial_O write.
                     T.copy(Q[b_i, s_i, H0:H1, :D], Q_shared)
                     T.copy(Q[b_i, s_i, H0:H1, D : D + D_tail], Q_tail_shared)
-                    for k_i in T.Pipelined(inner_iter_1, num_stages=num_stages):
+                    for k_i in _pipelined(inner_iter_1, num_stages):
                         iter_i = group_i * inner_iter_1 + k_i
                         for bi_i in T.Parallel(BI):
                             pos = iter_i * BI + bi_i
@@ -1820,7 +1840,7 @@ def dpsk_v4_fp8_partial_kernel(
                             exp_e4 = (b_u32 & T.uint32(0x78)) >> T.uint32(3)
                             mant_bf = (b_u32 & T.uint32(0x7)) * T.uint32(0x10)
                             scale_byte = scale_byte_local[bi_i, d_i // NOPE_TILE]
-                            exp_combined = exp_e4 + scale_byte - T.uint32(7)
+                            exp_combined = exp_e4 + scale_byte - T.uint32(_FP8_EXP_BIAS)
                             bf16_bits = (
                                 sign_bf | (exp_combined << T.uint32(7)) | mant_bf
                             )
@@ -1918,7 +1938,7 @@ def dpsk_v4_fp8_partial_kernel(
                     # Phase 2 active: c128 cache work + Partial_O write.
                     T.copy(Q[b_i, s_i, H0:H1, :D], Q_shared)
                     T.copy(Q[b_i, s_i, H0:H1, D : D + D_tail], Q_tail_shared)
-                    for k_i in T.Pipelined(inner_iter_2, num_stages=num_stages):
+                    for k_i in _pipelined(inner_iter_2, num_stages):
                         iter_i = (group_i - n_groups_1) * inner_iter_2 + k_i
                         for bi_i in T.Parallel(BI):
                             pos = iter_i * BI + bi_i
@@ -1963,7 +1983,7 @@ def dpsk_v4_fp8_partial_kernel(
                             exp_e4 = (b_u32 & T.uint32(0x78)) >> T.uint32(3)
                             mant_bf = (b_u32 & T.uint32(0x7)) * T.uint32(0x10)
                             scale_byte = scale_byte_local[bi_i, d_i // NOPE_TILE]
-                            exp_combined = exp_e4 + scale_byte - T.uint32(7)
+                            exp_combined = exp_e4 + scale_byte - T.uint32(_FP8_EXP_BIAS)
                             bf16_bits = (
                                 sign_bf | (exp_combined << T.uint32(7)) | mant_bf
                             )
@@ -2117,7 +2137,7 @@ def dpsk_v4_fp8_partial_kernel(
 
             tk_len_1 = Topk_length_1[b_i]
 
-            for k_i in T.Pipelined(inner_iter_1, num_stages=num_stages):
+            for k_i in _pipelined(inner_iter_1, num_stages):
                 iter_i = group_i * inner_iter_1 + k_i
                 for bi_i in T.Parallel(BI):
                     pos = iter_i * BI + bi_i
@@ -2162,7 +2182,7 @@ def dpsk_v4_fp8_partial_kernel(
                     exp_e4 = (b_u32 & T.uint32(0x78)) >> T.uint32(3)
                     mant_bf = (b_u32 & T.uint32(0x7)) * T.uint32(0x10)
                     scale_byte = scale_byte_local[bi_i, d_i // NOPE_TILE]
-                    exp_combined = exp_e4 + scale_byte - T.uint32(7)
+                    exp_combined = exp_e4 + scale_byte - T.uint32(_FP8_EXP_BIAS)
                     bf16_bits = sign_bf | (exp_combined << T.uint32(7)) | mant_bf
                     KV_shared[bi_i, d_i] = T.reinterpret(
                         BF16, T.Cast("uint16", bf16_bits)

@@ -1998,6 +1998,13 @@ class Fp8MoEMethod(FusedMoEMethodBase):
                     layer.w2_weight.data = shuffle_weight(
                         layer.w2_weight.contiguous(), (16, 16)
                     )
+                    # The aiter fused_moe reads `is_shuffled` off the tensors to
+                    # pick the preshuffled kernel; leaving it unset feeds the
+                    # shuffled buffer to the unshuffled reader and garbles every
+                    # expert output.
+                    layer.w13_weight.is_shuffled = True
+                    layer.w2_weight.is_shuffled = True
+                    layer._aiter_gate_up_interleaved = False
                 return
 
         if self.convert_mxfp8_to_block:

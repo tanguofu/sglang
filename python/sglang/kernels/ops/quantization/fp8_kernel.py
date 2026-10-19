@@ -227,6 +227,76 @@ def _per_token_group_quant_8bit_colmajor(
     tl.store(y_s_ptr, y_s)
 
 
+@triton.jit
+def _per_token_group_quant_8bit_ue8m0_rowmajor(
+    y_ptr,
+    y_q_ptr,
+    y_s_ptr,
+    group_size,
+    y_num_columns,
+    eps,
+    bit8_min,
+    bit8_max,
+    BLOCK: tl.constexpr,
+):
+    """Per-token-group FP8 quant with power-of-two (ue8m0) scales, row-major
+    scale tensor of shape ``[M, num_columns // group_size]``.
+
+    Same math as ``_per_token_group_quant_8bit_colmajor``'s ``SCALE_UE8M0``
+    branch, but writes the scales row-major instead of token-major. This is the
+    HIP replacement for the deprecated ``per_token_group_quant_8bit_v2`` JIT
+    kernel (CUDA-only; it trips a hardware exception on gfx942).
+    """
+    g_id = tl.program_id(0)
+    y_ptr += g_id.to(tl.int64) * group_size
+    y_q_ptr += g_id.to(tl.int64) * group_size
+
+    blocks_per_row = y_num_columns // group_size
+    scale_col = g_id % blocks_per_row
+    scale_row = g_id // blocks_per_row
+    y_s_ptr += scale_row.to(tl.int64) * blocks_per_row + scale_col
+
+    cols = tl.arange(0, BLOCK)
+    mask = cols < group_size
+
+    y = tl.load(y_ptr + cols, mask=mask, other=0.0).to(tl.float32)
+    _absmax = tl.maximum(tl.max(tl.abs(y)), eps)
+    y_s = _absmax / bit8_max
+    y_s = tl.exp2(tl.ceil(tl.log2(tl.abs(y_s))))
+    y_q = tl.clamp(y / y_s, bit8_min, bit8_max).to(y_q_ptr.dtype.element_ty)
+
+    tl.store(y_q_ptr + cols, y_q, mask=mask)
+    tl.store(y_s_ptr, y_s)
+
+
+def _per_token_group_quant_8bit_ue8m0_rowmajor_launch(
+    x: torch.Tensor,
+    x_q: torch.Tensor,
+    x_s: torch.Tensor,
+    group_size: int,
+    eps: float,
+    fp8_min: float,
+    fp8_max: float,
+) -> None:
+    """HIP entry for the fp32 power-of-two scale flavor of the group quant."""
+    assert x.dim() == 2 and x.numel() > 0
+    num_groups = x.numel() // group_size
+    block = triton.next_power_of_2(group_size)
+    _per_token_group_quant_8bit_ue8m0_rowmajor[(num_groups,)](
+        x,
+        x_q,
+        x_s,
+        group_size,
+        x.shape[1],
+        eps,
+        bit8_min=fp8_min,
+        bit8_max=fp8_max,
+        BLOCK=block,
+        num_warps=1,
+        num_stages=1,
+    )
+
+
 def _per_token_group_quant_8bit_raw(
     x: torch.Tensor,
     group_size: int,
@@ -543,6 +613,19 @@ def _run_per_token_group_quant_8bit_kernel(
     ``sglang_per_token_quant_fp8``.
     """
     if scale_ue8m0 and x_s.dtype == torch.float32 and not _is_musa:
+        if (
+            _is_hip
+            and not fuse_silu_and_mul
+            and masked_m is None
+            and x.dim() == 2
+            and x_s.is_contiguous()
+        ):
+            # The JIT v2 kernel below is CUDA-only (it faults on gfx942), so the
+            # HIP fp32 power-of-two flavor runs on the Triton kernel instead.
+            _per_token_group_quant_8bit_ue8m0_rowmajor_launch(
+                x, x_q, x_s, group_size, eps, fp8_min, fp8_max
+            )
+            return
         from sglang.kernels.ops.quantization.per_token_group_quant_8bit_v2 import (
             per_token_group_quant_8bit_v2,
         )
