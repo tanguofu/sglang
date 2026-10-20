@@ -3564,7 +3564,15 @@ class DeepseekV4AttnBackend(
         # Index keys come from the pre-RoPE latent, so publish them first. Stored
         # as fp4 (per-32 ue8m0, no hadamard), matching the reference indexer.
         if layer.indexer is not None and layer.indexer.owns_k:
-            if (
+            if envs.SGLANG_HIP_DSV41_INDEX_K_FP8.get():
+                from sglang.srt.layers.attention.dsv4.fp8_index_backend_hip import (
+                    store_index_k_fp8_group,
+                )
+
+                store_index_k_fp8_group(
+                    pool, layer, layer.indexer, latent, layer.freqs_cis, group_pos, slots
+                )
+            elif (
                 fuse_index_store
                 and latent.is_cuda
                 and torch.version.cuda is not None

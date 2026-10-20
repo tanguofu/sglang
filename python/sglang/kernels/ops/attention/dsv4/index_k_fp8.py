@@ -126,6 +126,7 @@ def store_index_k_fp8(
     if tokens == 0:
         return
     k = k.contiguous()
+    loc = loc.contiguous()
     buf_f8 = cache.view(fp8_dtype)
     buf_f32 = cache.view(torch.float32)
     _store_index_k_fp8_kernel[(tokens,)](

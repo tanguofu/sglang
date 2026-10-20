@@ -22,6 +22,32 @@ from sglang.kernels.ops.attention.dsv4.index_k_fp8 import (
 from sglang.srt.layers.attention.dsv4.dsv41_sparse import rope_tail
 
 
+def store_index_k_fp8_group(
+    pool,
+    layer,
+    indexer,
+    latent: torch.Tensor,
+    freqs: torch.Tensor,
+    group_pos: torch.Tensor,
+    slots: torch.Tensor,
+) -> None:
+    """Normalize, rotate, quantize and store one index-K slot per group.
+
+    :param freqs: the whole RoPE table; the group's row is gathered here.
+    :param group_pos: each group's first position.
+    :param slots: the index-K slot of each group.
+    """
+    ratio = layer.compress_ratio
+    k = indexer.k_norm(indexer.forward_wk(latent))
+    k = rope_tail(k, freqs[group_pos], indexer.rope_head_dim)
+    store_index_k_fp8(
+        k,
+        slots.to(torch.int64),
+        pool.get_index_k_with_scale_buffer(layer.layer_id),
+        page_size=pool.get_index_k_page_size(ratio),
+    )
+
+
 def store_index_k_fp8_layer(
     pool,
     layer,
@@ -32,19 +58,10 @@ def store_index_k_fp8_layer(
     out_loc: torch.Tensor,
     layer_id: int,
 ) -> None:
-    """Normalize, rotate, quantize and store one index-K slot per token."""
+    """Store from token positions: the group's first position is derived here."""
     ratio = layer.compress_ratio
-    k = indexer.k_norm(indexer.forward_wk(latent))
-    # A compressed key is written once per group and carries the group's first
-    # position, exactly as the fp4 store does.
     group_pos = (pos // ratio) * ratio
-    k = rope_tail(k, freqs_cis[group_pos], indexer.rope_head_dim)
-    store_index_k_fp8(
-        k,
-        out_loc.to(torch.int64),
-        pool.get_index_k_with_scale_buffer(layer_id),
-        page_size=pool.get_index_k_page_size(ratio),
-    )
+    store_index_k_fp8_group(pool, layer, indexer, latent, freqs_cis, group_pos, out_loc)
 
 
 def query_fp8(layer, x, q_lora, pos) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -89,5 +106,6 @@ __all__ = [
     "INDEX_K_FP8_SLOT_BYTES",
     "fp8_index_logits",
     "query_fp8",
+    "store_index_k_fp8_group",
     "store_index_k_fp8_layer",
 ]
