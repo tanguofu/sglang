@@ -101,10 +101,11 @@ def _store_index_k_fp8_kernel(
     slot = tl.load(loc_ptr + row)
     # Slot 0 is the reserved dummy row the pool keeps empty; a compressor leaves
     # -1 (or a stale id) on the rows that own no group, so bound the write.
-    if 0 < slot < NSLOTS:
-        base = slot * SLOT
-        tl.store(buf_f8_ptr + base + offs, q)
-        tl.store(buf_f32_ptr + slot * (SLOT // 4) + D // 4, scale)
+    if slot > 0:
+        if slot < NSLOTS:
+            base = slot * SLOT
+            tl.store(buf_f8_ptr + base + offs, q)
+            tl.store(buf_f32_ptr + slot * (SLOT // 4) + D // 4, scale)
 
 
 def quantize_query_fp8(
