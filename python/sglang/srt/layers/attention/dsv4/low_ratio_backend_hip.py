@@ -1013,12 +1013,12 @@ def _debug_slots_row0(q_fp8, weights, cache, slots, row_start, lens, logits, lay
         & set(torch.topk(ref, min(64, ln)).indices.tolist())
     )
     print(
-        "[fp8-slot] layer=%d rows=%d ln=%d slots[:3]=%s kd|max|=%.3f diff[max=%.4f] top64=%d/%d"
+        "[fp8-slot] layer=%d rows=%d ln=%d first_slots=%s pos0=%s kd|max|=%.3f diff[max=%.4f] top64=%d/%d"
         % (
             layer_id,
             rows,
             ln,
-            use[:3].tolist(),
+            use[:4].tolist(),
             kd.abs().max().item(),
             d.max().item(),
             overlap,

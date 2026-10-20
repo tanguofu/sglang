@@ -56,14 +56,14 @@ def store_index_k_fp8_group(
         torch.cuda.synchronize()
         raw = cache.view(torch.uint8)
         print(
-            "[fp8-store-g] layer=%d ratio=%d page=%d slots[:8]=%s k|max|=%.4f nonzero=%.5f"
+            "[fp8-store-g] layer=%d ratio=%d page=%d slots[:4]=%s gpos[:4]=%s k|max|=%.4f"
             % (
                 layer.layer_id,
                 ratio,
                 pool.get_index_k_page_size(ratio),
-                slots[:8].tolist(),
+                slots[:4].tolist(),
+                group_pos[:4].tolist(),
                 k.abs().max().item(),
-                (raw != 0).float().mean().item(),
             ),
             flush=True,
         )
