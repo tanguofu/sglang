@@ -402,6 +402,21 @@ def low_ratio_index_topk_hip_decode(
         )
 
         q_fp8, weights = query_fp8(layer, x, q_lora, pos)
+        if envs.SGLANG_DS41_FP8_INDEX_DEBUG.get():
+            print(
+                "[fp8-geom] layer=%d ratio=%d cps=%d pool_page=%d pt_w=%d page_used=%d pt0=%s lens0=%d"
+                % (
+                    layer.layer_id,
+                    ratio,
+                    indexer_metadata.compressed_page_size,
+                    pool.get_index_k_page_size(ratio),
+                    indexer_metadata.page_table.shape[1],
+                    indexer_metadata.compressed_page_size // ratio,
+                    indexer_metadata.page_table[0, :3].tolist(),
+                    int(indexer_metadata.compressed_seq_lens[0].item()),
+                ),
+                flush=True,
+            )
         logits = fp8_index_logits(
             q_fp8=q_fp8,
             weights=weights,
