@@ -84,6 +84,7 @@ def _store_index_k_fp8_kernel(
     D: tl.constexpr,
     SLOT: tl.constexpr,
     MAX: tl.constexpr,
+    NSLOTS: tl.constexpr,
 ):
     """Quantize one index-K row and store it into its 132-byte slot.
 
@@ -98,8 +99,9 @@ def _store_index_k_fp8_kernel(
     q = tl.clamp(v * (1.0 / scale), -MAX, MAX).to(buf_f8_ptr.dtype.element_ty)
 
     slot = tl.load(loc_ptr + row)
-    # slot 0 is the reserved dummy row the pool keeps empty.
-    if slot > 0:
+    # Slot 0 is the reserved dummy row the pool keeps empty; a compressor leaves
+    # -1 (or a stale id) on the rows that own no group, so bound the write.
+    if 0 < slot < NSLOTS:
         base = slot * SLOT
         tl.store(buf_f8_ptr + base + offs, q)
         tl.store(buf_f32_ptr + slot * (SLOT // 4) + D // 4, scale)
@@ -154,6 +156,7 @@ def store_index_k_fp8(
         D=dim,
         SLOT=INDEX_K_FP8_SLOT_BYTES,
         MAX=float(fp8_max),
+        NSLOTS=int(cache.shape[0]),
         num_warps=4,
     )
     _ = page_size  # the slot index already encodes page and offset

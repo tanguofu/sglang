@@ -58,10 +58,17 @@ def store_index_k_fp8_layer(
     out_loc: torch.Tensor,
     layer_id: int,
 ) -> None:
-    """Store from token positions: the group's first position is derived here."""
+    """Store from a per-token batch: the group's first position rotates the key."""
     ratio = layer.compress_ratio
     group_pos = (pos // ratio) * ratio
-    store_index_k_fp8_group(pool, layer, indexer, latent, freqs_cis, group_pos, out_loc)
+    k = indexer.k_norm(indexer.forward_wk(latent))
+    k = rope_tail(k, freqs_cis[group_pos], indexer.rope_head_dim)
+    store_index_k_fp8(
+        k,
+        out_loc.to(torch.int64),
+        pool.get_index_k_with_scale_buffer(layer.layer_id),
+        page_size=pool.get_index_k_page_size(ratio),
+    )
 
 
 def query_fp8(layer, x, q_lora, pos) -> Tuple[torch.Tensor, torch.Tensor]:
