@@ -182,6 +182,7 @@ def _mqa_logits_fp8_kernel(
     D: tl.constexpr,
     PAGE: tl.constexpr,
     SLOT: tl.constexpr,
+    NSLOTS: tl.constexpr,
     BLOCK_N: tl.constexpr,
 ):
     """One query row against one block of its visible compressed slots.
@@ -198,7 +199,10 @@ def _mqa_logits_fp8_kernel(
     cols = blk * BLOCK_N + tl.arange(0, BLOCK_N)
     mask = cols < ln
     page = tl.load(page_table_ptr + row * pt_stride + cols // PAGE, mask=mask, other=0)
-    slot = page * PAGE + (cols % PAGE)
+    # A table can carry -1 on slots the request has not filled; clamp so a stray
+    # id reads the reserved row instead of walking off the pool.
+    slot = tl.maximum(page, 0) * PAGE + (cols % PAGE)
+    slot = tl.minimum(slot, NSLOTS - 1)
 
     offs_d = tl.arange(0, D)
     k = tl.load(
@@ -261,6 +265,7 @@ def mqa_logits_fp8(
         D=dim,
         PAGE=page_size,
         SLOT=INDEX_K_FP8_SLOT_BYTES,
+        NSLOTS=int(cache.shape[0]),
         BLOCK_N=block_n,
         num_warps=4,
         num_stages=1,
