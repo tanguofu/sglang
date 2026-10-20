@@ -215,8 +215,11 @@ def mqa_logits_fp8(
 ) -> torch.Tensor:
     """``[rows, max_seq_len]`` fp32 logits over each row's visible compressed slots."""
     rows, _, heads, dim = q_fp8.shape
-    out = torch.zeros((rows, max_seq_len), dtype=torch.float32, device=q_fp8.device)
-    if rows == 0 or max_seq_len == 0:
+    # The paged top-k transform reads score rows as 16-byte units, so the row
+    # stride must be a multiple of four fp32 columns.
+    width = max_seq_len + (-max_seq_len) % 4
+    out = torch.zeros((rows, width), dtype=torch.float32, device=q_fp8.device)
+    if rows == 0 or width == 0:
         return out
     payload = cache.view(fp8_dtype)
     scales = cache.view(torch.float32)
