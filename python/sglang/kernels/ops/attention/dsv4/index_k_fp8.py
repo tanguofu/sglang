@@ -8,11 +8,10 @@ hardware, so that path aborts there.
 This module keeps the same math with an fp8 payload instead:
 
 * one index-K row is 128 fp8 bytes plus one fp32 dequant scale, laid out as a
-  contiguous 132-byte slot in the pool (the fused row the CUDA C4 indexer uses);
+  contiguous 132-byte slot in the pool;
 * a query row is quantized per token, and its scale is folded into the indexer
   head weights, which is exact because the scale multiplies every head alike;
-* the logits come from AITER's fp8 paged MQA-logits kernels, which support
-  gfx942 (``_GLUON_PA_MQA_LOGITS_ARCHS``).
+* the logits kernel keeps the reference semantics: ``sum_h relu(q_h . k) * w_h``.
 
 fp8 e4m3 keeps three mantissa bits against fp4's one, so the index selection is
 at least as accurate as the fp4 reference it replaces.
@@ -20,7 +19,7 @@ at least as accurate as the fp4 reference it replaces.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Tuple
 
 import torch
 import triton
@@ -30,10 +29,16 @@ from sglang.kernels.ops.quantization.fp8_kernel import fp8_dtype, fp8_max
 
 # Bytes of one index-K slot: 128 fp8 payload + 4 bytes of fp32 scale.
 INDEX_K_FP8_SLOT_BYTES = 132
-# Logits scratch, keyed by element count: the width tracks the context length and
-# an agentic session only ever grows it, so a fresh allocation per call would
+
+# Logits scratch, keyed by element count.  The width tracks the context length
+# and an agentic session only ever grows it, so a fresh allocation per layer per
+# step would hand the caching allocator a monotonically growing size sequence and
 # strand every block instead of reusing one.
 _LOGITS_POOL: dict = {}
+
+# Smallest scale divisor: keeps an all-zero row finite instead of scaling by 0.
+# Mirrored as a literal inside the Triton kernels.
+_AMAX_FLOOR = 1e-4
 
 
 def _alloc_logits(rows: int, width: int, device: torch.device) -> torch.Tensor:
@@ -49,10 +54,6 @@ def _alloc_logits(rows: int, width: int, device: torch.device) -> torch.Tensor:
         buf = torch.empty(rows * width, dtype=torch.float32, device=device)
         _LOGITS_POOL[key] = buf
     return buf.view(rows, width)
-
-
-# Smallest scale divisor: keeps an all-zero row finite instead of scaling by 0.
-_AMAX_FLOOR = 1e-4  # mirrored as a literal inside the Triton kernels
 
 
 @triton.jit
@@ -111,65 +112,6 @@ def _store_index_k_fp8_kernel(
             tl.store(buf_f8_ptr + base + offs, q)
             tl.store(buf_f32_ptr + slot * (SLOT // 4) + D // 4, scale)
 
-
-def quantize_query_fp8(
-    q: torch.Tensor, weights: torch.Tensor
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Per-token fp8 query and the head weights with the query scale folded in.
-
-    :param q: ``[tokens, heads, 128]`` bf16, RoPE applied, before quantization.
-    :param weights: ``[tokens, heads]``, already carrying ``head_weight_scale``.
-    :return: ``q_fp8`` ``[tokens, 1, heads, 128]`` and ``weights`` fp32
-        ``[tokens, heads]``.
-    """
-    tokens, heads, dim = q.shape
-    q = q.contiguous()
-    out = torch.empty_like(q, dtype=fp8_dtype)
-    w = weights.to(torch.float32).contiguous()
-    w_out = torch.empty_like(w)
-    _quantize_q_fp8_kernel[(tokens,)](
-        q, out, w, w_out, H=heads, D=dim, MAX=float(fp8_max), num_warps=4
-    )
-    return out.view(tokens, 1, heads, dim), w_out
-
-
-def store_index_k_fp8(
-    k: torch.Tensor,
-    loc: torch.Tensor,
-    cache: torch.Tensor,
-    *,
-    page_size: int,
-) -> None:
-    """Quantize and store one index-K row per token.
-
-    :param k: ``[tokens, 128]`` bf16, normalized and rotated.
-    :param loc: ``[tokens]`` int64 slot ids; 0 is the reserved dummy.
-    :param cache: the layer's pool, ``[pages, page_size * 132]`` uint8.
-    """
-    tokens, dim = k.shape
-    if tokens == 0:
-        return
-    k = k.contiguous()
-    loc = loc.contiguous()
-    buf_f8 = cache.view(fp8_dtype)
-    buf_f32 = cache.view(torch.float32)
-    _store_index_k_fp8_kernel[(tokens,)](
-        k,
-        loc,
-        buf_f8,
-        buf_f32,
-        D=dim,
-        SLOT=INDEX_K_FP8_SLOT_BYTES,
-        MAX=float(fp8_max),
-        NSLOTS=int(cache.numel()) // INDEX_K_FP8_SLOT_BYTES,
-        num_warps=4,
-    )
-
-
-def kv_cache_view(cache: torch.Tensor, page_size: int) -> torch.Tensor:
-    """The pool as the ``[pages, page_size, 1, 132]`` layout the logits kernels read."""
-    pages = cache.shape[0] // page_size
-    return cache.view(pages, page_size, 1, INDEX_K_FP8_SLOT_BYTES)
 
 @triton.jit
 def _mqa_logits_fp8_kernel(
@@ -231,6 +173,59 @@ def _mqa_logits_fp8_kernel(
     tl.store(out_ptr + row * out_stride + cols, tl.where(mask, tl.sum(s, 0), 0.0))
 
 
+def quantize_query_fp8(
+    q: torch.Tensor, weights: torch.Tensor
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Per-token fp8 query and the head weights with the query scale folded in.
+
+    :param q: ``[tokens, heads, 128]`` bf16, RoPE applied, before quantization.
+    :param weights: ``[tokens, heads]``, already carrying ``head_weight_scale``.
+    :return: ``q_fp8`` ``[tokens, 1, heads, 128]`` and ``weights`` fp32
+        ``[tokens, heads]``.
+    """
+    tokens, heads, dim = q.shape
+    q = q.contiguous()
+    out = torch.empty_like(q, dtype=fp8_dtype)
+    w = weights.to(torch.float32).contiguous()
+    w_out = torch.empty_like(w)
+    _quantize_q_fp8_kernel[(tokens,)](
+        q, out, w, w_out, H=heads, D=dim, MAX=float(fp8_max), num_warps=4
+    )
+    return out.view(tokens, 1, heads, dim), w_out
+
+
+def store_index_k_fp8(
+    k: torch.Tensor,
+    loc: torch.Tensor,
+    cache: torch.Tensor,
+    *,
+    page_size: int,
+) -> None:
+    """Quantize and store one index-K row per token.
+
+    :param k: ``[tokens, 128]`` bf16, normalized and rotated.
+    :param loc: ``[tokens]`` int64 slot ids; 0 is the reserved dummy.
+    :param cache: the layer's pool, ``[pages, page_size * 132]`` uint8.
+    """
+    tokens, dim = k.shape
+    if tokens == 0:
+        return
+    k = k.contiguous()
+    loc = loc.contiguous()
+    _store_index_k_fp8_kernel[(tokens,)](
+        k,
+        loc,
+        cache.view(fp8_dtype),
+        cache.view(torch.float32),
+        D=dim,
+        SLOT=INDEX_K_FP8_SLOT_BYTES,
+        MAX=float(fp8_max),
+        NSLOTS=int(cache.numel()) // INDEX_K_FP8_SLOT_BYTES,
+        num_warps=4,
+    )
+    _ = page_size  # the slot id already encodes page and offset
+
+
 def mqa_logits_fp8(
     q_fp8: torch.Tensor,
     weights: torch.Tensor,
@@ -244,125 +239,27 @@ def mqa_logits_fp8(
 ) -> torch.Tensor:
     """``[rows, max_seq_len]`` fp32 logits over each row's visible compressed slots."""
     rows, _, heads, dim = q_fp8.shape
-    # The paged top-k transform reads score rows as 16-byte units, so the row
-    # stride must be a multiple of four fp32 columns. Round to a coarse bucket as
-    # well: a width that tracks the context length would hand the caching
-    # allocator a monotonically growing size sequence and strand every block.
+    # The paged top-k transform reads a score row as 16-byte units, so its width
+    # must be a multiple of four fp32 columns; round to a coarse bucket as well so
+    # a growing context does not allocate a new rectangle on every step.
     width = (max_seq_len + 255) // 256 * 256
     out = _alloc_logits(rows, width, q_fp8.device)
     if rows == 0 or width == 0:
         return out
-    payload = cache.view(fp8_dtype)
-    scales = cache.view(torch.float32)
     grid = (rows, triton.cdiv(max_seq_len, block_n))
     _mqa_logits_fp8_kernel[grid](
         q_fp8,
         weights,
-        payload,
-        scales,
+        cache.view(fp8_dtype),
+        cache.view(torch.float32),
         page_table,
-        lens,
+        lens.to(torch.int32),
         out,
         page_table.stride(0),
         out.stride(0),
         H=heads,
         D=dim,
         PAGE=page_size,
-        SLOT=INDEX_K_FP8_SLOT_BYTES,
-        NSLOTS=int(cache.numel()) // INDEX_K_FP8_SLOT_BYTES,
-        BLOCK_N=block_n,
-        num_warps=4,
-        num_stages=1,
-    )
-    return out
-
-@triton.jit
-def _mqa_logits_fp8_slots_kernel(
-    q_ptr,
-    w_ptr,
-    payload_ptr,
-    scale_ptr,
-    slots_ptr,
-    row_start_ptr,
-    lens_ptr,
-    out_ptr,
-    out_stride,
-    H: tl.constexpr,
-    D: tl.constexpr,
-    SLOT: tl.constexpr,
-    NSLOTS: tl.constexpr,
-    BLOCK_N: tl.constexpr,
-):
-    """Score a row against the exact index-K slots the compressor wrote.
-
-    Row ``r`` owns ``lens[r]`` visible compressed positions, stored at
-    ``slots_ptr[row_start[r] : row_start[r] + lens[r]]`` -- the allocator's own
-    slot ids, with no page-table indirection in between.
-    """
-    row = tl.program_id(0)
-    blk = tl.program_id(1)
-    ln = tl.load(lens_ptr + row)
-    if ln <= 0:
-        return
-
-    cols = blk * BLOCK_N + tl.arange(0, BLOCK_N)
-    mask = cols < ln
-    base = tl.load(row_start_ptr + row)
-    slot = tl.load(slots_ptr + base + cols, mask=mask, other=0).to(tl.int64)
-    slot = tl.minimum(tl.maximum(slot, 0), NSLOTS - 1)
-
-    offs_d = tl.arange(0, D)
-    k = tl.load(
-        payload_ptr + slot[:, None] * SLOT + offs_d[None, :],
-        mask=mask[:, None],
-        other=0.0,
-    ).to(tl.bfloat16)
-    scale = tl.load(scale_ptr + slot * (SLOT // 4) + D // 4, mask=mask, other=1.0)
-    k = (k.to(tl.float32) * scale[:, None]).to(tl.bfloat16)
-
-    offs_h = tl.arange(0, H)
-    q = tl.load(q_ptr + row * H * D + offs_h[:, None] * D + offs_d[None, :]).to(
-        tl.bfloat16
-    )
-    w = tl.load(w_ptr + row * H + offs_h)
-
-    s = tl.dot(q, tl.trans(k))
-    s = tl.maximum(s, 0.0) * w[:, None]
-    tl.store(out_ptr + row * out_stride + cols, tl.where(mask, tl.sum(s, 0), 0.0))
-
-
-def mqa_logits_fp8_slots(
-    q_fp8: torch.Tensor,
-    weights: torch.Tensor,
-    cache: torch.Tensor,
-    slots: torch.Tensor,
-    row_start: torch.Tensor,
-    lens: torch.Tensor,
-    max_seq_len: int,
-    *,
-    block_n: int = 64,
-    out: torch.Tensor = None,
-) -> torch.Tensor:
-    """``[rows, max_seq_len]`` logits gathered by explicit index-K slot ids."""
-    rows, _, heads, dim = q_fp8.shape
-    width = (max_seq_len + 255) // 256 * 256
-    if out is None:
-        out = _alloc_logits(rows, width, q_fp8.device)
-    if rows == 0 or width == 0:
-        return out
-    grid = (rows, triton.cdiv(max_seq_len, block_n))
-    _mqa_logits_fp8_slots_kernel[grid](
-        q_fp8,
-        weights,
-        cache.view(fp8_dtype),
-        cache.view(torch.float32),
-        slots,
-        row_start,
-        lens,
-        out,
-        out.stride(0),
-        H=heads,
-        D=dim,
         SLOT=INDEX_K_FP8_SLOT_BYTES,
         NSLOTS=int(cache.numel()) // INDEX_K_FP8_SLOT_BYTES,
         BLOCK_N=block_n,

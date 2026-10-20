@@ -395,6 +395,16 @@ def low_ratio_index_topk_hip_decode(
         two_level = False
 
     q_fp4, q_scale, weights = None, None, None
+    # page8 only describes the fp4 split payload layout; the candidate blocks are
+    # shared by both paths, so resolve them before the format branch.
+    page8 = False
+    candidates = None
+    if two_level and indexer.uses_candidates:
+        candidates = backend.candidate_masks
+        assert (
+            isinstance(candidates, CandidateBlocks)
+            and candidates.block_size == indexer.candidate_block_size
+        ), "candidate blocks missing for decode"
     if envs.SGLANG_HIP_DSV41_INDEX_K_FP8.get():
         from sglang.srt.layers.attention.dsv4.fp8_index_backend_hip import (
             fp8_index_logits,
@@ -402,21 +412,6 @@ def low_ratio_index_topk_hip_decode(
         )
 
         q_fp8, weights = query_fp8(layer, x, q_lora, pos)
-        if envs.SGLANG_DS41_FP8_INDEX_DEBUG.get():
-            print(
-                "[fp8-geom] layer=%d ratio=%d cps=%d pool_page=%d pt_w=%d page_used=%d pt0=%s lens0=%d"
-                % (
-                    layer.layer_id,
-                    ratio,
-                    indexer_metadata.compressed_page_size,
-                    pool.get_index_k_page_size(ratio),
-                    indexer_metadata.page_table.shape[1],
-                    indexer_metadata.compressed_page_size,
-                    indexer_metadata.page_table[0, :3].tolist(),
-                    int(indexer_metadata.compressed_seq_lens[0].item()),
-                ),
-                flush=True,
-            )
         logits = fp8_index_logits(
             q_fp8=q_fp8,
             weights=weights,
@@ -434,29 +429,23 @@ def low_ratio_index_topk_hip_decode(
         k_payload = pool.get_index_k_fp4_payload_buffer(layer.layer_id)
         k_scale = pool.get_index_k_fp4_scale_buffer(layer.layer_id)
         page8 = pool.low_ratio_index_k_page8(layer.layer_id)
-        if two_level and indexer.uses_candidates:
-            candidates = backend.candidate_masks
-            assert (
-                isinstance(candidates, CandidateBlocks)
-                and candidates.ids.shape[0] == q_fp4.shape[0]
-                and candidates.block_size == indexer.candidate_block_size
-            ), "candidate blocks missing for decode"
-            if page8:
-                topk_within_candidate_blocks_page8(
-                    q_fp4=q_fp4,
-                    q_scale=q_scale,
-                    weights=weights,
-                    k_payload=k_payload,
-                    k_scale=k_scale,
-                    candidates=candidates,
-                    seq_lens=indexer_metadata.compressed_seq_lens,
-                    page_table=indexer_metadata.page_table,
-                    page_size=indexer_metadata.compressed_page_size,
-                    page_indices=core.sparse_page_indices(ratio),
-                    raw_indices=core.sparse_raw_indices(ratio),
-                    is_decode=True,
-                )
-                return
+        if candidates is not None and page8:
+            assert candidates.ids.shape[0] == q_fp4.shape[0]
+            topk_within_candidate_blocks_page8(
+                q_fp4=q_fp4,
+                q_scale=q_scale,
+                weights=weights,
+                k_payload=k_payload,
+                k_scale=k_scale,
+                candidates=candidates,
+                seq_lens=indexer_metadata.compressed_seq_lens,
+                page_table=indexer_metadata.page_table,
+                page_size=indexer_metadata.compressed_page_size,
+                page_indices=core.sparse_page_indices(ratio),
+                raw_indices=core.sparse_raw_indices(ratio),
+                is_decode=True,
+            )
+            return
         logits = aiter_fp4_paged_mqa_logits(
             q_fp4=q_fp4,
             q_scale=q_scale,
@@ -955,51 +944,4 @@ def store_index_k_split(
         pool.get_index_k_fp4_scale_buffer(layer_id),
         ratio=layer.compress_ratio,
         page8=pool.low_ratio_index_k_page8(layer_id),
-    )
-
-_DEBUG_SLOT_KEYS: set = set()
-
-
-def _debug_slots_row0(q_fp8, weights, cache, slots, row_start, lens, logits, layer_id):
-    """Compare a scored row with a torch reference over the same slots."""
-    from sglang.kernels.ops.attention.dsv4.index_k_fp8 import INDEX_K_FP8_SLOT_BYTES
-    from sglang.kernels.ops.quantization.fp8_kernel import fp8_dtype
-
-    rows, ln = q_fp8.shape[0], int(lens[0].item())
-    key = (layer_id, rows, ln)
-    if key in _DEBUG_SLOT_KEYS or rows == 0 or ln == 0:
-        return
-    _DEBUG_SLOT_KEYS.add(key)
-
-    dim = q_fp8.shape[-1]
-    base = int(row_start[0].item())
-    use = slots[base : base + ln].to(torch.int64)
-    k_flat = cache.view(fp8_dtype).reshape(-1)
-    s_flat = cache.view(torch.float32).reshape(-1)
-    cols = torch.arange(dim, device=use.device)
-    payload = k_flat[use[:, None] * INDEX_K_FP8_SLOT_BYTES + cols[None, :]].float()
-    scale = s_flat[use * (INDEX_K_FP8_SLOT_BYTES // 4) + dim // 4]
-    kd = payload * scale.unsqueeze(-1)
-
-    qd = q_fp8[0].view(q_fp8.shape[2], q_fp8.shape[3]).float()
-    ref = (qd @ kd.T).relu().mul(weights[0].unsqueeze(-1)).sum(0)
-    got = logits[0, :ln].float()
-    d = (got - ref).abs()
-    overlap = len(
-        set(torch.topk(got, min(64, ln)).indices.tolist())
-        & set(torch.topk(ref, min(64, ln)).indices.tolist())
-    )
-    print(
-        "[fp8-slot] layer=%d rows=%d ln=%d first_slots=%s pos0=%s kd|max|=%.3f diff[max=%.4f] top64=%d/%d"
-        % (
-            layer_id,
-            rows,
-            ln,
-            use[:4].tolist(),
-            kd.abs().max().item(),
-            d.max().item(),
-            overlap,
-            min(64, ln),
-        ),
-        flush=True,
     )
