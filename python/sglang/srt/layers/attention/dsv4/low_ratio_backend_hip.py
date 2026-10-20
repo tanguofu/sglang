@@ -665,7 +665,7 @@ def low_ratio_index_topk_hip_extend(
             # compressor wrote: the pages of the prefill table live in another
             # address space than the index pool.
             row_lens = compress_lens[rows]
-            return mqa_logits_fp8_slots(
+            out = mqa_logits_fp8_slots(
                 q_fp8[rows],
                 weights[rows],
                 pool.get_index_k_with_scale_buffer(layer.layer_id),
@@ -674,6 +674,18 @@ def low_ratio_index_topk_hip_extend(
                 row_lens,
                 int(row_lens.max().item()),
             )
+            if envs.SGLANG_DS41_FP8_INDEX_DEBUG.get():
+                _debug_slots_row0(
+                    q_fp8[rows],
+                    weights[rows],
+                    pool.get_index_k_with_scale_buffer(layer.layer_id),
+                    k_slots_all,
+                    row_start_all[rows],
+                    row_lens,
+                    out,
+                    layer.layer_id,
+                )
+            return out
         if page8:
             return _score_requests_page8(
                 q_fp4=q_fp4[rows],
@@ -966,4 +978,51 @@ def store_index_k_split(
         pool.get_index_k_fp4_scale_buffer(layer_id),
         ratio=layer.compress_ratio,
         page8=pool.low_ratio_index_k_page8(layer_id),
+    )
+
+_DEBUG_SLOT_KEYS: set = set()
+
+
+def _debug_slots_row0(q_fp8, weights, cache, slots, row_start, lens, logits, layer_id):
+    """Compare a scored row with a torch reference over the same slots."""
+    from sglang.kernels.ops.attention.dsv4.index_k_fp8 import INDEX_K_FP8_SLOT_BYTES
+    from sglang.kernels.ops.quantization.fp8_kernel import fp8_dtype
+
+    rows, ln = q_fp8.shape[0], int(lens[0].item())
+    key = (layer_id, rows, ln)
+    if key in _DEBUG_SLOT_KEYS or rows == 0 or ln == 0:
+        return
+    _DEBUG_SLOT_KEYS.add(key)
+
+    dim = q_fp8.shape[-1]
+    base = int(row_start[0].item())
+    use = slots[base : base + ln].to(torch.int64)
+    k_flat = cache.view(fp8_dtype).reshape(-1)
+    s_flat = cache.view(torch.float32).reshape(-1)
+    cols = torch.arange(dim, device=use.device)
+    payload = k_flat[use[:, None] * INDEX_K_FP8_SLOT_BYTES + cols[None, :]].float()
+    scale = s_flat[use * (INDEX_K_FP8_SLOT_BYTES // 4) + dim // 4]
+    kd = payload * scale.unsqueeze(-1)
+
+    qd = q_fp8[0].view(q_fp8.shape[2], q_fp8.shape[3]).float()
+    ref = (qd @ kd.T).relu().mul(weights[0].unsqueeze(-1)).sum(0)
+    got = logits[0, :ln].float()
+    d = (got - ref).abs()
+    overlap = len(
+        set(torch.topk(got, min(64, ln)).indices.tolist())
+        & set(torch.topk(ref, min(64, ln)).indices.tolist())
+    )
+    print(
+        "[fp8-slot] layer=%d rows=%d ln=%d slots[:3]=%s kd|max|=%.3f diff[max=%.4f] top64=%d/%d"
+        % (
+            layer_id,
+            rows,
+            ln,
+            use[:3].tolist(),
+            kd.abs().max().item(),
+            d.max().item(),
+            overlap,
+            min(64, ln),
+        ),
+        flush=True,
     )
