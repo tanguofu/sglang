@@ -154,6 +154,18 @@ def _debug_row0(q_fp8, weights, cache, page_table, lens, page_size, logits) -> N
         ),
         flush=True,
     )
+    print(
+        "[fp8-idx] pt[0,:4]=%s slots[:4]=%s nslots=%d kd|max|=%.4f qd|max|=%.4f w|max|=%.4f"
+        % (
+            page_table[0, :4].tolist(),
+            slots[:4].tolist(),
+            cache.shape[0],
+            kd.abs().max().item(),
+            qd.abs().max().item(),
+            weights[0].abs().max().item(),
+        ),
+        flush=True,
+    )
     order_got = torch.topk(got, min(64, ln)).indices
     order_ref = torch.topk(ref, min(64, ln)).indices
     overlap = len(set(order_got.tolist()) & set(order_ref.tolist()))
