@@ -607,11 +607,6 @@ def low_ratio_index_topk_hip_extend(
     indexer_metadata = metadata.low_ratio_indexer_metadata(ratio)
     assert indexer_metadata is not None, f"no prefill indexer metadata for {ratio = }"
     num_tokens = pos.shape[0]
-    # The compressor's slot ids for this layer's compression ratio: c1_out_loc at
-    # ratio 1, c2_out_loc at ratio 2.
-    out_loc_ref = (
-        core.c1_out_loc if ratio == 1 else core.c2_out_loc
-    )[:num_tokens].to(torch.int64)
     assert indexer_metadata.page_table.shape[0] >= num_tokens
     q_fp4, q_scale, weights = None, None, None
     fp8_mode = envs.SGLANG_HIP_DSV41_INDEX_K_FP8.get()
@@ -640,21 +635,6 @@ def low_ratio_index_topk_hip_extend(
             ),
         )
 
-    if fp8_mode:
-        # The index pool numbers its slots differently from the compressed KV
-        # pool the attention selects from, so take the compressor's own slot ids:
-        # a group's first token carries its slot, the rest carry 0.
-        owner = ((pos % ratio) == 0) & (out_loc_ref > 0)
-        k_slots_all = out_loc_ref[owner].to(torch.int64)
-        slot_starts = [0, *itertools.accumulate(lc_per_req)][:-1]
-        tok_req = torch.repeat_interleave(
-            torch.arange(len(lc_per_req), device=pos.device),
-            indexer_metadata.compressed_seq_lens.new_tensor(extend_lens_cpu),
-        )
-        row_start_all = torch.tensor(
-            slot_starts, dtype=torch.int64, device=pos.device
-        )[tok_req]
-
     def score_rows(
         rows: slice, req_lo: int, rows_per_request: List[int]
     ) -> torch.Tensor:
@@ -666,28 +646,23 @@ def low_ratio_index_topk_hip_extend(
             # Score against the allocator's own slots, the same ids the
             # compressor wrote: the pages of the prefill table live in another
             # address space than the index pool.
-            row_lens = compress_lens[rows]
-            out = mqa_logits_fp8_slots(
-                q_fp8[rows],
-                weights[rows],
-                pool.get_index_k_with_scale_buffer(layer.layer_id),
-                k_slots_all,
-                row_start_all[rows],
-                row_lens,
-                int(row_lens.max().item()),
+            from sglang.srt.layers.attention.dsv4.fp8_index_backend_hip import (
+                fp8_index_logits,
             )
-            if envs.SGLANG_DS41_FP8_INDEX_DEBUG.get():
-                _debug_slots_row0(
-                    q_fp8[rows],
-                    weights[rows],
-                    pool.get_index_k_with_scale_buffer(layer.layer_id),
-                    k_slots_all,
-                    row_start_all[rows],
-                    row_lens,
-                    out,
-                    layer.layer_id,
-                )
-            return out
+
+            # A compressed position's index-K slot is
+            # page_table[p] * compressed_page_size + p % compressed_page_size,
+            # the same mapping DeepInfer's slot_mapping_store_ca uses.
+            row_lens = compress_lens[rows]
+            return fp8_index_logits(
+                q_fp8=q_fp8[rows],
+                weights=weights[rows],
+                cache=pool.get_index_k_with_scale_buffer(layer.layer_id),
+                page_size=indexer_metadata.compressed_page_size,
+                page_table=indexer_metadata.page_table[rows],
+                lens=row_lens,
+                max_seq_len=int(row_lens.max().item()),
+            )
         if page8:
             return _score_requests_page8(
                 q_fp4=q_fp4[rows],
