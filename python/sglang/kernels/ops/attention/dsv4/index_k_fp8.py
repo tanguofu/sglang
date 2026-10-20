@@ -141,6 +141,11 @@ def _mqa_logits_fp8_kernel(
     ln = tl.load(lens_ptr + row)
     if ln <= 0:
         return
+    # The grid spans the whole page-table bucket, so most blocks of a short
+    # request have no columns at all; returning here keeps them from paying for
+    # a dot product whose result would be masked away anyway.
+    if blk * BLOCK_N >= ln:
+        return
 
     cols = blk * BLOCK_N + tl.arange(0, BLOCK_N)
     mask = cols < ln
