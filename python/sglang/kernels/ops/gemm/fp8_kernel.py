@@ -808,20 +808,13 @@ def w8a8_block_fp8_matmul_triton(
         # optimal config
         config = configs[min(configs.keys(), key=lambda x: abs(x - M))]
     else:
-        # Default config, shaped by M.  Block-wise quant requires BLOCK_SIZE_K to
-        # be divisible by block_size[1].
-        #
-        # A 64-row tile is right for prefill but decodes a few rows at a time, so
-        # it computes 64x the useful work; a 32-column tile also leaves the
-        # vector units idle.  Shrink the row tile to the batch and widen the
-        # other two, which is what a tuned table would converge to here.
-        block_m = 16 if M <= 16 else 32 if M <= 32 else 64
-        block_n_tile = 128 if N % 128 == 0 else block_size[0]
+        # Default config
+        # Block-wise quant: BLOCK_SIZE_K must be divisible by block_size[1]
         config = {
-            "BLOCK_SIZE_M": block_m,
-            "BLOCK_SIZE_N": block_n_tile,
-            "BLOCK_SIZE_K": 128,
-            "GROUP_SIZE_M": 1,
+            "BLOCK_SIZE_M": 64,
+            "BLOCK_SIZE_N": block_size[0],
+            "BLOCK_SIZE_K": block_size[1],
+            "GROUP_SIZE_M": 32,
             "num_warps": 4,
             "num_stages": 3,
         }
