@@ -2539,7 +2539,12 @@ def dpsk_v4_fp8_attention_fwd(
     if _is_gfx95_supported:
         block_I, threads, num_stages, block_per_cu, cu = 64, 512, 0, 2, 256
     else:
-        block_I, threads, num_stages, block_per_cu, cu = 32, 128, 1, 1, 304
+        # CDNA3 has 64 KB of shared memory per CU, so a 64-row tile (103 KB) does
+        # not fit and only one 128-thread block is resident.  Keeping the tile at
+        # 32 rows but doubling the warps hides the gather/dequant latency that
+        # dominates otherwise: the loop cannot be pipelined until tilelang's
+        # InjectSoftwarePipeline accepts this body's buffer chains.
+        block_I, threads, num_stages, block_per_cu, cu = 32, 256, 1, 1, 304
 
     batch, seq_len, num_heads, _ = q.shape
     # Partial grid is (seq_len * REPLICATE_H * n_groups, batch, kv_group); the
