@@ -628,13 +628,6 @@ def low_ratio_index_topk_hip_extend(
         rows: slice, req_lo: int, rows_per_request: List[int]
     ) -> torch.Tensor:
         if fp8_mode:
-            from sglang.kernels.ops.attention.dsv4.index_k_fp8 import (
-                mqa_logits_fp8_slots,
-            )
-
-            # Score against the allocator's own slots, the same ids the
-            # compressor wrote: the pages of the prefill table live in another
-            # address space than the index pool.
             from sglang.srt.layers.attention.dsv4.fp8_index_backend_hip import (
                 fp8_index_logits,
             )
