@@ -141,6 +141,12 @@ def _mqa_logits_fp8_kernel(
     ln = tl.load(lens_ptr + row)
     if ln <= 0:
         return
+    # The grid spans the whole page-table bucket, so most blocks of a short
+    # request own no column at all.  Returning here skips a dot product whose
+    # result would be masked away; the caller zeroes the buffer first, so the
+    # skipped columns still read as zero.
+    if blk * BLOCK_N >= ln:
+        return
 
     cols = blk * BLOCK_N + tl.arange(0, BLOCK_N)
     mask = cols < ln
@@ -246,6 +252,9 @@ def mqa_logits_fp8(
     out = _alloc_logits(rows, width, q_fp8.device)
     if rows == 0 or width == 0:
         return out
+    # The pooled buffer can still hold a longer row's scores, and the kernel now
+    # leaves every column past a row's length untouched.
+    out.zero_()
     grid = (rows, triton.cdiv(max_seq_len, block_n))
     _mqa_logits_fp8_kernel[grid](
         q_fp8,
