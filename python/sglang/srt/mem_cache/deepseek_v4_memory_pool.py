@@ -1629,6 +1629,9 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
             for ratio, config in configs.items()
             if config.indexer_size is not None
         }
+        # gfx942 has no FP4 hardware: the fp4 indexer's only scoring kernels use
+        # gfx950's scaled MFMA, so keep the payload in fp8 there.
+        low_ratio_fp8 = _is_hip and envs.SGLANG_HIP_DSV41_INDEX_K_FP8.get()
         for ratio, sources in low_ratio_sources.items():
             # Reserved FULL page 0 pushes real slots past full_size, and one index
             # padding page is too small to cover that gap.
@@ -1640,7 +1643,7 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
                 len(sources),
                 device,
                 enable_memory_saver,
-                force_fp4=True,
+                force_fp4=not low_ratio_fp8,
                 # only the candidate consumers (ratio 1) score a subset of blocks
                 index_k_page8=ratio == 1 and index_k_page8,
             )

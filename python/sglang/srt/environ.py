@@ -1731,6 +1731,11 @@ class Envs:
     # 64-slot page), so a candidate consumer layer scores only its published blocks.
     SGLANG_HIP_DSV41_INDEX_K_PAGE8 = EnvBool(False)
 
+    # V4.1 low-ratio index-K kept as fp8 (128 payload + 4 scale bytes per token) and scored by
+    # AITER's fp8 paged MQA-logits kernels. The fp4 layout's FlyDSL kernels need gfx950's scaled
+    # MFMA, so this is the only indexer an fp4-less part (gfx942) can run.
+    SGLANG_HIP_DSV41_INDEX_K_FP8 = EnvBool(False)
+
     # cache, GEMM, and distributed
     SGLANG_OPT_FP8_WO_A_GEMM = EnvBool(True)
     # ROCm gfx950: fuse inverse-RoPE into the wo_a mxfp8 quant (aiter

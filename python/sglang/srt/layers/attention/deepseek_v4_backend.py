@@ -3458,6 +3458,14 @@ class DeepseekV4AttnBackend(
                 return store_index_k_split(
                     pool, layer, indexer, latent, freqs_cis, pos, out_loc, layer_id
                 )
+            if envs.SGLANG_HIP_DSV41_INDEX_K_FP8.get():
+                from sglang.srt.layers.attention.dsv4.fp8_index_backend_hip import (
+                    store_index_k_fp8_layer,
+                )
+
+                return store_index_k_fp8_layer(
+                    pool, layer, indexer, latent, freqs_cis, pos, out_loc, layer_id
+                )
             index_k_norm_rope_pack_store(
                 indexer.forward_wk(latent),
                 indexer.k_norm.weight.data,
