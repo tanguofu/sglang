@@ -1868,6 +1868,8 @@ class DeepseekV4HipRadixBackend(
             and metadata.core_metadata.low_ratios
             and forward_batch.forward_mode in (ForwardMode.EXTEND, ForwardMode.MIXED)
             and not torch.cuda.is_current_stream_capturing()
+            # fp8 index-K scores without the fp4 schedule kernels these workspaces feed.
+            and not envs.SGLANG_HIP_DSV41_INDEX_K_FP8.get()
         ):
             metadata.fp4_low_ratio_prefill_workspaces = (
                 refresh_low_ratio_prefill_workspaces(
