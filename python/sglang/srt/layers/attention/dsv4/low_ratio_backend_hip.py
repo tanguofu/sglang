@@ -607,6 +607,11 @@ def low_ratio_index_topk_hip_extend(
     indexer_metadata = metadata.low_ratio_indexer_metadata(ratio)
     assert indexer_metadata is not None, f"no prefill indexer metadata for {ratio = }"
     num_tokens = pos.shape[0]
+    # The compressor's slot ids for this layer's compression ratio: c1_out_loc at
+    # ratio 1, c2_out_loc at ratio 2.
+    out_loc_ref = (
+        core.c1_out_loc if ratio == 1 else core.c2_out_loc
+    )[:num_tokens].to(torch.int64)
     assert indexer_metadata.page_table.shape[0] >= num_tokens
     q_fp4, q_scale, weights = None, None, None
     fp8_mode = envs.SGLANG_HIP_DSV41_INDEX_K_FP8.get()
@@ -636,15 +641,12 @@ def low_ratio_index_topk_hip_extend(
         )
 
     if fp8_mode:
-        # The compressor's slot ids per visible compressed position, exactly as
-        # the identity fill resolves them.
-        k_slots_all, slot_starts = _extend_k_slots(
-            backend.req_to_token,
-            ratio=ratio,
-            lc_per_req=lc_per_req,
-            req_pool_indices=forward_batch.req_pool_indices.to(torch.int64),
-            device=pos.device,
-        )
+        # The index pool numbers its slots differently from the compressed KV
+        # pool the attention selects from, so take the compressor's own slot ids:
+        # a group's first token carries its slot, the rest carry 0.
+        owner = ((pos % ratio) == 0) & (out_loc_ref > 0)
+        k_slots_all = out_loc_ref[owner].to(torch.int64)
+        slot_starts = [0, *itertools.accumulate(lc_per_req)][:-1]
         tok_req = torch.repeat_interleave(
             torch.arange(len(lc_per_req), device=pos.device),
             indexer_metadata.compressed_seq_lens.new_tensor(extend_lens_cpu),
