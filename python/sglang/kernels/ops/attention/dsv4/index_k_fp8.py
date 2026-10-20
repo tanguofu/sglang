@@ -216,8 +216,10 @@ def mqa_logits_fp8(
     """``[rows, max_seq_len]`` fp32 logits over each row's visible compressed slots."""
     rows, _, heads, dim = q_fp8.shape
     # The paged top-k transform reads score rows as 16-byte units, so the row
-    # stride must be a multiple of four fp32 columns.
-    width = max_seq_len + (-max_seq_len) % 4
+    # stride must be a multiple of four fp32 columns. Round to a coarse bucket as
+    # well: a width that tracks the context length would hand the caching
+    # allocator a monotonically growing size sequence and strand every block.
+    width = (max_seq_len + 255) // 256 * 256
     out = torch.zeros((rows, width), dtype=torch.float32, device=q_fp8.device)
     if rows == 0 or width == 0:
         return out
