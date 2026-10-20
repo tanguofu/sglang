@@ -157,10 +157,9 @@ def store_index_k_fp8(
         D=dim,
         SLOT=INDEX_K_FP8_SLOT_BYTES,
         MAX=float(fp8_max),
-        NSLOTS=int(cache.shape[0]),
+        NSLOTS=int(cache.shape[0]) * int(page_size),
         num_warps=4,
     )
-    _ = page_size  # the slot index already encodes page and offset
 
 
 def kv_cache_view(cache: torch.Tensor, page_size: int) -> torch.Tensor:
@@ -266,7 +265,7 @@ def mqa_logits_fp8(
         D=dim,
         PAGE=page_size,
         SLOT=INDEX_K_FP8_SLOT_BYTES,
-        NSLOTS=int(cache.shape[0]),
+        NSLOTS=int(cache.shape[0]) * int(page_size),
         BLOCK_N=block_n,
         num_warps=4,
         num_stages=1,
