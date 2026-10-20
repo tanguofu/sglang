@@ -411,7 +411,7 @@ def low_ratio_index_topk_hip_decode(
                     indexer_metadata.compressed_page_size,
                     pool.get_index_k_page_size(ratio),
                     indexer_metadata.page_table.shape[1],
-                    indexer_metadata.compressed_page_size // ratio,
+                    pool.get_index_k_page_size(ratio) // ratio,
                     indexer_metadata.page_table[0, :3].tolist(),
                     int(indexer_metadata.compressed_seq_lens[0].item()),
                 ),
@@ -421,9 +421,9 @@ def low_ratio_index_topk_hip_decode(
             q_fp8=q_fp8,
             weights=weights,
             cache=pool.get_index_k_with_scale_buffer(layer.layer_id),
-            # The table's page ids are in compressed-token pages: the pool's
-            # physical page divided by the compression ratio.
-            page_size=indexer_metadata.compressed_page_size // ratio,
+            # A page id in the table counts compressed-token pages, which are
+            # the pool's page divided by the compression ratio.
+            page_size=pool.get_index_k_page_size(ratio) // ratio,
             page_table=indexer_metadata.page_table,
             lens=indexer_metadata.compressed_seq_lens,
             max_seq_len=indexer_metadata.page_table.shape[1]
@@ -648,7 +648,7 @@ def low_ratio_index_topk_hip_extend(
                 q_fp8=q_fp8[rows],
                 weights=weights[rows],
                 cache=pool.get_index_k_with_scale_buffer(layer.layer_id),
-                page_size=indexer_metadata.compressed_page_size // ratio,
+                page_size=pool.get_index_k_page_size(ratio) // ratio,
                 page_table=indexer_metadata.page_table[rows],
                 lens=row_lens,
                 max_seq_len=int(row_lens.max().item()),
