@@ -157,58 +157,48 @@ def _debug_row0(q_fp8, weights, cache, page_table, lens, page_size, logits) -> N
     from sglang.kernels.ops.quantization.fp8_kernel import fp8_dtype
 
     rows, ln = q_fp8.shape[0], int(lens[0].item())
-    key = (rows, ln, int(max_seq_len_of(logits)))
+    key = (rows, ln, int(logits.shape[1]))
     if key in _DEBUGGED or rows == 0 or ln == 0:
         return
     _DEBUGGED.add(key)
 
+    dim = q_fp8.shape[-1]
     page_ids = page_table[0, : (ln + page_size - 1) // page_size].to(torch.int64)
     offs = torch.arange(ln, device=page_ids.device) % page_size
     reps = torch.arange(ln, device=page_ids.device) // page_size
     slots = page_ids[reps] * page_size + offs
-    payload = cache[slots, : q_fp8.shape[-1]].reshape(-1, q_fp8.shape[-1]).view(fp8_dtype).float()
-    scale = cache[slots, q_fp8.shape[-1]:].contiguous().view(torch.float32).view(-1)
+
+    # Same flat addressing the kernel uses: slot * 132 bytes, scale word last.
+    k_flat = cache.view(fp8_dtype).reshape(-1)
+    s_flat = cache.view(torch.float32).reshape(-1)
+    cols = torch.arange(dim, device=slots.device)
+    payload = k_flat[slots[:, None] * INDEX_K_FP8_SLOT_BYTES + cols[None, :]].float()
+    scale = s_flat[slots * (INDEX_K_FP8_SLOT_BYTES // 4) + dim // 4]
     kd = payload * scale.unsqueeze(-1)
 
     qd = q_fp8[0].view(q_fp8.shape[2], q_fp8.shape[3]).float()
     ref = (qd @ kd.T).relu().mul(weights[0].unsqueeze(-1)).sum(0)
     got = logits[0, :ln].float()
     d = (got - ref).abs()
+    order_got = torch.topk(got, min(64, ln)).indices
+    order_ref = torch.topk(ref, min(64, ln)).indices
+    overlap = len(set(order_got.tolist()) & set(order_ref.tolist()))
     print(
-        "[fp8-idx] rows=%d ln=%d pt_w=%d logits[min=%.3f max=%.3f] ref[max=%.3f] "
-        "diff[max=%.4f mean=%.4f] nan=%d"
+        "[fp8-idx] rows=%d ln=%d pt_w=%d page=%d slots[:3]=%s kd|max|=%.4f "
+        "diff[max=%.4f mean=%.4f] top64=%d/64"
         % (
             rows,
             ln,
             page_table.shape[1],
-            got.min().item(),
-            got.max().item(),
-            ref.max().item(),
+            page_size,
+            slots[:3].tolist(),
+            kd.abs().max().item(),
             d.max().item(),
             d.mean().item(),
-            int(torch.isnan(got).sum()),
+            overlap,
         ),
         flush=True,
     )
-    print(
-        "[fp8-idx] cache_nonzero=%.4f cache|max|=%d pt[0,:4]=%s slots[:4]=%s nslots=%d kd|max|=%.4f qd|max|=%.4f w|max|=%.4f"
-        % (
-            (cache.view(torch.uint8) != 0).float().mean().item(),
-            int(cache.view(torch.uint8).max().item()),
-            page_size,
-            page_table[0, :4].tolist(),
-            slots[:4].tolist(),
-            cache.shape[0],
-            kd.abs().max().item(),
-            qd.abs().max().item(),
-            weights[0].abs().max().item(),
-        ),
-        flush=True,
-    )
-    order_got = torch.topk(got, min(64, ln)).indices
-    order_ref = torch.topk(ref, min(64, ln)).indices
-    overlap = len(set(order_got.tolist()) & set(order_ref.tolist()))
-    print("[fp8-idx] top64 overlap %d/64" % overlap, flush=True)
 
 
 def max_seq_len_of(logits) -> int:
