@@ -635,23 +635,44 @@ def low_ratio_index_topk_hip_extend(
             ),
         )
 
+    if fp8_mode:
+        # The compressor's slot ids per visible compressed position, exactly as
+        # the identity fill resolves them.
+        k_slots_all, slot_starts = _extend_k_slots(
+            backend.req_to_token,
+            ratio=ratio,
+            lc_per_req=lc_per_req,
+            req_pool_indices=forward_batch.req_pool_indices.to(torch.int64),
+            device=pos.device,
+        )
+        tok_req = torch.repeat_interleave(
+            torch.arange(len(lc_per_req), device=pos.device),
+            indexer_metadata.compressed_seq_lens.new_tensor(extend_lens_cpu),
+        )
+        row_start_all = torch.tensor(
+            slot_starts, dtype=torch.int64, device=pos.device
+        )[tok_req]
+
     def score_rows(
         rows: slice, req_lo: int, rows_per_request: List[int]
     ) -> torch.Tensor:
         if fp8_mode:
-            from sglang.srt.layers.attention.dsv4.fp8_index_backend_hip import (
-                fp8_index_logits,
+            from sglang.kernels.ops.attention.dsv4.index_k_fp8 import (
+                mqa_logits_fp8_slots,
             )
 
-            row_lens = indexer_metadata.compressed_seq_lens[rows]
-            return fp8_index_logits(
-                q_fp8=q_fp8[rows],
-                weights=weights[rows],
-                cache=pool.get_index_k_with_scale_buffer(layer.layer_id),
-                page_size=indexer_metadata.compressed_page_size,
-                page_table=indexer_metadata.page_table[rows],
-                lens=row_lens,
-                max_seq_len=int(row_lens.max().item()),
+            # Score against the allocator's own slots, the same ids the
+            # compressor wrote: the pages of the prefill table live in another
+            # address space than the index pool.
+            row_lens = compress_lens[rows]
+            return mqa_logits_fp8_slots(
+                q_fp8[rows],
+                weights[rows],
+                pool.get_index_k_with_scale_buffer(layer.layer_id),
+                k_slots_all,
+                row_start_all[rows],
+                row_lens,
+                int(row_lens.max().item()),
             )
         if page8:
             return _score_requests_page8(

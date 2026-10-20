@@ -271,3 +271,98 @@ def mqa_logits_fp8(
         num_stages=1,
     )
     return out
+
+@triton.jit
+def _mqa_logits_fp8_slots_kernel(
+    q_ptr,
+    w_ptr,
+    payload_ptr,
+    scale_ptr,
+    slots_ptr,
+    row_start_ptr,
+    lens_ptr,
+    out_ptr,
+    out_stride,
+    H: tl.constexpr,
+    D: tl.constexpr,
+    SLOT: tl.constexpr,
+    NSLOTS: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    """Score a row against the exact index-K slots the compressor wrote.
+
+    Row ``r`` owns ``lens[r]`` visible compressed positions, stored at
+    ``slots_ptr[row_start[r] : row_start[r] + lens[r]]`` -- the allocator's own
+    slot ids, with no page-table indirection in between.
+    """
+    row = tl.program_id(0)
+    blk = tl.program_id(1)
+    ln = tl.load(lens_ptr + row)
+    if ln <= 0:
+        return
+
+    cols = blk * BLOCK_N + tl.arange(0, BLOCK_N)
+    mask = cols < ln
+    base = tl.load(row_start_ptr + row)
+    slot = tl.load(slots_ptr + base + cols, mask=mask, other=0).to(tl.int64)
+    slot = tl.minimum(tl.maximum(slot, 0), NSLOTS - 1)
+
+    offs_d = tl.arange(0, D)
+    k = tl.load(
+        payload_ptr + slot[:, None] * SLOT + offs_d[None, :],
+        mask=mask[:, None],
+        other=0.0,
+    ).to(tl.bfloat16)
+    scale = tl.load(scale_ptr + slot * (SLOT // 4) + D // 4, mask=mask, other=1.0)
+    k = (k.to(tl.float32) * scale[:, None]).to(tl.bfloat16)
+
+    offs_h = tl.arange(0, H)
+    q = tl.load(q_ptr + row * H * D + offs_h[:, None] * D + offs_d[None, :]).to(
+        tl.bfloat16
+    )
+    w = tl.load(w_ptr + row * H + offs_h)
+
+    s = tl.dot(q, tl.trans(k))
+    s = tl.maximum(s, 0.0) * w[:, None]
+    tl.store(out_ptr + row * out_stride + cols, tl.where(mask, tl.sum(s, 0), 0.0))
+
+
+def mqa_logits_fp8_slots(
+    q_fp8: torch.Tensor,
+    weights: torch.Tensor,
+    cache: torch.Tensor,
+    slots: torch.Tensor,
+    row_start: torch.Tensor,
+    lens: torch.Tensor,
+    max_seq_len: int,
+    *,
+    block_n: int = 64,
+    out: torch.Tensor = None,
+) -> torch.Tensor:
+    """``[rows, max_seq_len]`` logits gathered by explicit index-K slot ids."""
+    rows, _, heads, dim = q_fp8.shape
+    width = (max_seq_len + 255) // 256 * 256
+    if out is None:
+        out = _alloc_logits(rows, width, q_fp8.device)
+    if rows == 0 or width == 0:
+        return out
+    grid = (rows, triton.cdiv(max_seq_len, block_n))
+    _mqa_logits_fp8_slots_kernel[grid](
+        q_fp8,
+        weights,
+        cache.view(fp8_dtype),
+        cache.view(torch.float32),
+        slots,
+        row_start,
+        lens,
+        out,
+        out.stride(0),
+        H=heads,
+        D=dim,
+        SLOT=INDEX_K_FP8_SLOT_BYTES,
+        NSLOTS=int(cache.numel()) // INDEX_K_FP8_SLOT_BYTES,
+        BLOCK_N=block_n,
+        num_warps=4,
+        num_stages=1,
+    )
+    return out
