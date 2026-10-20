@@ -37,6 +37,10 @@ _LOGITS_POOL: dict = {}
 
 
 def _alloc_logits(rows: int, width: int, device: torch.device) -> torch.Tensor:
+    # Inside a capture, allocate from the graph pool the way torch expects: the
+    # pooled block is for eager steps only.
+    if torch.cuda.is_current_stream_capturing():
+        return torch.empty((rows, width), dtype=torch.float32, device=device)
     key = (device, rows * width)
     buf = _LOGITS_POOL.get(key)
     if buf is None:
