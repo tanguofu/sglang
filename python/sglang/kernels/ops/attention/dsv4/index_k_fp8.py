@@ -157,7 +157,7 @@ def store_index_k_fp8(
         D=dim,
         SLOT=INDEX_K_FP8_SLOT_BYTES,
         MAX=float(fp8_max),
-        NSLOTS=int(cache.shape[0]) * int(page_size),
+        NSLOTS=int(cache.numel()) // INDEX_K_FP8_SLOT_BYTES,
         num_warps=4,
     )
 
@@ -265,7 +265,7 @@ def mqa_logits_fp8(
         D=dim,
         PAGE=page_size,
         SLOT=INDEX_K_FP8_SLOT_BYTES,
-        NSLOTS=int(cache.shape[0]) * int(page_size),
+        NSLOTS=int(cache.numel()) // INDEX_K_FP8_SLOT_BYTES,
         BLOCK_N=block_n,
         num_warps=4,
         num_stages=1,
