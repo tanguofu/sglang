@@ -256,6 +256,94 @@ def _w8a8_block_fp8_matmul_hopper(
 
 
 @triton.jit
+def _w8a8_block_fp8_matmul_thin(
+    A,
+    B,
+    C,
+    As,
+    Bs,
+    M,
+    N,
+    K,
+    stride_am,
+    stride_ak,
+    stride_bk,
+    stride_bn,
+    stride_cm,
+    stride_cn,
+    stride_As_m,
+    stride_As_k,
+    stride_Bs_k,
+    stride_Bs_n,
+    group_n: tl.constexpr,
+    group_k: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+):
+    """Decode-shaped block-fp8 GEMM: one row tile, wide K chunks.
+
+    The generic kernel steps its scales one group per BLOCK_SIZE_K tile, which
+    forces BLOCK_SIZE_K == group_k (32) and leaves a 160-iteration loop of tiny
+    tiles at M=1.  Here BLOCK_SIZE_K spans NSUB scale groups: both operand scales
+    are expanded to the tile and applied before a single dot, so the loads can be
+    deep and the loop short.  The scales are powers of two, so applying them in
+    bf16 is exact.
+    """
+    pid = tl.program_id(0)
+    offs_bn = pid * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_am = tl.arange(0, BLOCK_M)
+    NSUB: tl.constexpr = BLOCK_K // group_k
+
+    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    for k in range(0, tl.cdiv(K, BLOCK_K)):
+        offs_k = k * BLOCK_K + tl.arange(0, BLOCK_K)
+        k_mask = offs_k < K
+        a = tl.load(
+            A + offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak,
+            mask=(offs_am[:, None] < M) & k_mask[None, :],
+            other=0.0,
+        ).to(tl.bfloat16)
+        b = tl.load(
+            B + offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn,
+            mask=k_mask[:, None] & (offs_bn[None, :] < N),
+            other=0.0,
+        )
+
+        sub = k * NSUB + tl.arange(0, NSUB)
+        a_s = tl.load(
+            As + offs_am[:, None] * stride_As_m + sub[None, :] * stride_As_k,
+            mask=offs_am[:, None] < M,
+            other=1.0,
+        )
+        b_s = tl.load(
+            Bs + (offs_bn[None, :] // group_n) * stride_Bs_n + sub[:, None] * stride_Bs_k,
+            mask=offs_bn[None, :] < N,
+            other=1.0,
+        )
+
+        a_s = tl.reshape(
+            tl.broadcast_to(a_s[:, :, None], (BLOCK_M, NSUB, group_k)),
+            (BLOCK_M, BLOCK_K),
+        )
+        b_s = tl.reshape(
+            tl.broadcast_to(b_s[:, None, :], (NSUB, group_k, BLOCK_N)),
+            (BLOCK_K, BLOCK_N),
+        )
+        a = (a.to(tl.float32) * a_s).to(tl.bfloat16)
+        b = (b.to(tl.float32) * b_s).to(tl.bfloat16)
+        acc += tl.dot(a, b)
+
+    c = acc.to(C.dtype.element_ty)
+    offs_cm = tl.arange(0, BLOCK_M)
+    tl.store(
+        C + offs_cm[:, None] * stride_cm + offs_bn[None, :] * stride_cn,
+        c,
+        mask=(offs_cm[:, None] < M) & (offs_bn[None, :] < N),
+    )
+
+
+@triton.jit
 def _reduce_block_fp8_split_k(
     Parts, Out, ELEMENTS: tl.constexpr, SPLITS: tl.constexpr, BLOCK: tl.constexpr
 ):
@@ -801,6 +889,46 @@ def w8a8_block_fp8_matmul_triton(
     M, N, K, C = prepare_block_fp8_matmul_inputs(A, B, As, Bs, block_size, output_dtype)
 
     block_n, block_k = block_size
+
+    # Decode runs a handful of rows: the generic tiling can only step one 32-wide
+    # scale group per tile, which turns these into 40-160 tiny tiles each.  Use
+    # the wide-K variant instead when the shape allows it.
+    if (
+        M <= 16
+        and tuple(block_size) == (32, 32)
+        and As.dtype == torch.float32
+        and Bs.dtype == torch.float32
+        and K % 128 == 0
+        and N % 64 == 0
+    ):
+        _w8a8_block_fp8_matmul_thin[(triton.cdiv(N, 64),)](
+            A,
+            B,
+            C,
+            As,
+            Bs,
+            M,
+            N,
+            K,
+            A.stride(-2),
+            A.stride(-1),
+            B.stride(1),
+            B.stride(0),
+            C.stride(-2),
+            C.stride(-1),
+            As.stride(-2),
+            As.stride(-1),
+            Bs.stride(1),
+            Bs.stride(0),
+            group_n=block_n,
+            group_k=block_k,
+            BLOCK_M=16,
+            BLOCK_N=64,
+            BLOCK_K=128,
+            num_warps=4,
+            num_stages=3,
+        )
+        return C
 
     configs = get_w8a8_block_fp8_configs(N, K, block_size[0], block_size[1])
     if configs:
