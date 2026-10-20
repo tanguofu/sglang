@@ -23,6 +23,7 @@ from sglang.srt.layers.attention.dsv4.dsv41_sparse import rope_tail
 from sglang.srt.environ import envs
 
 _DEBUGGED: set = set()
+_STORED: set = set()
 
 
 def store_index_k_fp8_group(
@@ -66,12 +67,30 @@ def store_index_k_fp8_layer(
     group_pos = (pos // ratio) * ratio
     k = indexer.k_norm(indexer.forward_wk(latent))
     k = rope_tail(k, freqs_cis[group_pos], indexer.rope_head_dim)
+    cache = pool.get_index_k_with_scale_buffer(layer.layer_id)
     store_index_k_fp8(
         k,
         out_loc.to(torch.int64),
-        pool.get_index_k_with_scale_buffer(layer.layer_id),
+        cache,
         page_size=pool.get_index_k_page_size(ratio),
     )
+    if envs.SGLANG_DS41_FP8_INDEX_DEBUG.get() and layer.layer_id not in _STORED:
+        _STORED.add(layer.layer_id)
+        torch.cuda.synchronize()
+        raw = cache.view(torch.uint8)
+        print(
+            "[fp8-store] layer=%d ratio=%d slots[:4]=%s k|max|=%.4f "
+            "nonzero=%.4f buf|max|=%d"
+            % (
+                layer.layer_id,
+                ratio,
+                out_loc[:4].tolist(),
+                k.abs().max().item(),
+                (raw != 0).float().mean().item(),
+                int(raw.max().item()),
+            ),
+            flush=True,
+        )
 
 
 def query_fp8(layer, x, q_lora, pos) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -155,8 +174,10 @@ def _debug_row0(q_fp8, weights, cache, page_table, lens, page_size, logits) -> N
         flush=True,
     )
     print(
-        "[fp8-idx] pt[0,:4]=%s slots[:4]=%s nslots=%d kd|max|=%.4f qd|max|=%.4f w|max|=%.4f"
+        "[fp8-idx] cache_nonzero=%.4f cache|max|=%d pt[0,:4]=%s slots[:4]=%s nslots=%d kd|max|=%.4f qd|max|=%.4f w|max|=%.4f"
         % (
+            (cache.view(torch.uint8) != 0).float().mean().item(),
+            int(cache.view(torch.uint8).max().item()),
             page_table[0, :4].tolist(),
             slots[:4].tolist(),
             cache.shape[0],
