@@ -1736,6 +1736,9 @@ class Envs:
     # MFMA, so this is the only indexer an fp4-less part (gfx942) can run.
     SGLANG_HIP_DSV41_INDEX_K_FP8 = EnvBool(False)
 
+    # Diagnostic: compare row 0 of the fp8 indexer logits with a torch reference.
+    SGLANG_DS41_FP8_INDEX_DEBUG = EnvBool(False)
+
     # cache, GEMM, and distributed
     SGLANG_OPT_FP8_WO_A_GEMM = EnvBool(True)
     # ROCm gfx950: fuse inverse-RoPE into the wo_a mxfp8 quant (aiter
