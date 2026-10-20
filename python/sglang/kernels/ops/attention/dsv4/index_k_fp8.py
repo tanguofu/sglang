@@ -30,6 +30,23 @@ from sglang.kernels.ops.quantization.fp8_kernel import fp8_dtype, fp8_max
 
 # Bytes of one index-K slot: 128 fp8 payload + 4 bytes of fp32 scale.
 INDEX_K_FP8_SLOT_BYTES = 132
+# Logits scratch, keyed by element count: the width tracks the context length and
+# an agentic session only ever grows it, so a fresh allocation per call would
+# strand every block instead of reusing one.
+_LOGITS_POOL: dict = {}
+
+
+def _alloc_logits(rows: int, width: int, device: torch.device) -> torch.Tensor:
+    key = (device, rows * width)
+    buf = _LOGITS_POOL.get(key)
+    if buf is None:
+        if len(_LOGITS_POOL) > 8:
+            _LOGITS_POOL.clear()
+        buf = torch.empty(rows * width, dtype=torch.float32, device=device)
+        _LOGITS_POOL[key] = buf
+    return buf.view(rows, width)
+
+
 # Smallest scale divisor: keeps an all-zero row finite instead of scaling by 0.
 _AMAX_FLOOR = 1e-4  # mirrored as a literal inside the Triton kernels
 
@@ -197,9 +214,10 @@ def _mqa_logits_fp8_kernel(
 
     s = tl.dot(q, tl.trans(k))  # [H, BLOCK_N] fp32
     s = tl.maximum(s, 0.0) * w[:, None]
-    tl.store(
-        out_ptr + row * out_stride + cols, tl.sum(s, 0), mask=mask
-    )
+    # Columns past the row's length are written as zero rather than masked out:
+    # the logits buffer is reused across layers, so it must not keep stale
+    # scores from an earlier, longer row.
+    tl.store(out_ptr + row * out_stride + cols, tl.where(mask, tl.sum(s, 0), 0.0))
 
 
 def mqa_logits_fp8(
@@ -220,7 +238,7 @@ def mqa_logits_fp8(
     # well: a width that tracks the context length would hand the caching
     # allocator a monotonically growing size sequence and strand every block.
     width = (max_seq_len + 255) // 256 * 256
-    out = torch.zeros((rows, width), dtype=torch.float32, device=q_fp8.device)
+    out = _alloc_logits(rows, width, q_fp8.device)
     if rows == 0 or width == 0:
         return out
     payload = cache.view(fp8_dtype)
