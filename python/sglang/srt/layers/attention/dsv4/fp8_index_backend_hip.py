@@ -44,12 +44,29 @@ def store_index_k_fp8_group(
     ratio = layer.compress_ratio
     k = indexer.k_norm(indexer.forward_wk(latent))
     k = rope_tail(k, freqs[group_pos], indexer.rope_head_dim)
+    cache = pool.get_index_k_with_scale_buffer(layer.layer_id)
     store_index_k_fp8(
         k,
         slots.to(torch.int64),
-        pool.get_index_k_with_scale_buffer(layer.layer_id),
+        cache,
         page_size=pool.get_index_k_page_size(ratio),
     )
+    if envs.SGLANG_DS41_FP8_INDEX_DEBUG.get() and ("g", layer.layer_id) not in _STORED:
+        _STORED.add(("g", layer.layer_id))
+        torch.cuda.synchronize()
+        raw = cache.view(torch.uint8)
+        print(
+            "[fp8-store-g] layer=%d ratio=%d page=%d slots[:8]=%s k|max|=%.4f nonzero=%.5f"
+            % (
+                layer.layer_id,
+                ratio,
+                pool.get_index_k_page_size(ratio),
+                slots[:8].tolist(),
+                k.abs().max().item(),
+                (raw != 0).float().mean().item(),
+            ),
+            flush=True,
+        )
 
 
 def store_index_k_fp8_layer(
@@ -178,6 +195,7 @@ def _debug_row0(q_fp8, weights, cache, page_table, lens, page_size, logits) -> N
         % (
             (cache.view(torch.uint8) != 0).float().mean().item(),
             int(cache.view(torch.uint8).max().item()),
+            page_size,
             page_table[0, :4].tolist(),
             slots[:4].tolist(),
             cache.shape[0],
