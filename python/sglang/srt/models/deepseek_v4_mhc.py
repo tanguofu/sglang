@@ -28,6 +28,7 @@ import msgspec
 import torch
 import torch.nn.functional as F
 
+from sglang.kernels.ops.layernorm.hc_rms import rms_cast as hc_rms_cast
 from sglang.kernels.ops.layernorm.mhc_mega import mhc_mega_boundary
 from sglang.kernels.ops.layernorm.mhc_post_split_h import mhc_post_split_h
 from sglang.srt.environ import envs
@@ -345,8 +346,14 @@ def _mix_stats_impl(hc: HcSubLayer, x: torch.Tensor) -> HcTriplet:
         # keeps the mixing and RMS reductions batch-invariant.
         mixes = hc_mix_stats(x_flat, hc.fn, cfg.rms_eps).unsqueeze(1)
     else:
-        x_flat = x_flat.float()
-        rsqrt = torch.rsqrt(x_flat.square().mean(-1, keepdim=True) + cfg.rms_eps)
+        # One pass writes the fp32 operand and the per-row rsqrt, replacing the
+        # cast / square / mean / add / rsqrt chain (four kernels per layer).
+        fused = hc_rms_cast(x_flat, cfg.rms_eps)
+        if fused is None:
+            x_flat = x_flat.float()
+            rsqrt = torch.rsqrt(x_flat.square().mean(-1, keepdim=True) + cfg.rms_eps)
+        else:
+            x_flat, rsqrt = fused
         mixes = (F.linear(x_flat, hc.fn) * rsqrt).unsqueeze(1)
     if _is_xpu:
         from sglang.srt.models.deepseek_v4 import get_mhc_ops
