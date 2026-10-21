@@ -255,9 +255,6 @@ def _w8a8_block_fp8_matmul_hopper(
     tl.store(c_ptrs, c, mask=c_mask)
 
 
-_GEMM_LOGGED: set = set()
-
-
 @triton.jit
 def _w8a8_block_fp8_matmul_thin(
     A,
@@ -897,17 +894,6 @@ def w8a8_block_fp8_matmul_triton(
     # scale group per tile, which turns these into 40-160 tiny tiles each.  Use
     # the wide-K variant instead when the shape allows it.
     if (
-        os.environ.get("SGLANG_DS41_GEMM_LOG") == "1"
-        and M <= 16
-        and tuple(block_size) == (32, 32)
-    ):
-        import sys
-
-        key = (M, N, K)
-        if key not in _GEMM_LOGGED:
-            _GEMM_LOGGED.add(key)
-            print("[ds41-gemm] M=%d N=%d K=%d" % key, file=sys.stderr, flush=True)
-    if (
         M <= 16
         and tuple(block_size) == (32, 32)
         and As.dtype == torch.float32
@@ -940,7 +926,7 @@ def w8a8_block_fp8_matmul_triton(
             BLOCK_N=64,
             BLOCK_K=128,
             num_warps=4,
-            num_stages=3,
+            num_stages=2,
         )
         return C
 
