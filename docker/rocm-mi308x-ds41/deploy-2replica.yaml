@@ -1,0 +1,252 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ds41-r0
+  namespace: kube-system
+  labels:
+    app: ds41-r0
+spec:
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeSelector:
+    kubernetes.io/hostname: node-21.234.171.87
+  containers:
+  - name: sglang
+    image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:ds41-fp8idx-1022
+    imagePullPolicy: Always
+    command:
+    - /usr/local/bin/ds41_entrypoint.sh
+    args:
+    - --model-path
+    - /data/model/DeepSeek-V4.1-Flash
+    - --served-model-name
+    - DeepSeek-V4.1-Flash
+    - --host
+    - 0.0.0.0
+    - --port
+    - '30000'
+    - --tp-size
+    - '8'
+    - --ep-size
+    - '8'
+    - --moe-a2a-backend
+    - none
+    - --mem-fraction-static
+    - '0.75'
+    - --max-running-requests
+    - '64'
+    - --context-length
+    - '524288'
+    - --chunked-prefill-size
+    - '8192'
+    - --watchdog-timeout
+    - '3600'
+    - --enable-metrics
+    readinessProbe:
+      exec:
+        command:
+        - test
+        - -f
+        - /tmp/ds41_warmup.done
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      failureThreshold: 90
+    env:
+    - name: HIP_VISIBLE_DEVICES
+      value: 0,1,2,3,4,5,6,7
+    - name: SGLANG_HACK_FLASHMLA_BACKEND
+      value: triton
+    - name: SGLANG_DSV4_FP4_DEQUANT
+      value: '1'
+    - name: PYTHONPYCACHEPREFIX
+      value: /tmp/pyc
+    - name: CPATH
+      value: /data/jit-include
+    - name: TRITON_CACHE_DIR
+      value: /data/triton-cache-v3
+    - name: SGLANG_WARMUP_TIMEOUT
+      value: '3600'
+    - name: SGLANG_HIP_DSV41_INDEX_K_FP8
+      value: '1'
+    securityContext:
+      privileged: true
+      seccompProfile:
+        type: Unconfined
+    resources:
+      limits:
+        amd.com/gpu: '8'
+      requests:
+        amd.com/gpu: '8'
+    volumeMounts:
+    - name: dev-kfd
+      mountPath: /dev/kfd
+    - name: dev-dri
+      mountPath: /dev/dri
+    - name: model
+      mountPath: /data/model
+    - name: tilelang-cache
+      mountPath: /root/.tilelang
+    - name: aiter-build
+      mountPath: /sgl-workspace/aiter/aiter/jit/build
+    - name: shm
+      mountPath: /dev/shm
+    - name: rdma-provider
+      mountPath: /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so
+      subPath: libbnxt_re-rdmav34.so
+    - name: jit-include
+      mountPath: /opt/rocm/include/cuda_fp8.h
+      subPath: cuda_fp8.h
+  volumes:
+  - name: dev-kfd
+    hostPath:
+      path: /dev/kfd
+  - name: dev-dri
+    hostPath:
+      path: /dev/dri
+  - name: model
+    hostPath:
+      path: /data/model
+  - name: tilelang-cache
+    hostPath:
+      path: /data/tilelang-cache
+  - name: aiter-build
+    hostPath:
+      path: /data/aiter-build
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 32Gi
+  - name: rdma-provider
+    hostPath:
+      path: /data/rdma-libs
+  - name: jit-include
+    hostPath:
+      path: /data/jit-include
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ds41-r1
+  namespace: kube-system
+  labels:
+    app: ds41-r1
+spec:
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  nodeSelector:
+    kubernetes.io/hostname: node-21.234.170.159
+  containers:
+  - name: sglang
+    image: mirrors.tencent.com/ti-platform/sglang-glm52-308x:ds41-fp8idx-1022
+    imagePullPolicy: Always
+    command:
+    - /usr/local/bin/ds41_entrypoint.sh
+    args:
+    - --model-path
+    - /data/model/DeepSeek-V4.1-Flash
+    - --served-model-name
+    - DeepSeek-V4.1-Flash
+    - --host
+    - 0.0.0.0
+    - --port
+    - '30000'
+    - --tp-size
+    - '8'
+    - --ep-size
+    - '8'
+    - --moe-a2a-backend
+    - none
+    - --mem-fraction-static
+    - '0.75'
+    - --max-running-requests
+    - '64'
+    - --context-length
+    - '524288'
+    - --chunked-prefill-size
+    - '8192'
+    - --watchdog-timeout
+    - '3600'
+    - --enable-metrics
+    readinessProbe:
+      exec:
+        command:
+        - test
+        - -f
+        - /tmp/ds41_warmup.done
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      failureThreshold: 90
+    env:
+    - name: HIP_VISIBLE_DEVICES
+      value: 0,1,2,3,4,5,6,7
+    - name: SGLANG_HACK_FLASHMLA_BACKEND
+      value: triton
+    - name: SGLANG_DSV4_FP4_DEQUANT
+      value: '1'
+    - name: PYTHONPYCACHEPREFIX
+      value: /tmp/pyc
+    - name: CPATH
+      value: /data/jit-include
+    - name: TRITON_CACHE_DIR
+      value: /data/triton-cache-v3
+    - name: SGLANG_WARMUP_TIMEOUT
+      value: '3600'
+    - name: SGLANG_HIP_DSV41_INDEX_K_FP8
+      value: '1'
+    securityContext:
+      privileged: true
+      seccompProfile:
+        type: Unconfined
+    resources:
+      limits:
+        amd.com/gpu: '8'
+      requests:
+        amd.com/gpu: '8'
+    volumeMounts:
+    - name: dev-kfd
+      mountPath: /dev/kfd
+    - name: dev-dri
+      mountPath: /dev/dri
+    - name: model
+      mountPath: /data/model
+    - name: tilelang-cache
+      mountPath: /root/.tilelang
+    - name: aiter-build
+      mountPath: /sgl-workspace/aiter/aiter/jit/build
+    - name: shm
+      mountPath: /dev/shm
+    - name: rdma-provider
+      mountPath: /usr/lib/x86_64-linux-gnu/libibverbs/libbnxt_re-rdmav34.so
+      subPath: libbnxt_re-rdmav34.so
+    - name: jit-include
+      mountPath: /opt/rocm/include/cuda_fp8.h
+      subPath: cuda_fp8.h
+  volumes:
+  - name: dev-kfd
+    hostPath:
+      path: /dev/kfd
+  - name: dev-dri
+    hostPath:
+      path: /dev/dri
+  - name: model
+    hostPath:
+      path: /data/model
+  - name: tilelang-cache
+    hostPath:
+      path: /data/tilelang-cache
+  - name: aiter-build
+    hostPath:
+      path: /data/aiter-build
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 32Gi
+  - name: rdma-provider
+    hostPath:
+      path: /data/rdma-libs
+  - name: jit-include
+    hostPath:
+      path: /data/jit-include
