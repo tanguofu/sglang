@@ -34,6 +34,7 @@ from sglang.kernels.ops.attention.dsv4 import (
 from sglang.kernels.ops.attention.dsv4.wo_a import MAX_M as _FUSED_WO_A_MAX_TOKENS
 from sglang.kernels.ops.attention.dsv4.wo_a import fused_rope_wo_a_bf16
 from sglang.kernels.ops.attention.flash_mla_sm120 import SM120_DECODE_MAX_TOKENS
+from sglang.kernels.ops.layernorm.hc_rms import rms_cast as hc_rms_cast
 from sglang.kernels.ops.gemm.dsv4_wo_a import (
     wo_a_bf16_gemv,
     wo_a_bf16_small_batch,
@@ -3141,10 +3142,16 @@ class DeepseekV4DecoderLayerBase(nn.Module):
 
         @compile_in_capture_mode
         def hc_pre_torch_impl(x, hc_fn):
-            x_flat = x.flatten(1).float()
-            rsqrt = torch.rsqrt(
-                x_flat.square().mean(-1, keepdim=True) + self.rms_norm_eps
-            )
+            # One pass writes the fp32 operand and the per-row rsqrt, replacing
+            # the cast / square / mean / add / rsqrt chain this used to run.
+            fused = hc_rms_cast(x, self.rms_norm_eps)
+            if fused is None:
+                x_flat = x.flatten(1).float()
+                rsqrt = torch.rsqrt(
+                    x_flat.square().mean(-1, keepdim=True) + self.rms_norm_eps
+                )
+            else:
+                x_flat, rsqrt = fused
             mixes = (F.linear(x_flat, hc_fn) * rsqrt).unsqueeze(1)
             return x_flat, mixes
 
