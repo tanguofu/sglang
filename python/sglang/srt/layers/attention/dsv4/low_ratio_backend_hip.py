@@ -6,6 +6,7 @@ from __future__ import annotations
 import functools
 import itertools
 import logging
+import os
 from typing import (
     TYPE_CHECKING,
     Callable,
@@ -356,6 +357,43 @@ def low_ratio_decode_rows_fit_candidate_span(backend, forward_batch) -> bool:
     return max_len is not None and max_len <= span
 
 
+def _probe_decode_pages(
+    tag: str, layer, forward_batch, lens, page_indices, raw_indices
+) -> None:
+    """Append the top-k transform's view of one decode row to a probe file.
+
+    A wrong page id here is enough to make the attention read unrelated KV, so a
+    checksum that differs across runs at the same position separates "the index
+    was built wrong" from "the index was right and the KV behind it is wrong".
+    Disabled unless SGLANG_DS41_PAGE_PROBE names a file.
+    """
+    path = os.environ.get("SGLANG_DS41_PAGE_PROBE")
+    if not path:
+        return
+    try:
+        position = int(forward_batch.positions[0].item())
+        length = int(lens[0].item())
+        head = min(length, 8)
+        ids = page_indices[0, :head].tolist()
+        raw = raw_indices[0, :head].tolist() if raw_indices is not None else []
+        checksum = int(page_indices[0, :length].sum().item())
+        with open(path, "a") as probe_file:
+            probe_file.write(
+                "%s\t%d\t%d\t%d\t%d\t%s\t%s\n"
+                % (
+                    tag,
+                    position,
+                    int(layer.layer_id),
+                    length,
+                    checksum,
+                    ",".join(str(v) for v in ids),
+                    ",".join(str(v) for v in raw),
+                )
+            )
+    except Exception:  # a probe must never disturb a forward pass
+        logging.getLogger(__name__).exception("page probe failed")
+
+
 def low_ratio_index_topk_hip_decode(
     backend, layer, x, q_lora, pos, forward_batch: ForwardBatch
 ) -> None:
@@ -383,6 +421,14 @@ def low_ratio_index_topk_hip_decode(
             indexer_metadata.page_table,
             page_indices,
             indexer_metadata.compressed_page_size,
+            raw_indices,
+        )
+        _probe_decode_pages(
+            "identity",
+            layer,
+            forward_batch,
+            indexer_metadata.compressed_seq_lens,
+            page_indices,
             raw_indices,
         )
         return
@@ -496,6 +542,14 @@ def low_ratio_index_topk_hip_decode(
         indexer_metadata.page_table,
         page_indices,
         indexer_metadata.compressed_page_size,
+        raw_indices,
+    )
+    _probe_decode_pages(
+        "scored",
+        layer,
+        forward_batch,
+        indexer_metadata.compressed_seq_lens,
+        page_indices,
         raw_indices,
     )
 
