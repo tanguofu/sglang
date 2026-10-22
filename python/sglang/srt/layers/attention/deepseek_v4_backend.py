@@ -146,6 +146,53 @@ _is_xpu = is_xpu()
 logger = logging.getLogger(__name__)
 
 
+_KV_PROBE_OCC: dict = {}
+
+
+def _probe_kv_roundtrip(ratio: int, layer_id: int, pos, slots, latent, pool) -> None:
+    """Record what a decode write puts in and what the cache holds afterwards.
+
+    ``in`` is the latent the store kernel was handed, ``out`` a checksum of the
+    same rows read back from the layer's compressed cache.  ``occ`` distinguishes
+    the several writes that share one position key, so rows can be compared
+    call-for-call across runs instead of only by position.
+    """
+    path = os.environ.get("SGLANG_DS41_KV_PROBE")
+    if not path:
+        return
+    try:
+        position = int(pos[0].item())
+        rows = int(latent.shape[0])
+        key = (ratio, layer_id, position, rows)
+        if _KV_PROBE_OCC.get("_last_pos") is not None and position < _KV_PROBE_OCC["_last_pos"]:
+            _KV_PROBE_OCC.clear()
+        _KV_PROBE_OCC["_last_pos"] = position
+        occ = _KV_PROBE_OCC.get(key, 0)
+        _KV_PROBE_OCC[key] = occ + 1
+
+        value = latent.detach().float()
+        in_abs = float(value.abs().sum())
+        in_sq = float(value.pow(2).sum())
+
+        buffer = pool.get_extra_key_buffer(layer_id)
+        valid = slots >= 0
+        count = int(valid.sum().item())
+        if count:
+            gathered = buffer.index_select(0, slots[valid].to(torch.int64))
+            raw = gathered.view(torch.uint8).float()
+            out_abs = float(raw.sum())
+            out_sq = float(raw.pow(2).sum())
+        else:
+            out_abs = out_sq = 0.0
+        with open(path, "a") as probe_file:
+            probe_file.write(
+                "%d\t%d\t%d\t%d\t%d\t%.6f\t%.6f\t%.6f\t%.6f\n"
+                % (ratio, layer_id, position, rows, occ, in_abs, in_sq, out_abs, out_sq)
+            )
+    except Exception:  # a probe must never disturb a forward pass
+        logger.exception("compressed-KV roundtrip probe failed")
+
+
 def _probe_compressed_kv(ratio: int, layer_id: int, pos, latent) -> None:
     """Append a decode step's compressed latent checksum to a probe file.
 
@@ -3474,9 +3521,6 @@ class DeepseekV4AttnBackend(
                 )
             out_loc = core.c2_out_loc
 
-        if extend_offsets is None and latent is not None:
-            _probe_compressed_kv(layer.compress_ratio, layer_id, pos, latent)
-
         indexer = layer.indexer
         if indexer is not None and indexer.owns_k:
             # out_loc is -1 for an incomplete group and 0 for padding;
@@ -3593,7 +3637,6 @@ class DeepseekV4AttnBackend(
     ) -> None:
         pool = self.token_to_kv_pool
         latent = layer.compressor.finish(pooled)
-        _probe_compressed_kv(layer.compress_ratio, layer.layer_id, group_pos, latent)
         freqs = layer.freqs_cis[group_pos]
         # Index keys come from the pre-RoPE latent, so publish them first. Stored
         # as fp4 (per-32 ue8m0, no hadamard), matching the reference indexer.
@@ -3638,11 +3681,17 @@ class DeepseekV4AttnBackend(
             pool.set_extra_key_buffer_fused(
                 layer_id=layer.layer_id, loc=slots, cache_k=latent, freqs_cis=freqs
             )
+            _probe_kv_roundtrip(
+                layer.compress_ratio, layer.layer_id, group_pos, slots, latent, pool
+            )
             return
         # The fp8 FlashMLA caches requantize the FP4/E4M3 latent into their layout.
         latent = _rope_fq4(latent, freqs, layer.rope_head_dim, compressed_kv=True)
         pool.set_extra_key_buffer_fused(
             layer_id=layer.layer_id, loc=slots, cache_k=latent
+        )
+        _probe_kv_roundtrip(
+            layer.compress_ratio, layer.layer_id, group_pos, slots, latent, pool
         )
 
     def _low_ratio_index_topk(
