@@ -282,10 +282,12 @@ def _probe_head(tag, forward_batch, tensor) -> None:
     try:
         value = tensor.detach().float()
         position = int(forward_batch.positions[0].item())
+        rank = int(os.environ.get("RANK", torch.cuda.current_device()))
         with open(_HEAD_PROBE_PATH, "a") as probe_file:
             probe_file.write(
-                "%s\t%d\t%.6f\t%.6f\t%.6f\n"
+                "%d\t%s\t%d\t%.6f\t%.6f\t%.6f\n"
                 % (
+                    rank,
                     tag,
                     position,
                     float(value.abs().sum()),
