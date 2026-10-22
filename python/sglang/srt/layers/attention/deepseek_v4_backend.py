@@ -179,7 +179,7 @@ def _probe_attention(backend, layer_id, forward_batch, q, result, compress_ratio
             buffer = backend.token_to_kv_pool.get_extra_key_buffer(layer_id)
             keep = min(int(lengths[0].item()), indices.shape[1])
             ids = indices[0, :keep].to(torch.int64)
-            ids = ids[ids > 0]
+            ids = ids[(ids > 0) & (ids < buffer.shape[0])]
             kv_rows = int(ids.numel())
             if kv_rows:
                 gathered = buffer.index_select(0, ids).view(torch.uint8).float()
@@ -3735,6 +3735,8 @@ class DeepseekV4AttnBackend(
             _probe_kv_roundtrip(
                 layer.compress_ratio, layer.layer_id, group_pos, slots, latent, pool
             )
+            if os.environ.get("SGLANG_DS41_WRITE_SYNC") == "1":
+                torch.cuda.synchronize()
             return
         # The fp8 FlashMLA caches requantize the FP4/E4M3 latent into their layout.
         latent = _rope_fq4(latent, freqs, layer.rope_head_dim, compressed_kv=True)
@@ -3744,6 +3746,8 @@ class DeepseekV4AttnBackend(
         _probe_kv_roundtrip(
             layer.compress_ratio, layer.layer_id, group_pos, slots, latent, pool
         )
+        if os.environ.get("SGLANG_DS41_WRITE_SYNC") == "1":
+            torch.cuda.synchronize()
 
     def _low_ratio_index_topk(
         self,
