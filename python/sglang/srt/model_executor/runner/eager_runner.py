@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import os
 import contextlib
 import logging
 from dataclasses import replace
@@ -75,6 +76,19 @@ _is_hip = is_hip()
 if TYPE_CHECKING:
     from sglang.srt.layers.logits_processor import LogitsProcessorOutput
     from sglang.srt.model_executor.model_runner import ModelRunner
+
+
+
+def _call_model(model, *args, **kwargs):
+    """Call the model through nn.Module so forward hooks (tensor dump) can fire.
+
+    The serving path normally calls ``model.forward`` directly, which bypasses
+    ``nn.Module.__call__`` and with it every registered forward hook.  The
+    override keeps the usual path unless a debug dump is requested.
+    """
+    if os.environ.get("SGLANG_DS41_MODULE_CALL") == "1":
+        return model(*args, **kwargs)
+    return model.forward(*args, **kwargs)
 
 
 class EagerRunner(BaseRunner):
@@ -259,7 +273,8 @@ class EagerRunner(BaseRunner):
         ctx = device_timer_ctx(model_runner.device_timer, "decode")
 
         with ctx, pdmux_ctx:
-            return model_runner.model.forward(
+            return _call_model(
+                model_runner.model,
                 forward_batch.input_ids,
                 forward_batch.positions,
                 forward_batch,
@@ -347,7 +362,8 @@ class EagerRunner(BaseRunner):
                 # Other group-sharing models keep owning the layout in forward().
                 ret = self._execute_extend_cp(forward_batch, kwargs)
             else:
-                ret = model_runner.model.forward(
+                ret = _call_model(
+                model_runner.model,
                     forward_batch.input_ids,
                     forward_batch.positions,
                     forward_batch,
@@ -446,7 +462,8 @@ class EagerRunner(BaseRunner):
 
         kwargs = model_runner._pp_kwargs(pp_proxy_tensors)
         with device_timer_ctx(model_runner.device_timer, "idle"):
-            return model_runner.model.forward(
+            return _call_model(
+                model_runner.model,
                 forward_batch.input_ids,
                 forward_batch.positions,
                 forward_batch,
