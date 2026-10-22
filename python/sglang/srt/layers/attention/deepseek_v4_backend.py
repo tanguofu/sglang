@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import enum
 import functools
+import os
 import logging
 from dataclasses import dataclass, field
 from typing import (
@@ -143,6 +144,35 @@ _is_cuda = is_cuda()
 _is_xpu = is_xpu()
 
 logger = logging.getLogger(__name__)
+
+
+def _probe_compressed_kv(ratio: int, layer_id: int, pos, latent) -> None:
+    """Append a decode step's compressed latent checksum to a probe file.
+
+    The page ids handed to attention are identical across runs at the corrupting
+    step, so the difference has to be inside the KV these ids point at.  If this
+    checksum also matches, the write landed elsewhere than the read looks.
+    Disabled unless SGLANG_DS41_KV_PROBE names a file.
+    """
+    path = os.environ.get("SGLANG_DS41_KV_PROBE")
+    if not path:
+        return
+    try:
+        value = latent.detach().float()
+        with open(path, "a") as probe_file:
+            probe_file.write(
+                "%d\t%d\t%d\t%.6f\t%.6f\t%.6f\n"
+                % (
+                    ratio,
+                    int(pos[0].item()),
+                    int(layer_id),
+                    float(value.abs().sum()),
+                    float(value.pow(2).sum()),
+                    float(value[0, 0]),
+                )
+            )
+    except Exception:  # a probe must never disturb a forward pass
+        logger.exception("compressed-KV probe failed")
 
 SWA_WINDOW = 128
 DEFAULT_INDEX_TOPK = 512
@@ -3443,6 +3473,9 @@ class DeepseekV4AttnBackend(
                     layout=kv_layout,
                 )
             out_loc = core.c2_out_loc
+
+        if extend_offsets is None and latent is not None:
+            _probe_compressed_kv(layer.compress_ratio, layer_id, pos, latent)
 
         indexer = layer.indexer
         if indexer is not None and indexer.owns_k:
