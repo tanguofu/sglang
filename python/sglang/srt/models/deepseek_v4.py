@@ -267,6 +267,36 @@ logger = logging.getLogger(__name__)
 # per-layer hidden-state L2 norms plus the first row's position.  A corrupted
 # step shows up as a norm that departs from the same position in a clean run,
 # which localises the first layer that produced it.  Off by default.
+_HEAD_PROBE_PATH = os.environ.get("SGLANG_DS41_HEAD_PROBE")
+
+
+def _probe_head(tag, forward_batch, tensor) -> None:
+    """Record the magnitude of the row that feeds the final norm and the lm head.
+
+    A near-uniform next-token distribution (top-1 logprob around -3) is what a
+    collapsed hidden row looks like, so seeing which of these two rows shrinks at
+    the collapsing step says whether the residual stream or the norm is at fault.
+    """
+    if not _HEAD_PROBE_PATH:
+        return
+    try:
+        value = tensor.detach().float()
+        position = int(forward_batch.positions[0].item())
+        with open(_HEAD_PROBE_PATH, "a") as probe_file:
+            probe_file.write(
+                "%s\t%d\t%.6f\t%.6f\t%.6f\n"
+                % (
+                    tag,
+                    position,
+                    float(value.abs().sum()),
+                    float(value.pow(2).sum()),
+                    float(value.abs().max()),
+                )
+            )
+    except Exception:  # a probe must never disturb a forward pass
+        logger.exception("head probe failed")
+
+
 _DS41_LAYER_PROBE = os.environ.get("SGLANG_DS41_LAYER_PROBE")
 _DS41_LAYER_PROBE_ROWS: list = []
 
@@ -4320,7 +4350,9 @@ class DeepseekV4Model(nn.Module):
             hidden_states = self.hc_head(
                 hidden_states, self.hc_head_fn, self.hc_head_scale, self.hc_head_base
             )
+        _probe_head("pre", forward_batch, hidden_states)
         hidden_states = self.norm(hidden_states)
+        _probe_head("post", forward_batch, hidden_states)
 
         if tail is not None and not capture_dspark:
             # The logits processor indexes rows by the full extend layout.
