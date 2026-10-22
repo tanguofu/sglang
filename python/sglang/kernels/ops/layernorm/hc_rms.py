@@ -13,11 +13,16 @@ is the same fp32 square-and-mean, so the result is unchanged to fp32 rounding.
 
 from __future__ import annotations
 
+import os
 from typing import Optional, Tuple
 
 import torch
 import triton
 import triton.language as tl
+
+# Debug switch: ``1`` makes rms_cast decline, so the caller keeps its torch path
+# and the fused kernel can be ruled in or out of a numerical investigation.
+_DISABLED = os.environ.get("SGLANG_DS41_DISABLE_HC_RMS", "0") == "1"
 
 
 @triton.jit
@@ -50,6 +55,8 @@ def rms_cast(
     Returns ``None`` when the layout is not one the kernel handles, so the caller
     keeps its torch path.
     """
+    if _DISABLED:
+        return None
     if x.dim() < 2 or not x.is_contiguous():
         return None
     # ``flatten(1)``: every dim after the leading batch dim contributes to K.

@@ -893,8 +893,11 @@ def w8a8_block_fp8_matmul_triton(
     # Decode runs a handful of rows: the generic tiling can only step one 32-wide
     # scale group per tile, which turns these into 40-160 tiny tiles each.  Use
     # the wide-K variant instead when the shape allows it.
+    # SGLANG_DS41_DISABLE_THIN_GEMM=1 forces the generic kernel, so a numerical
+    # investigation can rule this variant in or out without a code change.
     if (
-        M <= 16
+        os.environ.get("SGLANG_DS41_DISABLE_THIN_GEMM", "0") != "1"
+        and M <= 16
         and tuple(block_size) == (32, 32)
         and As.dtype == torch.float32
         and Bs.dtype == torch.float32
