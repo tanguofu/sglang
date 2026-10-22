@@ -5,6 +5,7 @@ The mixins own platform mHC state, fusion, and TBO operations.
 
 from __future__ import annotations
 
+import os
 from functools import cached_property
 from typing import TYPE_CHECKING, Optional, Tuple, Union
 
@@ -103,33 +104,35 @@ _PROBE_PATH = __import__("os").environ.get("SGLANG_DS41_LAYER_HOOK")
 _PROBE_CALLS = {"n": 0}
 
 
-def _probe_stage(tag: str, layer_id: int, tensor) -> None:
+def _probe_stage(tag: str, layer_id: int, tensor, position=None, vector_dir=None) -> None:
+    """Record one layer output, keyed by position so runs can be aligned exactly.
+
+    Magnitudes alone cannot resolve the collapsing step (clean runs differ by
+    ~20% there), so inside a small position window the whole row is also written
+    to ``vector_dir``; comparing two runs then reduces to a cosine per layer.
+    """
     if not _PROBE_PATH or not isinstance(tensor, torch.Tensor):
         return
     try:
         import os
 
-        import os as _os
-
         _PROBE_CALLS["n"] += 1
         value = tensor.detach().float()
-        # One file per process: eight TP ranks append concurrently, so a shared
-        # file interleaves their rows and the counters cannot be told apart.
-        with open("%s.%d" % (_PROBE_PATH, _os.getpid()), "a") as probe_file:
+        pos = -1 if position is None else int(position)
+        with open("%s.%d" % (_PROBE_PATH, os.getpid()), "a") as probe_file:
             probe_file.write(
-                "%s\t%s\t%d\t%d\t%.6f\t%.6f\t%.6f\n"
-                % (
-                    "-1",
-                    tag,
-                    int(layer_id),
-                    _PROBE_CALLS["n"],
-                    float(value.abs().sum()),
-                    float(value.pow(2).sum()),
-                    float(value.abs().max()),
-                )
+                "%d\t%s\t%d\t%d\t%.6f\t%.6f\t%.6f\n"
+                % (pos, tag, int(layer_id), _PROBE_CALLS["n"],
+                   float(value.abs().sum()), float(value.pow(2).sum()),
+                   float(value.abs().max()))
             )
+        if vector_dir and 98 <= pos <= 102:
+            os.makedirs(vector_dir, exist_ok=True)
+            flat = value.reshape(-1).cpu().numpy()
+            flat.tofile("%s/%d_%s_%d_%d.f32" % (vector_dir, pos, tag, layer_id, os.getpid()))
     except Exception:  # a probe must never disturb a forward pass
         pass
+
 
 class NonCudaDecoderMixin:
     """Platform tuple and HcState execution for target and NextN decoders.
@@ -203,7 +206,7 @@ class NonCudaDecoderMixin:
                     defer_all_reduce=fuse_all_reduce_mhc,
                 )
             del x
-            _probe_stage("attn", self.layer_id, y)
+            _probe_stage("attn", self.layer_id, y, positions[0] if positions.numel() else None, os.environ.get("SGLANG_DS41_VEC_DIR"))
             return mhc.run_attn_post(
                 self.attn_hc,
                 y,
@@ -233,7 +236,7 @@ class NonCudaDecoderMixin:
                 return_moe_output=fuse_all_reduce_mhc,
             )
             del x
-            _probe_stage("mlp", self.layer_id, y)
+            _probe_stage("mlp", self.layer_id, y, positions[0] if positions.numel() else None, os.environ.get("SGLANG_DS41_VEC_DIR"))
             return mhc.run_moe_post(
                 self.ffn_hc,
                 y,
