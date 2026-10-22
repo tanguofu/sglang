@@ -267,6 +267,40 @@ logger = logging.getLogger(__name__)
 # per-layer hidden-state L2 norms plus the first row's position.  A corrupted
 # step shows up as a norm that departs from the same position in a clean run,
 # which localises the first layer that produced it.  Off by default.
+_LAYER_PROBE_PATH = os.environ.get("SGLANG_DS41_LAYER_HOOK")
+_LAYER_PROBE_CALLS = {"n": 0}
+
+
+def _probe_layer(tag: str, layer_id: int, tensor) -> None:
+    """Record one layer's attention/mix output magnitude and a call counter.
+
+    Rows from different requests line up by the counter, which advances once per
+    hooked call in every process, and by ``layer_id``.  Rank comes from the
+    environment only: querying CUDA here would initialise it in processes that
+    never do so.
+    """
+    if not _LAYER_PROBE_PATH or not isinstance(tensor, torch.Tensor):
+        return
+    try:
+        _LAYER_PROBE_CALLS["n"] += 1
+        value = tensor.detach().float()
+        with open(_LAYER_PROBE_PATH, "a") as probe_file:
+            probe_file.write(
+                "%s\t%s\t%d\t%d\t%.6f\t%.6f\t%.6f\n"
+                % (
+                    os.environ.get("RANK", "-1"),
+                    tag,
+                    int(layer_id),
+                    _LAYER_PROBE_CALLS["n"],
+                    float(value.abs().sum()),
+                    float(value.pow(2).sum()),
+                    float(value.abs().max()),
+                )
+            )
+    except Exception:  # a probe must never disturb a forward pass
+        logger.exception("layer probe failed")
+
+
 _HEAD_PROBE_PATH = os.environ.get("SGLANG_DS41_HEAD_PROBE")
 
 
@@ -3445,6 +3479,7 @@ class DeepseekV4CudaDecoderLayer(DeepseekV4DecoderLayerBase):
                 hidden_states, positions, forward_batch, quantized
             )
             hidden_states = self.attn_boundary.finish(hidden_states, forward_batch)
+            _probe_layer("attn", self.layer_id, hidden_states)
         hidden_states = self.ffn_boundary.prepare(
             hidden_states, forward_batch, read_context=call
         )
@@ -3459,6 +3494,7 @@ class DeepseekV4CudaDecoderLayer(DeepseekV4DecoderLayerBase):
                 return_moe_output=transport.return_moe_output,
                 leave_output_sum=True,
             )
+            _probe_layer("mlp", self.layer_id, hidden_states)
             return output.finish(hidden_states)
 
     @functools.cached_property
