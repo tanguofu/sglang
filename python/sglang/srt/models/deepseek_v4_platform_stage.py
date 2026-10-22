@@ -94,6 +94,39 @@ def _prepare_ffn_input(layer, hidden_states, residual, post, comb, forward_batch
     return residual, hidden_states, post, comb
 
 
+
+# --- decode investigation probe -------------------------------------------
+# The HIP layer path lives in this file, so the CUDA-side probes in
+# deepseek_v4.py never fire on gfx942.  Recording one row per hooked call lets
+# two requests be compared layer by layer.
+_PROBE_PATH = __import__("os").environ.get("SGLANG_DS41_LAYER_HOOK")
+_PROBE_CALLS = {"n": 0}
+
+
+def _probe_stage(tag: str, layer_id: int, tensor) -> None:
+    if not _PROBE_PATH or not isinstance(tensor, torch.Tensor):
+        return
+    try:
+        import os
+
+        _PROBE_CALLS["n"] += 1
+        value = tensor.detach().float()
+        with open(_PROBE_PATH, "a") as probe_file:
+            probe_file.write(
+                "%s\t%s\t%d\t%d\t%.6f\t%.6f\t%.6f\n"
+                % (
+                    os.environ.get("RANK", "-1"),
+                    tag,
+                    int(layer_id),
+                    _PROBE_CALLS["n"],
+                    float(value.abs().sum()),
+                    float(value.pow(2).sum()),
+                    float(value.abs().max()),
+                )
+            )
+    except Exception:  # a probe must never disturb a forward pass
+        pass
+
 class NonCudaDecoderMixin:
     """Platform tuple and HcState execution for target and NextN decoders.
 
@@ -166,6 +199,7 @@ class NonCudaDecoderMixin:
                     defer_all_reduce=fuse_all_reduce_mhc,
                 )
             del x
+            _probe_stage("attn", self.layer_id, y)
             return mhc.run_attn_post(
                 self.attn_hc,
                 y,
@@ -195,6 +229,7 @@ class NonCudaDecoderMixin:
                 return_moe_output=fuse_all_reduce_mhc,
             )
             del x
+            _probe_stage("mlp", self.layer_id, y)
             return mhc.run_moe_post(
                 self.ffn_hc,
                 y,
