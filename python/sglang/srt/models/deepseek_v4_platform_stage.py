@@ -117,14 +117,23 @@ def _probe_stage(tag: str, layer_id: int, tensor, position=None, vector_dir=None
         import os
 
         _PROBE_CALLS["n"] += 1
-        value = tensor.detach().float()
+        twin = None
+        if os.environ.get("SGLANG_DS41_TWIN") == "1" and tensor.dim() >= 2 and tensor.shape[0] >= 2:
+            # Twin rows carry the same prompt in one forward, so any difference
+            # between them is produced by this call, not by external state.
+            torch.cuda.synchronize()
+            value = tensor.detach().float()
+            twin = float((value[0] - value[1]).abs().max())
+        else:
+            value = tensor.detach().float()
         pos = -1 if position is None else int(position)
         with open("%s.%d" % (_PROBE_PATH, os.getpid()), "a") as probe_file:
             probe_file.write(
-                "%d\t%s\t%d\t%d\t%.6f\t%.6f\t%.6f\n"
+                "%d\t%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%s\n"
                 % (pos, tag, int(layer_id), _PROBE_CALLS["n"],
                    float(value.abs().sum()), float(value.pow(2).sum()),
-                   float(value.abs().max()))
+                   float(value.abs().max()),
+                   "nan" if twin is None else "%.8f" % twin)
             )
         if vector_dir and 98 <= pos <= 102:
             os.makedirs(vector_dir, exist_ok=True)
