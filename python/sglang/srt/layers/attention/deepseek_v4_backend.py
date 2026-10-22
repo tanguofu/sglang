@@ -3593,6 +3593,7 @@ class DeepseekV4AttnBackend(
     ) -> None:
         pool = self.token_to_kv_pool
         latent = layer.compressor.finish(pooled)
+        _probe_compressed_kv(layer.compress_ratio, layer.layer_id, group_pos, latent)
         freqs = layer.freqs_cis[group_pos]
         # Index keys come from the pre-RoPE latent, so publish them first. Stored
         # as fp4 (per-32 ue8m0, no hadamard), matching the reference indexer.
