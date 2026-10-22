@@ -109,13 +109,17 @@ def _probe_stage(tag: str, layer_id: int, tensor) -> None:
     try:
         import os
 
+        import os as _os
+
         _PROBE_CALLS["n"] += 1
         value = tensor.detach().float()
-        with open(_PROBE_PATH, "a") as probe_file:
+        # One file per process: eight TP ranks append concurrently, so a shared
+        # file interleaves their rows and the counters cannot be told apart.
+        with open("%s.%d" % (_PROBE_PATH, _os.getpid()), "a") as probe_file:
             probe_file.write(
                 "%s\t%s\t%d\t%d\t%.6f\t%.6f\t%.6f\n"
                 % (
-                    os.environ.get("RANK", "-1"),
+                    "-1",
                     tag,
                     int(layer_id),
                     _PROBE_CALLS["n"],
