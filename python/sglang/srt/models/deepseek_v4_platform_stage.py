@@ -199,6 +199,7 @@ class NonCudaDecoderMixin:
             quantized = [] if self.self_attn.accepts_mxfp8_swizzled_input() else None
             mhc.fork_stats_stream(stats_stream)
             x = mhc.combine(self.attn_hc, state, quantized)
+            _probe_stage("attn_in", self.layer_id, x, positions[0] if positions.numel() else None)
             precomputed = state.stats
             state.release()
             del state
@@ -231,6 +232,7 @@ class NonCudaDecoderMixin:
             residual = state.residual
             mhc.fork_stats_stream(stats_stream)
             x = mhc.combine(self.ffn_hc, state)
+            _probe_stage("ffn_in", self.layer_id, x, positions[0] if positions.numel() else None)
             precomputed = state.stats
             state.release()
             del state
