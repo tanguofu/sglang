@@ -147,12 +147,12 @@ _ATTN_PROBE_OCC: dict = {}
 
 
 def _probe_attention(backend, layer_id, forward_batch, q, result, compress_ratio) -> None:
-    """Record q, the gathered KV and the attention output for one call.
+    """Record the query and output magnitude of one attention call.
 
-    The page ids are already known to be identical across runs, so this triple
-    separates the two remaining causes: ``kv`` differing means the compressed
-    cache holds different bytes (the write path), while ``out`` differing with
-    ``kv`` and ``q`` equal means the attention math itself.
+    q is a projection of the layer input, so the first layer whose q departs from
+    the clean runs at the collapsing position is the layer that produced the
+    anomaly.  Only magnitudes are recorded: reading the cache back needs index
+    validation that can fault the device.
     """
     path = os.environ.get("SGLANG_DS41_ATTN_PROBE")
     if not path:
@@ -163,32 +163,13 @@ def _probe_attention(backend, layer_id, forward_batch, q, result, compress_ratio
         return
     try:
         position = int(forward_batch.positions[0].item())
-        key = (layer_id, position, int(compress_ratio), int(q.shape[0]))
-        occ = _ATTN_PROBE_OCC.get(key, 0)
-        _ATTN_PROBE_OCC[key] = occ + 1
-
+        rank = int(os.environ.get("RANK", torch.cuda.current_device()))
         q_abs = float(q.detach().float().abs().sum())
         o_abs = float(result.detach().float().abs().sum())
-
-        kv_abs = -1.0
-        kv_rows = 0
-        if compress_ratio:
-            metadata = backend.forward_metadata.core_attn_metadata
-            indices = metadata.sparse_page_indices(compress_ratio)
-            lengths = metadata.sparse_topk_lengths(compress_ratio)
-            buffer = backend.token_to_kv_pool.get_extra_key_buffer(layer_id)
-            keep = min(int(lengths[0].item()), indices.shape[1])
-            ids = indices[0, :keep].to(torch.int64)
-            ids = ids[(ids > 0) & (ids < buffer.shape[0])]
-            kv_rows = int(ids.numel())
-            if kv_rows:
-                gathered = buffer.index_select(0, ids).view(torch.uint8).float()
-                kv_abs = float(gathered.sum())
         with open(path, "a") as probe_file:
             probe_file.write(
-                "%d\t%d\t%d\t%d\t%d\t%.6f\t%.6f\t%.6f\n"
-                % (layer_id, position, int(compress_ratio), int(q.shape[0]), occ,
-                   q_abs, kv_abs, o_abs)
+                "%d\t%d\t%d\t%d\t%.6f\t%.6f\n"
+                % (rank, layer_id, position, int(compress_ratio), q_abs, o_abs)
             )
     except Exception:  # a probe must never disturb a forward pass
         logger.exception("attention probe failed")
