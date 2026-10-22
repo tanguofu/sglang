@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import functools
 import logging
+import os
 import time
 from array import array
 from contextlib import contextmanager, nullcontext
@@ -260,6 +261,14 @@ def get_mhc_ops() -> MhcOps:
 
 
 logger = logging.getLogger(__name__)
+
+# Layer-wise probe for the decode-step investigation: when
+# SGLANG_DS41_LAYER_PROBE names a file, every forward appends one row of
+# per-layer hidden-state L2 norms plus the first row's position.  A corrupted
+# step shows up as a norm that departs from the same position in a clean run,
+# which localises the first layer that produced it.  Off by default.
+_DS41_LAYER_PROBE = os.environ.get("SGLANG_DS41_LAYER_PROBE")
+_DS41_LAYER_PROBE_ROWS: list = []
 
 _FP8_WO_A_GEMM = envs.SGLANG_OPT_FP8_WO_A_GEMM.get()
 _FP8_WO_A_UE8M0 = _FP8_WO_A_GEMM and DEEPGEMM_SCALE_UE8M0
@@ -4254,6 +4263,10 @@ class DeepseekV4Model(nn.Module):
                             prev_post=prev_post,
                             prev_comb=prev_comb,
                         )
+                if _DS41_LAYER_PROBE:
+                    probe_h = hidden_states[0] if isinstance(hidden_states, tuple) else hidden_states
+                    if isinstance(probe_h, torch.Tensor):
+                        _DS41_LAYER_PROBE_ROWS.append(probe_h.detach().float().norm())
                 if capture_dspark and i in self.dspark_layers_to_capture:
                     if _is_cuda:
                         completed = hc_boundary.materialize(
@@ -4274,6 +4287,22 @@ class DeepseekV4Model(nn.Module):
                 hidden_states = last_layer.hc_post(
                     hidden_states, prev_residual, prev_post, prev_comb
                 )
+
+        if _DS41_LAYER_PROBE and _DS41_LAYER_PROBE_ROWS:
+            try:
+                position = int(forward_batch.positions[0].item())
+                values = torch.stack(_DS41_LAYER_PROBE_ROWS).tolist()
+                with open(_DS41_LAYER_PROBE, "a") as probe_file:
+                    probe_file.write(
+                        "%d\t%s\n"
+                        % (
+                            position,
+                            ",".join("%.6f" % v for v in values),
+                        )
+                    )
+            except Exception:  # a probe must never break a forward pass
+                logger.exception("layer probe failed")
+            _DS41_LAYER_PROBE_ROWS.clear()
 
         if not self.pp_group.is_last_rank:
             # Flatten 3D mHC tensor for PP IPC.
