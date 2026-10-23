@@ -45,6 +45,30 @@ logger = logging.getLogger(__name__)
 
 _MOE_SORTING_DISPATCH_POLICY = envs.SGLANG_AITER_MOE_SORTING_DISPATCH_POLICY.get()
 
+# Which dispatch policy the sorting kernel uses decides the order tokens reach
+# the top-k combine, so sweeping it is how the MoE's reproducibility is probed.
+# Read from the probe control file (mtime-cached) so one restart can cover every
+# value instead of one.
+_SORTING_STATE = {"mtime": None, "value": None}
+
+
+def _sorting_dispatch_policy() -> int:
+    import json
+    import os
+
+    path = os.environ.get("SGLANG_DS41_PROBE_CFG", "/probe/cfg")
+    try:
+        mtime = os.path.getmtime(path)
+        if mtime != _SORTING_STATE["mtime"]:
+            with open(path) as handle:
+                raw = json.load(handle).get("sorting_policy")
+            _SORTING_STATE["mtime"] = mtime
+            _SORTING_STATE["value"] = int(raw) if raw is not None else None
+    except Exception:
+        _SORTING_STATE["value"] = None
+    value = _SORTING_STATE["value"]
+    return _MOE_SORTING_DISPATCH_POLICY if value is None else value
+
 
 class AiterQuantType(str, Enum):
     NONE = "No"
@@ -254,7 +278,7 @@ class AiterRunnerCore(MoeRunnerCore):
             # MORI EPv2 skips staging when this exact arena view is returned. Older
             # AITER versions, no_combine and stage2_scatter keep their old path.
             extra["output"] = runner_input.output
-        extra["moe_sorting_dispatch_policy"] = _MOE_SORTING_DISPATCH_POLICY
+        extra["moe_sorting_dispatch_policy"] = _sorting_dispatch_policy()
 
         # gfx950 small-M MXFP4 kernel (on by default, SGLANG_ROCM_SMALLM_MOE=0 disables): same layouts as aiter, bf16 activations.
         if _SMALLM_MOE_ON and quant_info.w13_weight.element_size() == 1:
