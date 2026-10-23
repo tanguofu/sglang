@@ -51,6 +51,41 @@ def get_config_file_name(
     return f"E={E},N={N},device_name={device_name}{dtype_selector}{block_shape_selector}{per_channel_quant_selector}{down_moe_selector}.json"
 
 
+
+_PROBE_OVERRIDE_STATE: Dict[str, object] = {"mtime": None, "value": None}
+
+
+def _probe_moe_override() -> Optional[Dict[str, int]]:
+    """Tile sizes taken from the probe control file, when it names any.
+
+    Picking these by measurement needs one running server and many candidates,
+    so they are read live rather than baked into a config file that would need a
+    restart per point. This runs on every MoE forward, hence the mtime cache;
+    with no control file configured there is nothing to stat at all.
+    """
+    import json
+    import os
+
+    path = os.environ.get("SGLANG_DS41_PROBE_CFG")
+    if not path:
+        return None
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        _PROBE_OVERRIDE_STATE["value"] = None
+        return None
+    if mtime != _PROBE_OVERRIDE_STATE["mtime"]:
+        try:
+            with open(path) as handle:
+                raw = json.load(handle).get("moe_config")
+        except Exception:
+            raw = None
+        _PROBE_OVERRIDE_STATE["mtime"] = mtime
+        _PROBE_OVERRIDE_STATE["value"] = (
+            {str(k): int(v) for k, v in raw.items()} if raw else None
+        )
+    return _PROBE_OVERRIDE_STATE["value"]
+
 @functools.lru_cache
 def get_moe_configs(
     E: int,
@@ -321,6 +356,11 @@ def try_get_optimal_moe_config(
                 max_block_m = max(
                     [cfg["BLOCK_SIZE_M"] for cfg in down_configs.values()]
                 )
+    probe_override = _probe_moe_override()
+    if probe_override:
+        config = dict(config)
+        config.update(probe_override)
+
     if return_down_config:
         if (
             down_config is not None
