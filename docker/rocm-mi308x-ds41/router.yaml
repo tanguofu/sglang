@@ -1,0 +1,128 @@
+# Router + ingress for the DeepSeek-V4.1-Flash replicas.
+#
+# Two independent TP8 workers on 87 and 159, balanced by sglang_router with the
+# same cache-aware policy the GLM-5.3 production router uses.  No PD: both
+# workers run prefill and decode, so there is no cross-node KV transfer and each
+# replica fails independently.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ds41-router
+  namespace: kube-system
+  labels:
+    app: ds41-router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ds41-router
+  template:
+    metadata:
+      labels:
+        app: ds41-router
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values: ["ds41-r0-tl", "ds41-r1-tl"]
+              topologyKey: kubernetes.io/hostname
+      containers:
+      - name: router
+        image: mirrors.tencent.com/ti-platform/sglang-glm52-308x-pd-router:v1008-router-unified
+        command:
+        - /bin/bash
+        - -c
+        args:
+        - |
+          set -euo pipefail
+          exec python3 -m sglang_router.launch_router \
+            --worker-urls http://21.234.171.87:30000 http://21.234.170.159:30000 \
+            --host 0.0.0.0 --port 30001 \
+            --prometheus-port 19096 \
+            --model-path /data/model/DeepSeek-V4.1-Flash \
+            --api-key sk-ds41-v41flash-20261021 \
+            --health-check-timeout-secs 30 \
+            --health-check-interval-secs 5 \
+            --health-failure-threshold 5 \
+            --health-success-threshold 2 \
+            --policy cache_aware \
+            --balance-abs-threshold 8 \
+            --balance-rel-threshold 3 \
+            --cb-timeout-duration-secs 60 \
+            --log-level info
+        ports:
+        - name: http
+          containerPort: 30001
+        - name: metrics
+          containerPort: 19096
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 30001
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          failureThreshold: 30
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+          limits:
+            cpu: "8"
+            memory: 16Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ds41-router
+  namespace: kube-system
+  labels:
+    app: ds41-router
+spec:
+  type: ClusterIP
+  selector:
+    app: ds41-router
+  ports:
+  - name: http
+    port: 30001
+    targetPort: 30001
+  - name: metrics
+    port: 19096
+    targetPort: 19096
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ds41-flash
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/name: ds41-flash
+spec:
+  hostnames:
+  - ds41-flash.jmpti.woa.com
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: eg-tke
+    namespace: ti-cloud
+    sectionName: http
+  rules:
+  - backendRefs:
+    - group: ""
+      kind: Service
+      name: ds41-router
+      namespace: kube-system
+      port: 30001
+      weight: 1
+    matches:
+    - path:
+        type: PathPrefix
+        value: /

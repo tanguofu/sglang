@@ -93,6 +93,150 @@ def _pick_inner_iter(seq: int, ni: int, cu: int, block_per_cu: int) -> int:
     return 1
 
 
+def _forced_inner_iter() -> int:
+    """Debug override for the split-K grouping, read from the probe control file.
+
+    The heuristic derives the group count from the batch size, so two rows of one
+    launch share a grouping; if a row's result still depends on its position, the
+    grouping (or the tile masking built on top of it) is the suspect.  Returns 0
+    to keep the heuristic.
+    """
+    import json
+    import os
+
+    try:
+        with open(os.environ.get("SGLANG_DS41_PROBE_CFG", "/probe/cfg")) as handle:
+            value = json.load(handle).get("inner_iter")
+        return int(value) if value else 0
+    except Exception:
+        return 0
+
+
+def _probe_layer_id() -> int:
+    try:
+        from sglang.srt.layers.attention import ds41_probe
+
+        return ds41_probe.current_layer()
+    except Exception:
+        return -1
+
+
+def _probe_halves(tag, tensor):
+    """Compare the two identical prompt halves of a [rows, ...] attention result."""
+    import torch
+
+    cfg = _probe_cfg()
+    if not cfg.get("split_probe"):
+        return
+    try:
+        if torch.cuda.is_current_stream_capturing():
+            return
+        rows = int(tensor.shape[0])
+        if rows < 4 or rows % 2:
+            return
+        torch.cuda.synchronize()
+        flat = tensor.reshape(rows, -1).float()
+        half = rows // 2
+        left, right = flat[:half], flat[half:]
+        with open("/probe/split", "a") as out:
+            out.write(
+                "%s\t%d\t%d\t%.9f\t%.6f\t%.6f\n"
+                % (
+                    tag,
+                    _probe_layer_id(),
+                    rows,
+                    float((left - right).abs().max()),
+                    float(left.abs().sum()),
+                    float(right.abs().sum()),
+                )
+            )
+    except Exception:
+        pass
+
+
+def _probe_cfg() -> dict:
+    import json
+    import os
+
+    try:
+        with open(os.environ.get("SGLANG_DS41_PROBE_CFG", "/probe/cfg")) as handle:
+            return json.load(handle)
+    except Exception:
+        return {}
+
+
+def _probe_attn_partials(tag, layer, partial_o, partial_lse, tk_len, block_I, inner_iter, n_groups):
+    """Report where two identical prompt halves first disagree inside the split-K.
+
+    ``partial_o`` is [batch, seq_len, n_groups, heads, dim]; a prefill batch lays
+    the two prompts end to end, so the halves must match element for element.
+    ``stale`` counts groups past a row's own length whose Partial_O was never
+    written and only Partial_LSE was (the combine is expected to zero them).
+    """
+    import os
+
+    import torch
+
+    cfg = _probe_cfg()
+    if not cfg.get("partial_probe"):
+        return
+    layers = cfg.get("partial_layers", "0,1,2")
+    try:
+        allowed = {int(x) for x in str(layers).split(",") if x.strip()}
+    except ValueError:
+        allowed = {0, 1, 2}
+    if layer not in allowed:
+        return
+    try:
+        if torch.cuda.is_current_stream_capturing():
+            return
+        torch.cuda.synchronize()
+        batch, seq_len, groups = partial_o.shape[0], partial_o.shape[1], partial_o.shape[2]
+        if batch % 2 == 0 and seq_len == 1:
+            o2 = partial_o.reshape(batch, -1)
+            l2 = partial_lse.reshape(batch, -1)
+            half = batch // 2
+            lengths = tk_len.reshape(-1)
+        elif seq_len % 2 == 0 and batch == 1:
+            o2 = partial_o.reshape(seq_len, -1)
+            l2 = partial_lse.reshape(seq_len, -1)
+            half = seq_len // 2
+            lengths = tk_len.reshape(-1)
+        else:
+            return
+        o_diff = float((o2[:half].float() - o2[half:].float()).abs().max())
+        l_diff = float((l2[:half].float() - l2[half:].float()).abs().max())
+        nonfinite = int((~torch.isfinite(o2.float())).sum().item())
+        # groups past a row's length are skipped by the partial kernel
+        per_row = (-(-lengths // (block_I * inner_iter))).clamp(max=n_groups)
+        stale = 0
+        if int(per_row.min().item()) < n_groups:
+            o_view = partial_o.reshape(-1, groups, partial_o.shape[-2], partial_o.shape[-1])
+            for row in range(min(int(o2.shape[0]), 256)):
+                start = int(per_row[row].item())
+                if start < groups:
+                    gap = o_view[row, start:]
+                    stale = max(stale, int((gap != 0).sum().item()))
+        with open("/probe/partials", "a") as out:
+            out.write(
+                "%s\t%d\t%d\t%d\t%.9f\t%.9f\t%d\t%d\t%d\t%d\n"
+                % (
+                    tag,
+                    layer,
+                    o2.shape[0],
+                    groups,
+                    o_diff,
+                    l_diff,
+                    nonfinite,
+                    int(per_row.min().item()),
+                    int(per_row.max().item()),
+                    stale,
+                )
+            )
+    except Exception:
+        pass
+
+
 def _pipelined(n, num_stages: int):
     """Lower a single-stage ``T.Pipelined`` to ``T.serial``.
 
@@ -2552,6 +2696,7 @@ def dpsk_v4_fp8_attention_fwd(
     # so `seq` must include REPLICATE_H or n_groups doubles for medium batches.
     replicate_h = max((num_heads + 63) // 64, 1)
     seq = batch * seq_len * replicate_h
+    forced_inner_iter = _forced_inner_iter()
 
     k1, _, bs_kv_1 = _build_fp8_combined_view(k_cache)
     topk_1 = indices.shape[-1]
@@ -2570,6 +2715,8 @@ def dpsk_v4_fp8_attention_fwd(
     if not has_extra:
         inner_iter_1 = _pick_inner_iter(seq, ni_1, cu, block_per_cu)
         inner_iter_2 = 1
+        if forced_inner_iter and ni_1 % forced_inner_iter == 0:
+            inner_iter_1 = forced_inner_iter
         n_groups_1 = ni_1 // inner_iter_1
         n_groups_2 = 0
         partial = dpsk_v4_fp8_partial_kernel(
@@ -2583,6 +2730,16 @@ def dpsk_v4_fp8_attention_fwd(
             threads=threads,
         )
         partial_o, partial_lse = partial(q, k1, indices, tk_len_1)
+        _probe_attn_partials(
+            "partial",
+            _probe_layer_id(),
+            partial_o,
+            partial_lse,
+            tk_len_1,
+            block_I,
+            inner_iter_1,
+            n_groups_1,
+        )
     else:
         k2, _, bs_kv_2 = _build_fp8_combined_view(extra_k_cache)
         topk_2 = extra_indices_in_kvcache.shape[-1]
@@ -2592,6 +2749,9 @@ def dpsk_v4_fp8_attention_fwd(
         # counts, no shared-divisor constraint.
         inner_iter_1 = _pick_inner_iter(seq, ni_1, cu, block_per_cu)
         inner_iter_2 = _pick_inner_iter(seq, ni_2, cu, block_per_cu)
+        if forced_inner_iter:
+            inner_iter_1 = forced_inner_iter if ni_1 % forced_inner_iter == 0 else 1
+            inner_iter_2 = forced_inner_iter if ni_2 % forced_inner_iter == 0 else 1
         n_groups_1 = ni_1 // inner_iter_1
         n_groups_2 = ni_2 // inner_iter_2
         tk_len_2 = (
@@ -2621,6 +2781,16 @@ def dpsk_v4_fp8_attention_fwd(
             extra_indices_in_kvcache,
             tk_len_2,
         )
+        _probe_attn_partials(
+            "partial",
+            _probe_layer_id(),
+            partial_o,
+            partial_lse,
+            tk_len_1,
+            block_I,
+            inner_iter_1,
+            n_groups_1,
+        )
 
     combine = dpsk_v4_combine_kernel(
         num_heads,
@@ -2634,5 +2804,8 @@ def dpsk_v4_fp8_attention_fwd(
         use_attn_sink=True,
     )
     if has_extra:
-        return combine(partial_o, partial_lse, tk_len_1, tk_len_2, attn_sink)
-    return combine(partial_o, partial_lse, attn_sink)
+        combined = combine(partial_o, partial_lse, tk_len_1, tk_len_2, attn_sink)
+    else:
+        combined = combine(partial_o, partial_lse, attn_sink)
+    _probe_halves("combine", combined[0])
+    return combined

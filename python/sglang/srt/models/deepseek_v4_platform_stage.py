@@ -121,19 +121,27 @@ def _probe_stage(tag: str, layer_id: int, tensor, position=None, vector_dir=None
         if os.environ.get("SGLANG_DS41_TWIN") == "1" and tensor.dim() >= 2 and tensor.shape[0] >= 2:
             # Twin rows carry the same prompt in one forward, so any difference
             # between them is produced by this call, not by external state.
+            # A prefill batch is the two prompts laid end to end, so compare the
+            # halves there instead of the first two tokens.
             torch.cuda.synchronize()
             value = tensor.detach().float()
-            twin = float((value[0] - value[1]).abs().max())
+            rows = int(value.shape[0])
+            if rows >= 4 and rows % 2 == 0:
+                half = rows // 2
+                twin = float((value[:half] - value[half:]).abs().max())
+            else:
+                twin = float((value[0] - value[1]).abs().max())
         else:
             value = tensor.detach().float()
         pos = -1 if position is None else int(position)
         with open("%s.%d" % (_PROBE_PATH, os.getpid()), "a") as probe_file:
             probe_file.write(
-                "%d\t%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%s\n"
+                "%d\t%s\t%d\t%d\t%.6f\t%.6f\t%.6f\t%s\t%d\n"
                 % (pos, tag, int(layer_id), _PROBE_CALLS["n"],
                    float(value.abs().sum()), float(value.pow(2).sum()),
                    float(value.abs().max()),
-                   "nan" if twin is None else "%.8f" % twin)
+                   "nan" if twin is None else "%.8f" % twin,
+                   int(value.shape[0]))
             )
         if vector_dir and 98 <= pos <= 102:
             os.makedirs(vector_dir, exist_ok=True)

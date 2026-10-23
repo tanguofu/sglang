@@ -420,8 +420,14 @@ class Fp8Config(QuantizationConfig):
             fp8_method = Fp8MoEMethod(self)
 
             if self.is_fp4_experts and self.dequant_fp4_to_fp8:
-                assert get_moe_runner_backend().is_auto(), (
-                    f"{get_moe_runner_backend()} is not compatible with SGLANG_DSV4_FP4_DEQUANT=1"
+                # The fp4-dequant path hands the runner an ordinary fp8 block
+                # quantized MoE, so any fp8 runner works; only the FP4-native
+                # runners need the packed layout this dequant strips. Triton is
+                # allowed because it reduces top-k contributions in a fixed
+                # order, which the aiter CK kernels do not.
+                backend = get_moe_runner_backend()
+                assert backend.is_auto() or backend.is_triton(), (
+                    f"{backend} is not compatible with SGLANG_DSV4_FP4_DEQUANT=1"
                 )
                 return fp8_method
 

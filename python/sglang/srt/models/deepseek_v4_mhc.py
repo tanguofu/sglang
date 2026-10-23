@@ -354,7 +354,12 @@ def _mix_stats_impl(hc: HcSubLayer, x: torch.Tensor) -> HcTriplet:
             rsqrt = torch.rsqrt(x_flat.square().mean(-1, keepdim=True) + cfg.rms_eps)
         else:
             x_flat, rsqrt = fused
-        mixes = (F.linear(x_flat, hc.fn) * rsqrt).unsqueeze(1)
+        # K here is 20x the row width, which is exactly where hipBLASLt switches
+        # to stream-K and starts grouping a row's sum by its M tile; keep the
+        # mixing projection row-uniform so identical rows mix identically.
+        from sglang.srt.layers.deterministic import row_uniform_linear
+
+        mixes = (row_uniform_linear(x_flat, hc.fn) * rsqrt).unsqueeze(1)
     if _is_xpu:
         from sglang.srt.models.deepseek_v4 import get_mhc_ops
 

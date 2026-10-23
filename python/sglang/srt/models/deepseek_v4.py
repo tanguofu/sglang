@@ -60,6 +60,11 @@ from sglang.srt.hardware_backend.npu.dsv4.dsv4_rope import (
 from sglang.srt.hardware_backend.npu.utils import (
     use_npu_arch35_mxfp8_wo_a,
 )
+from sglang.srt.layers.attention import ds41_probe as _ds41_probe
+from sglang.srt.layers.deterministic import (
+    row_uniform_blas,
+    row_uniform_einsum,
+)
 from sglang.srt.layers.attention.dsa.utils import (
     is_dsa_enable_prefill_cp,
 )
@@ -624,7 +629,17 @@ def _apply_wo_a_bf16_matmul(
                 "falling back to einsum for the rest of this process: %s",
                 err,
             )
-    return torch.einsum("tgd,grd->tgr", o, wo_a)
+    return _wo_a_row_uniform_einsum(o, wo_a)
+
+
+def _wo_a_row_uniform_einsum(o: torch.Tensor, wo_a: torch.Tensor) -> torch.Tensor:
+    """``tgd,grd->tgr`` whose reduction order does not depend on the row.
+
+    See ``sglang.srt.layers.deterministic``: hipBLASLt's stream-K groups a row's
+    fp32 sum by the M tile it lands in, so bit-identical rows of one batch come
+    back an ulp apart and the difference compounds over 61 layers.
+    """
+    return row_uniform_einsum("tgd,grd->tgr", o, wo_a)
 
 
 def _fused_rmsnorm_fp8_quant(hidden_states, weight, eps, e8m0: bool = False):
@@ -2826,6 +2841,7 @@ class MQALayer(MqaAttentionBase):
                 )
 
             o = o.view(o.shape[0], self.n_local_groups, -1)
+            _ds41_probe.probe_halves("pre_wo_a", o)
 
             if fuse_rope_wo_a:
                 wo_a = self.wo_a.weight.view(self.n_local_groups, self.o_lora_rank, -1)
@@ -2863,7 +2879,7 @@ class MQALayer(MqaAttentionBase):
                     self.wo_a.weight.view(G, self.o_lora_rank, D),
                     self.wo_a.weight_scale_inv.data,
                 )
-            elif self.wo_a_fp8:
+            elif self.wo_a_fp8 and not _ds41_probe.flag("wo_a_bf16"):
                 T, G, D = o.shape
                 R = self.o_lora_rank
                 if _FP8_WO_A_UE8M0:
@@ -2942,10 +2958,19 @@ class MQALayer(MqaAttentionBase):
             )
             and not should_skip_mlp_all_reduce()
         )
-        o, _ = self.wo_b(
-            o.flatten(1) if isinstance(o, torch.Tensor) else o,
-            skip_all_reduce=defer_all_reduce,
-        )
+        _ds41_probe.probe_halves("pre_wo_b", o)
+        # The reduction stays inside the layer: a c10d collective is not legal
+        # inside a capture stream, and the group's own communicators are what the
+        # decode graphs replay. Its element order is fixed per element, so it
+        # only matters that the projection feeding it is row-uniform (wo_a) and
+        # that the MoE -- the amplifier -- is deterministic.
+        with row_uniform_blas():
+            o, _ = self.wo_b(
+                o.flatten(1) if isinstance(o, torch.Tensor) else o,
+                skip_all_reduce=defer_all_reduce
+                or _ds41_probe.flag("wob_skip_reduce"),
+            )
+        _ds41_probe.probe_halves("post_wo_b", o)
         if defer_all_reduce:
             return mhc.AttnOutput(o)
         if self.attn_tp_size > 1 and self.attn_tp_size < get_parallel().tp_size:

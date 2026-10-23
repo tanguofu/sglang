@@ -61,6 +61,7 @@ from sglang.kernels.ops.attention.dsv4_attn_metadata_kernels import (
 )
 from sglang.srt.environ import envs
 from sglang.srt.layers.attention import deepseek_v4_backend as _cuda_backend
+from sglang.srt.layers.attention import ds41_probe
 from sglang.srt.layers.attention.base_attn_backend import AttentionBackend
 from sglang.srt.layers.attention.deepseek_v4_backend import (
     DeepseekV4AttnBackend,
@@ -3118,6 +3119,10 @@ class DeepseekV4HipRadixBackend(
         self, layer_id: int, swa_k: torch.Tensor, forward_batch: ForwardBatch
     ) -> None:
         swa_loc = self.get_swa_out_cache_loc(forward_batch)
+        if os.environ.get("SGLANG_DS41_KVREAD_PROBE") and (
+            forward_batch.forward_mode.is_decode()
+        ):
+            ds41_probe.probe_store(layer_id, swa_k, swa_loc)
         self.token_to_kv_pool.set_swa_key_buffer_radix_fused(
             layer_id=layer_id,
             swa_loc=swa_loc,
@@ -3317,6 +3322,8 @@ class DeepseekV4HipRadixBackend(
         core_attn_metadata = metadata.core_attn_metadata
         token_to_kv_pool = self.token_to_kv_pool
         assert isinstance(token_to_kv_pool, DeepSeekV4TokenToKVPool)
+        ds41_probe.probe_q_halves(layer_id, q)
+        ds41_probe.set_layer(layer_id)
 
         from sglang.kernels.ops.attention.dsv4.unified_kv_kernels.env_gate import (
             is_unified_kv_triton,
@@ -3420,6 +3427,28 @@ class DeepseekV4HipRadixBackend(
             if extra_indices is not None:
                 assert extra_indices.shape[-1] % 64 == 0, (
                     f"{extra_indices.shape=}'s last dimension is not aligned to 64"
+                )
+
+            if os.environ.get("SGLANG_DS41_KVREAD_PROBE") and (
+                forward_batch.forward_mode.is_decode()
+            ):
+                ds41_probe.probe_kv_read(
+                    layer_id,
+                    compress_ratio,
+                    q,
+                    swa_k_cache,
+                    swa_page_indices,
+                    swa_topk_lengths,
+                    extra_k_cache,
+                    extra_indices,
+                    extra_topk_lengths,
+                )
+                ds41_probe.probe_kv_dump(
+                    layer_id,
+                    q,
+                    swa_k_cache,
+                    swa_page_indices,
+                    swa_topk_lengths,
                 )
 
             backend = resolve_hip_flashmla_backend()

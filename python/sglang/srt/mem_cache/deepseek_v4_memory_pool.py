@@ -16,6 +16,7 @@ from typing import (
 import torch
 
 from sglang.kernels.ops.attention.dsa import index_buf_accessor
+from sglang.srt.layers.attention import ds41_probe
 from sglang.kernels.ops.attention.dsv4 import (
     clear_unaccepted_c128_draft_states,
     fused_k_norm_rope_flashmla,
@@ -2197,6 +2198,7 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
         q: Optional[torch.Tensor] = None,
     ) -> None:
         """q ([B, H, head_dim]): rope its query heads in the same launch."""
+        ds41_probe.probe_store_kv(layer_id, kv, swa_loc, positions)
         if self.uniform_fp8:
             assert q is None, "uniform FP8 store does not fuse query RoPE"
             fused_k_norm_rope_uniform_fp8(
@@ -2220,6 +2222,13 @@ class DeepSeekV4TokenToKVPool(BaseSWAKVPool):
             page_size=self.swa_page_size,
             layout=self.kv_layout,
             q=q,
+        )
+        ds41_probe.probe_store_roundtrip(
+            layer_id,
+            self.get_swa_key_buffer_radix(layer_id),
+            swa_loc,
+            self.swa_page_size,
+            self.swa_kv_pool.kv_cache_total_dim,
         )
 
     def set_unified_key_buffer_radix_fused_norm_rope(
