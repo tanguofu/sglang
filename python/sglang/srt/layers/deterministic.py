@@ -28,6 +28,10 @@ import torch
 # Chosen by the environment so an A/B run does not need a code change.
 _OVERRIDE = os.environ.get("SGLANG_DS41_BLAS_LIB")
 
+# Sites to leave on hipBLASLt, to price each one separately:
+# `einsum` = wo_a absorb, `linear` = mHC mixing, `scoped` = wo_b output.
+_OFF = {name for name in os.environ.get("SGLANG_DS41_DET_OFF", "").split(",") if name}
+
 
 def _target() -> str:
     """The BLAS library used for row-uniform calls; rocBLAS on ROCm."""
@@ -41,6 +45,9 @@ def row_uniform_blas():
     `cublas` is the ROCm build's name for rocBLAS (the selector predates the
     fork); it keeps one reduction order per output element for these shapes.
     """
+    if "scoped" in _OFF:
+        yield
+        return
     try:
         previous = torch.backends.cuda.preferred_blas_library()
     except Exception:  # not a ROCm build, or the selector is unavailable
@@ -59,11 +66,15 @@ def row_uniform_blas():
 
 def row_uniform_einsum(equation: str, *operands: torch.Tensor) -> torch.Tensor:
     """`torch.einsum` under :func:`row_uniform_blas`."""
+    if "einsum" in _OFF:
+        return torch.einsum(equation, *operands)
     with row_uniform_blas():
         return torch.einsum(equation, *operands)
 
 
 def row_uniform_linear(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     """`F.linear` under :func:`row_uniform_blas`."""
+    if "linear" in _OFF:
+        return torch.nn.functional.linear(x, weight)
     with row_uniform_blas():
         return torch.nn.functional.linear(x, weight)
