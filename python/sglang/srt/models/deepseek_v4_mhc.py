@@ -48,18 +48,29 @@ _is_npu = is_npu()
 _is_xpu = is_xpu()
 
 
-def _mhc_fused_stats_on_hip() -> bool:
-    """gfx942: use the batch-invariant Triton mix+sinkhorn instead of rocBLAS.
+def _mhc_triton_mix_on_hip() -> bool:
+    """gfx942: replace the rocBLAS fp32 SGEMM with the Triton split-K mix.
 
-    rocBLAS's fp32 SGEMM at K=20480/N=24 is the single most expensive
-    determinism tax: replacing it measured +22%/+17%/+15% tok/s at
-    concurrency 8/16/32 and halved TTFT (2.49 s -> 1.19 s at c=8). The fused
-    kernel keeps IEEE fp32 dot precision on HIP and fixes the reduction order
-    (split-K slices depend on K only, never on M), verified row-identical for
-    M=1/2/4 standalone and under CUDA graph; GSM8K 200 @ c=32 went 96.50% ->
-    97.00%.
+    OFF by default. It is worth +20%/+16% tok/s at concurrency 8/32 and halves
+    TTFT, and it is numerically faithful (matches the fp32 reference to ~3e-6,
+    row-identical for M=1/2/4, unchanged under CUDA graph) — but HumanEval
+    still drops 93.90% -> 90.85% at the same concurrency while GSM8K stays at
+    96.50%. The mHC mixing coefficients feed sigmoid + sinkhorn, so the last
+    bits of the fp32 dot move generated code; rocBLAS's SGEMM is the only path
+    measured at baseline quality so far.
     """
-    return os.environ.get("SGLANG_DS41_MHC_FUSED_STATS", "1") != "0"
+    return os.environ.get("SGLANG_DS41_MHC_TRITON_MIX", "0") == "1"
+
+
+def _mhc_fused_stats_on_hip() -> bool:
+    """gfx942: the fully fused Triton mix+sinkhorn (faster, measurably lossy).
+
+    Measured +22%/+17%/+15% tok/s at concurrency 8/16/32 and half the TTFT,
+    but it also moves the sinkhorn onto the Triton transcendental lowering and
+    HumanEval reproducibly drops 94.51% -> 91.46% (3 runs), so it stays off
+    until that gap is explained.
+    """
+    return os.environ.get("SGLANG_DS41_MHC_FUSED_STATS", "0") == "1"
 
 # ---------------------------------------------------------------------------
 # What a layer hands this module
@@ -360,7 +371,9 @@ def _mix_stats_impl(hc: HcSubLayer, x: torch.Tensor) -> HcTriplet:
                 cfg.eps,
             )
         return pre, post, comb
-    if x.is_cuda and torch.version.cuda is not None:
+    if (x.is_cuda and torch.version.cuda is not None) or (
+        _is_hip and _mhc_triton_mix_on_hip()
+    ):
         # cuBLAS/torch reductions can change order with num_tokens; this kernel
         # keeps the mixing and RMS reductions batch-invariant.
         mixes = hc_mix_stats(x_flat, hc.fn, cfg.rms_eps).unsqueeze(1)
