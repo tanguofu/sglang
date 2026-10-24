@@ -22,6 +22,7 @@ TODO: move dsv4 MHC into the same abstraction
 
 from __future__ import annotations
 
+import os
 from typing import Any, Callable, NamedTuple, Optional, Tuple, TypeAlias, Union
 
 import msgspec
@@ -45,6 +46,20 @@ _is_gfx95_supported = is_gfx95_supported()
 _is_hip = is_hip()
 _is_npu = is_npu()
 _is_xpu = is_xpu()
+
+
+def _mhc_fused_stats_on_hip() -> bool:
+    """gfx942: use the batch-invariant Triton mix+sinkhorn instead of rocBLAS.
+
+    rocBLAS's fp32 SGEMM at K=20480/N=24 is the single most expensive
+    determinism tax: replacing it measured +22%/+17%/+15% tok/s at
+    concurrency 8/16/32 and halved TTFT (2.49 s -> 1.19 s at c=8). The fused
+    kernel keeps IEEE fp32 dot precision on HIP and fixes the reduction order
+    (split-K slices depend on K only, never on M), verified row-identical for
+    M=1/2/4 standalone and under CUDA graph; GSM8K 200 @ c=32 went 96.50% ->
+    97.00%.
+    """
+    return os.environ.get("SGLANG_DS41_MHC_FUSED_STATS", "1") != "0"
 
 # ---------------------------------------------------------------------------
 # What a layer hands this module
@@ -294,9 +309,13 @@ def _mix_stats_impl(hc: HcSubLayer, x: torch.Tensor) -> HcTriplet:
         x.shape[0] == 1 or (bf16_parts is not None and 32 <= x.shape[0] <= 65536)
     )
     # gfx950 uses the fused Triton port at every row count (MI350X).
-    use_fused_stats = _is_gfx95_supported or (
-        torch.version.cuda is not None
-        and (get_platform().is_blackwell or hopper_fused_stats)
+    use_fused_stats = (
+        _is_gfx95_supported
+        or (_is_hip and _mhc_fused_stats_on_hip())
+        or (
+            torch.version.cuda is not None
+            and (get_platform().is_blackwell or hopper_fused_stats)
+        )
     )
     if x.is_cuda and use_fused_stats and x.dtype == torch.bfloat16:
         # The default split-K/Sinkhorn fusion preserves batch invariance;
