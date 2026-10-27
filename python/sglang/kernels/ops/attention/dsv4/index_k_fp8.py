@@ -19,7 +19,8 @@ at least as accurate as the fp4 reference it replaces.
 
 from __future__ import annotations
 
-from typing import Tuple
+import os
+from typing import Optional, Tuple
 
 import torch
 import triton
@@ -29,6 +30,19 @@ from sglang.kernels.ops.quantization.fp8_kernel import fp8_dtype, fp8_max
 
 # Bytes of one index-K slot: 128 fp8 payload + 4 bytes of fp32 scale.
 INDEX_K_FP8_SLOT_BYTES = 132
+
+# Columns of compressed positions one `_mqa_logits_fp8_kernel` program scores.
+# One program owns BLOCK_N of a row's columns and reduces the whole head and
+# head_dim axes itself, so BLOCK_N only changes how the row is cut, never the
+# arithmetic: the kernel is bit-exact across BLOCK_N (verified 64 vs 128 vs 256
+# at lc = 320 / 3328 / 32768, torch.equal).  It is not free, though: at
+# BLOCK_N=64 the [32, 64] output tile leaves the four warps with too little
+# work to hide the fp8->bf16 conversions, and the kernel runs at roughly a
+# third of the rate BLOCK_N=128 reaches on gfx942 (3.0-3.2x measured at
+# rows = 64..16384, lc = 8192..65536).  Fall back with
+# SGLANG_HIP_DSV41_INDEX_LOGITS_BLOCK_N=64.
+def _logits_block_n() -> int:
+    return int(os.environ.get("SGLANG_HIP_DSV41_INDEX_LOGITS_BLOCK_N", "128"))
 
 # Logits scratch, keyed by element count.  The width tracks the context length
 # and an agentic session only ever grows it, so a fresh allocation per layer per
@@ -241,10 +255,12 @@ def mqa_logits_fp8(
     max_seq_len: int,
     *,
     page_size: int,
-    block_n: int = 64,
+    block_n: Optional[int] = None,
 ) -> torch.Tensor:
     """``[rows, max_seq_len]`` fp32 logits over each row's visible compressed slots."""
     rows, _, heads, dim = q_fp8.shape
+    if block_n is None:
+        block_n = _logits_block_n()
     # The paged top-k transform reads a score row as 16-byte units, so its width
     # must be a multiple of four fp32 columns; round to a coarse bucket as well so
     # a growing context does not allocate a new rectangle on every step.
