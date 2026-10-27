@@ -20,7 +20,7 @@ at least as accurate as the fp4 reference it replaces.
 from __future__ import annotations
 
 import os
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 import torch
 import triton
@@ -43,6 +43,26 @@ INDEX_K_FP8_SLOT_BYTES = 132
 # SGLANG_HIP_DSV41_INDEX_LOGITS_BLOCK_N=64.
 def _logits_block_n() -> int:
     return int(os.environ.get("SGLANG_HIP_DSV41_INDEX_LOGITS_BLOCK_N", "128"))
+
+
+# Query rows one `_mqa_logits_fp8_tiled_kernel` program scores.  Rows of a tile
+# are stacked into the M axis of one dot, so the K tile is loaded once for the
+# whole tile instead of once per row.  1 keeps the one-row-per-program kernel.
+# A tile must not straddle two requests: it reads the page table of its first
+# row only, and every token row of a request carries that request's pages, so
+# the mapping is only well defined inside one request.  The caller builds the
+# tiles from the per-request row counts, which the extend path already has on
+# the host; decode (one row per request, captured in a graph) never tiles.
+def _logits_block_m() -> int:
+    return int(os.environ.get("SGLANG_HIP_DSV41_INDEX_LOGITS_BLOCK_M", "8"))
+
+
+# Score only the candidate blocks the source layer published, instead of the
+# whole context, on the consumer layers.  The consumer's top-k runs inside those
+# blocks, so a score outside them is computed and then dropped: skipping them
+# leaves the compact row bit-identical.  See mqa_logits_fp8_candidates.
+def _score_candidates_only() -> bool:
+    return bool(int(os.environ.get("SGLANG_HIP_DSV41_INDEX_CANDIDATE_ONLY", "1")))
 
 # Logits scratch, keyed by element count.  The width tracks the context length
 # and an agentic session only ever grows it, so a fresh allocation per layer per
@@ -193,6 +213,202 @@ def _mqa_logits_fp8_kernel(
     tl.store(out_ptr + row * out_stride + cols, tl.where(mask, tl.sum(s, 0), 0.0))
 
 
+@triton.jit
+def _mqa_logits_fp8_tiled_kernel(
+    q_ptr,
+    w_ptr,
+    payload_ptr,
+    scale_ptr,
+    page_table_ptr,
+    lens_ptr,
+    tile_lo_ptr,
+    tile_hi_ptr,
+    out_ptr,
+    pt_stride,
+    out_stride,
+    H: tl.constexpr,
+    D: tl.constexpr,
+    PAGE: tl.constexpr,
+    SLOT: tl.constexpr,
+    NSLOTS: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    """BLOCK_M query rows of one request against one block of their slots.
+
+    Same arithmetic as `_mqa_logits_fp8_kernel`, so the scores are bit-identical
+    for the same BLOCK_N: the only thing a tile changes is that the K tile is
+    gathered once for BLOCK_M rows.  Rows are stacked along the dot's M axis as
+    [BLOCK_M * H, D] -- a row's own H heads stay a contiguous M slice, because q
+    is [rows, heads, D] -- and the [BLOCK_M * H, BLOCK_N] result is folded back
+    to [BLOCK_M, H, BLOCK_N] before the per-row head reduction.
+
+    The page table is read at the tile's first row.  Every row of a tile belongs
+    to one request and a request's token rows all carry the same pages, so that
+    one row's mapping is the tile's; a tile that straddled two requests would
+    score one request's queries against the other's keys.
+    """
+    tile = tl.program_id(0)
+    blk = tl.program_id(1)
+    lo = tl.load(tile_lo_ptr + tile)
+    hi = tl.load(tile_hi_ptr + tile)
+    m = tl.arange(0, BLOCK_M)
+    rows = lo + m
+    rmask = rows < hi
+    ln = tl.load(lens_ptr + rows, mask=rmask, other=0)
+    cols = blk * BLOCK_N + tl.arange(0, BLOCK_N)
+    # Rows of a tile advance together, so the block is skipped only when the
+    # longest row of the tile reaches no further; a tile whose rows are short
+    # would otherwise pay for the whole rectangle.  The caller zeroes the
+    # buffer, so the skipped columns still read as zero.
+    if tl.max(ln) <= blk * BLOCK_N:
+        return
+    cmask = cols[None, :] < ln[:, None]
+
+    offs_d = tl.arange(0, D)
+    page = tl.load(page_table_ptr + lo * pt_stride + cols // PAGE)
+    slot = tl.minimum(tl.maximum(page, 0) * PAGE + (cols % PAGE), NSLOTS - 1)
+    k = tl.load(payload_ptr + slot[:, None] * SLOT + offs_d[None, :]).to(tl.bfloat16)
+    scale = tl.load(scale_ptr + slot * (SLOT // 4) + D // 4)
+    k = (k.to(tl.float32) * scale[:, None]).to(tl.bfloat16)
+
+    q = tl.load(
+        q_ptr + rows[:, None] * (H * D) + tl.arange(0, H * D)[None, :],
+        mask=rmask[:, None],
+        other=0.0,
+    )
+    q = tl.reshape(q, (BLOCK_M * H, D)).to(tl.bfloat16)
+    w = tl.load(
+        w_ptr + rows[:, None] * H + tl.arange(0, H)[None, :],
+        mask=rmask[:, None],
+        other=0.0,
+    )
+
+    s = tl.dot(q, tl.trans(k))  # [BLOCK_M * H, BLOCK_N] fp32
+    s = tl.reshape(s, (BLOCK_M, H, BLOCK_N))
+    s = tl.maximum(s, 0.0) * w[:, :, None]
+    tl.store(
+        out_ptr + rows[:, None] * out_stride + cols[None, :],
+        tl.where(cmask, tl.sum(s, 1), 0.0),
+        mask=rmask[:, None],
+    )
+
+
+@triton.jit
+def _mqa_logits_fp8_candidate_kernel(
+    q_ptr,
+    w_ptr,
+    payload_ptr,
+    scale_ptr,
+    page_table_ptr,
+    lens_ptr,
+    ids_ptr,
+    compact_lens_ptr,
+    out_ptr,
+    pt_stride,
+    ids_stride,
+    out_stride,
+    H: tl.constexpr,
+    D: tl.constexpr,
+    PAGE: tl.constexpr,
+    SLOT: tl.constexpr,
+    NSLOTS: tl.constexpr,
+    BLOCK_SIZE: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+):
+    """One query row against one block of the compact candidate row.
+
+    Column ``c`` of the compact row is compressed position
+    ``ids[row, c // BLOCK_SIZE] * BLOCK_SIZE + c % BLOCK_SIZE``, the layout
+    `gather_candidate_blocks` produces from the full logits.  Scoring it here
+    instead of scoring the whole context and gathering is bit-exact for the
+    columns the top-k reads: the arithmetic per position is the production
+    kernel's, and a column the gather would fill with -inf (an unused id, or a
+    position past the row's reach) is written as -inf here too.
+
+    The whole rectangle is written, so the buffer needs no zeroing and the
+    columns past a row's kept blocks read as -inf exactly as the gather leaves
+    them.
+    """
+    row = tl.program_id(0)
+    blk = tl.program_id(1)
+    # A row keeps at most ceil(lc / BLOCK_SIZE) blocks, so the tail of a short
+    # row owns no candidate: leave it -inf, the buffer was filled with -inf.
+    if blk * BLOCK_N >= tl.load(compact_lens_ptr + row):
+        return
+    c = blk * BLOCK_N + tl.arange(0, BLOCK_N)
+    ln = tl.load(lens_ptr + row)
+    bid = tl.load(ids_ptr + row * ids_stride + c // BLOCK_SIZE)
+    pos = bid * BLOCK_SIZE + (c % BLOCK_SIZE)
+    valid = (bid >= 0) & (pos < ln)
+    safe = tl.maximum(pos, 0)
+    offs_d = tl.arange(0, D)
+    page = tl.load(
+        page_table_ptr + row * pt_stride + safe // PAGE, mask=valid, other=0
+    )
+    slot = tl.minimum(tl.maximum(page, 0) * PAGE + (safe % PAGE), NSLOTS - 1)
+
+    k = tl.load(
+        payload_ptr + slot[:, None] * SLOT + offs_d[None, :], mask=valid[:, None], other=0.0
+    ).to(tl.bfloat16)
+    scale = tl.load(
+        scale_ptr + slot * (SLOT // 4) + D // 4, mask=valid, other=1.0
+    )
+    k = (k.to(tl.float32) * scale[:, None]).to(tl.bfloat16)
+
+    offs_h = tl.arange(0, H)
+    q = tl.load(q_ptr + row * H * D + offs_h[:, None] * D + offs_d[None, :]).to(
+        tl.bfloat16
+    )
+    w = tl.load(w_ptr + row * H + offs_h)
+
+    s = tl.dot(q, tl.trans(k))  # [H, BLOCK_N] fp32
+    s = tl.maximum(s, 0.0) * w[:, None]
+    tl.store(
+        out_ptr + row * out_stride + c, tl.where(valid, tl.sum(s, 0), float("-inf"))
+    )
+
+
+# Row tiles, keyed by the request layout.  The build is a handful of tiny
+# kernels, so it costs a flat ~0.4 ms no matter how small the batch is; a
+# chunked prefill repeats one layout across its chunks, so keeping the result
+# makes the steady state pay it once.
+_TILE_INDEX_CACHE: dict = {}
+
+# Columns below which tiling cannot pay its own index build back.
+_TILE_MIN_COLUMNS = 4_000_000
+
+
+def _logits_tiles(row_splits, block_m, device):
+    """Per-row-tile ``(lo, hi)`` of a slice split into `row_splits` requests.
+
+    Tiles are cut inside a request, never across two: a tile reads the page
+    table of its first row only.
+    """
+    key = (device, block_m, tuple(row_splits))
+    cached = _TILE_INDEX_CACHE.get(key)
+    if cached is not None:
+        return cached
+    counts = torch.tensor(row_splits, dtype=torch.int32, device=device)
+    starts = torch.cumsum(counts, 0) - counts
+    per_req = (counts + block_m - 1) // block_m
+    # the tile count is known on the host, so the grid needs no device sync
+    total = sum((n + block_m - 1) // block_m for n in row_splits)
+    which = torch.repeat_interleave(
+        torch.arange(counts.shape[0], dtype=torch.int32, device=device), per_req
+    )
+    tile0 = torch.cumsum(per_req, 0) - per_req
+    within = torch.arange(total, dtype=torch.int32, device=device) - torch.repeat_interleave(
+        tile0, per_req
+    )
+    lo = starts[which] + within * block_m
+    hi = torch.minimum(lo + block_m, starts[which] + counts[which])
+    if len(_TILE_INDEX_CACHE) > 32:
+        _TILE_INDEX_CACHE.clear()
+    _TILE_INDEX_CACHE[key] = (lo, hi, total)
+    return _TILE_INDEX_CACHE[key]
+
+
 def quantize_query_fp8(
     q: torch.Tensor, weights: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -256,11 +472,20 @@ def mqa_logits_fp8(
     *,
     page_size: int,
     block_n: Optional[int] = None,
+    block_m: Optional[int] = None,
+    row_splits: Optional[Sequence[int]] = None,
 ) -> torch.Tensor:
-    """``[rows, max_seq_len]`` fp32 logits over each row's visible compressed slots."""
+    """``[rows, max_seq_len]`` fp32 logits over each row's visible compressed slots.
+
+    :param row_splits: row counts of the requests packed into ``q_fp8``, in row
+        order.  Row tiling needs it to keep a tile inside one request; without
+        it (or with ``block_m == 1``) one program scores one row.
+    """
     rows, _, heads, dim = q_fp8.shape
     if block_n is None:
         block_n = _logits_block_n()
+    if block_m is None:
+        block_m = _logits_block_m()
     # The paged top-k transform reads a score row as 16-byte units, so its width
     # must be a multiple of four fp32 columns; round to a coarse bucket as well so
     # a growing context does not allocate a new rectangle on every step.
@@ -271,14 +496,51 @@ def mqa_logits_fp8(
     # The pooled buffer can still hold a longer row's scores, and the kernel now
     # leaves every column past a row's length untouched.
     out.zero_()
+    payload = cache.view(fp8_dtype)
+    scales = cache.view(torch.float32)
+    nslots = int(cache.numel()) // INDEX_K_FP8_SLOT_BYTES
+    lens_i32 = lens.to(torch.int32)
+    # Tiling needs the tile index, which is built from a host-side list and so
+    # cannot be produced inside a capture; a captured step keeps one row per
+    # program.  Decode rows are one per request and never tile either.
+    if (
+        block_m > 1
+        and row_splits is not None
+        and rows * max_seq_len >= _TILE_MIN_COLUMNS
+        and not torch.cuda.is_current_stream_capturing()
+    ):
+        lo, hi, tiles = _logits_tiles(row_splits, block_m, q_fp8.device)
+        _mqa_logits_fp8_tiled_kernel[(tiles, triton.cdiv(max_seq_len, block_n))](
+            q_fp8,
+            weights,
+            payload,
+            scales,
+            page_table,
+            lens_i32,
+            lo,
+            hi,
+            out,
+            page_table.stride(0),
+            out.stride(0),
+            H=heads,
+            D=dim,
+            PAGE=page_size,
+            SLOT=INDEX_K_FP8_SLOT_BYTES,
+            NSLOTS=nslots,
+            BLOCK_M=block_m,
+            BLOCK_N=block_n,
+            num_warps=4,
+            num_stages=1,
+        )
+        return out
     grid = (rows, triton.cdiv(max_seq_len, block_n))
     _mqa_logits_fp8_kernel[grid](
         q_fp8,
         weights,
-        cache.view(fp8_dtype),
-        cache.view(torch.float32),
+        payload,
+        scales,
         page_table,
-        lens.to(torch.int32),
+        lens_i32,
         out,
         page_table.stride(0),
         out.stride(0),
@@ -286,9 +548,72 @@ def mqa_logits_fp8(
         D=dim,
         PAGE=page_size,
         SLOT=INDEX_K_FP8_SLOT_BYTES,
-        NSLOTS=int(cache.numel()) // INDEX_K_FP8_SLOT_BYTES,
+        NSLOTS=nslots,
         BLOCK_N=block_n,
         num_warps=4,
         num_stages=1,
     )
     return out
+
+
+def mqa_logits_fp8_candidates(
+    q_fp8: torch.Tensor,
+    weights: torch.Tensor,
+    cache: torch.Tensor,
+    page_table: torch.Tensor,
+    lens: torch.Tensor,
+    ids: torch.Tensor,
+    compact_lens: torch.Tensor,
+    *,
+    page_size: int,
+    block_size: int,
+    block_n: Optional[int] = None,
+) -> torch.Tensor:
+    """``[rows, ids.shape[1] * block_size]`` fp32: each row's score at its
+    candidate positions only.
+
+    This is the compact row `gather_candidate_blocks` builds by picking columns
+    out of the full logits, computed directly instead.  Bit-exact with it: same
+    position -> same slot, same dot, and a column the gather would leave -inf is
+    -inf here.  The consumer layer's top-k reads no other column, so its
+    selection is unchanged.
+
+    :param lens: each row's compressed context length.
+    :param ids: ``[rows, topk_blocks]`` int32 candidate block ids, -1 padded.
+    :param compact_lens: ``[rows]`` int32 width of each row's kept prefix.
+    """
+    rows, _, heads, dim = q_fp8.shape
+    if block_n is None:
+        block_n = _logits_block_n()
+    width = ids.shape[1] * block_size
+    out = torch.full(
+        (rows, width), float("-inf"), dtype=torch.float32, device=q_fp8.device
+    )
+    if rows == 0 or width == 0:
+        return out
+    _mqa_logits_fp8_candidate_kernel[(rows, triton.cdiv(width, block_n))](
+        q_fp8,
+        weights,
+        cache.view(fp8_dtype),
+        cache.view(torch.float32),
+        page_table,
+        lens.to(torch.int32),
+        ids,
+        compact_lens.to(torch.int32),
+        out,
+        page_table.stride(0),
+        ids.stride(0),
+        out.stride(0),
+        H=heads,
+        D=dim,
+        PAGE=page_size,
+        SLOT=INDEX_K_FP8_SLOT_BYTES,
+        NSLOTS=int(cache.numel()) // INDEX_K_FP8_SLOT_BYTES,
+        BLOCK_SIZE=block_size,
+        BLOCK_N=block_n,
+        num_warps=4,
+        num_stages=1,
+    )
+    return out
+
+
