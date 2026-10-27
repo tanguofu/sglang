@@ -855,6 +855,20 @@ def _prune_dual_scope_configs(configs, named_args, **kwargs):
         # warps=8: for memory-bound scenarios
         triton.Config({"BLOCK_H": 16, "BLOCK_N": 64}, num_warps=8, num_stages=1),
         triton.Config({"BLOCK_H": 64, "BLOCK_N": 64}, num_warps=8, num_stages=1),
+        # Small h_q: on a TP8 rank DeepSeek-V4 exposes 8 query heads per rank, so
+        # BLOCK_H=16 doubles the QK/PV work and doubles the eight [BLOCK_H, 64]
+        # accumulator tiles. BLOCK_H=8 halves both.
+        triton.Config({"BLOCK_H": 8, "BLOCK_N": 32}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_H": 8, "BLOCK_N": 64}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_H": 8, "BLOCK_N": 128}, num_warps=4, num_stages=1),
+        # Software pipelining: the KV tile is the only large shared-memory
+        # allocation, so a narrower BLOCK_N is what leaves room for more than
+        # one stage inside the 64 KB LDS of CDNA3.
+        triton.Config({"BLOCK_H": 8, "BLOCK_N": 32}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_H": 8, "BLOCK_N": 32}, num_warps=4, num_stages=3),
+        triton.Config({"BLOCK_H": 16, "BLOCK_N": 32}, num_warps=4, num_stages=1),
+        triton.Config({"BLOCK_H": 16, "BLOCK_N": 32}, num_warps=4, num_stages=2),
+        triton.Config({"BLOCK_H": 16, "BLOCK_N": 32}, num_warps=4, num_stages=3),
     ],
     key=["total_tokens_bucket", "h_q", "topk_main", "topk_extra"],
     prune_configs_by={"early_config_prune": _prune_dual_scope_configs},
