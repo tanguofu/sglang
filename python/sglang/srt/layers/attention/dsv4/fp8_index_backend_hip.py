@@ -9,15 +9,19 @@ them are unchanged.
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Sequence, Tuple
 
 import torch
 
 from sglang.kernels.ops.attention.dsv4.index_k_fp8 import (
     INDEX_K_FP8_SLOT_BYTES,
     mqa_logits_fp8,
+    mqa_logits_fp8_candidates,
     quantize_query_fp8,
     store_index_k_fp8,
+)
+from sglang.kernels.ops.attention.dsv4.candidate_blocks_hip import (
+    topk_compact_candidate_rows,
 )
 from sglang.srt.layers.attention.dsv4.dsv41_sparse import rope_tail
 
@@ -91,6 +95,7 @@ def fp8_index_logits(
     page_table: torch.Tensor,
     lens: torch.Tensor,
     max_seq_len: int,
+    row_splits: Optional[Sequence[int]] = None,
 ) -> torch.Tensor:
     """``[rows, max_seq_len]`` logits over each row's visible compressed slots.
 
@@ -98,6 +103,10 @@ def fp8_index_logits(
     ``page_table[p] * page_size + p % page_size`` -- the mapping DeepInfer's
     ``slot_mapping_store_ca`` uses.  One kernel serves decode (a row per request)
     and the scored rows of a prefill.
+
+    :param row_splits: prefill only -- the row count of each request packed into
+        the rows, so a row tile stays inside one request.  None keeps one
+        program per row, which is what a captured decode step needs.
     """
     return mqa_logits_fp8(
         q_fp8,
@@ -107,12 +116,56 @@ def fp8_index_logits(
         lens,
         max_seq_len,
         page_size=page_size,
+        row_splits=row_splits,
+    )
+
+
+def fp8_index_logits_candidates(
+    *,
+    q_fp8: torch.Tensor,
+    weights: torch.Tensor,
+    cache: torch.Tensor,
+    page_size: int,
+    page_table: torch.Tensor,
+    lens: torch.Tensor,
+    candidates,
+    page_indices: torch.Tensor,
+    raw_indices: Optional[torch.Tensor],
+) -> None:
+    """Level two for a consumer layer, scoring only the published candidates.
+
+    Replaces ``fp8_index_logits`` + ``topk_within_candidate_blocks_hip``: it
+    skips the whole-context rectangle and scores the compact candidate row
+    directly.  Bit-exact with the two-step form, see mqa_logits_fp8_candidates.
+    """
+    compact = mqa_logits_fp8_candidates(
+        q_fp8,
+        weights,
+        cache,
+        page_table,
+        lens,
+        candidates.ids,
+        candidates.compact_lens,
+        page_size=page_size,
+        block_size=candidates.block_size,
+    )
+    topk_compact_candidate_rows(
+        compact,
+        candidates.compact_lens,
+        candidates.ids,
+        candidates,
+        lens,
+        page_table=page_table,
+        page_size=page_size,
+        page_indices=page_indices,
+        raw_indices=raw_indices,
     )
 
 
 __all__ = [
     "INDEX_K_FP8_SLOT_BYTES",
     "fp8_index_logits",
+    "fp8_index_logits_candidates",
     "query_fp8",
     "store_index_k_fp8_group",
     "store_index_k_fp8_layer",

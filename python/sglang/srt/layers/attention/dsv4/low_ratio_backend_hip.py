@@ -296,6 +296,32 @@ def _decode_batch_max_seq_len(forward_batch) -> Optional[int]:
     return int(seq_lens_cpu.max().item())
 
 
+def decode_max_seq_len(backend, forward_batch) -> Optional[int]:
+    """The host-side longest context of a decode / target-verify batch."""
+    if forward_batch is None:
+        return None
+    max_len = _decode_batch_max_seq_len(forward_batch)
+    if max_len is None:
+        return None
+    if forward_batch.forward_mode.is_target_verify():
+        max_len += backend.speculative_num_draft_tokens
+    return max_len
+
+
+def _candidate_width_pays(indexer, *, max_seq_len, ratio: int = 1) -> bool:
+    """Score only the candidate blocks when that is fewer columns than the row.
+
+    A consumer keeps ``ceil(lc / block_size)`` blocks, so at ``lc <= span`` the
+    compact row *is* the whole row and skipping nothing is the cheaper path.
+    """
+    from sglang.kernels.ops.attention.dsv4.index_k_fp8 import _score_candidates_only
+
+    if not _score_candidates_only() or max_seq_len is None:
+        return False
+    span = indexer.candidate_topk_blocks * indexer.candidate_block_size
+    return span > 0 and max_seq_len // ratio > span
+
+
 def low_ratio_decode_rows_are_identity(backend, forward_batch, ratio: int) -> bool:
     """Decode: every row's compressed context fits index_topk, so nothing needs scoring. Inside a
     captured graph the answer is the variant being captured; eagerly it is the host-side batch
@@ -454,10 +480,36 @@ def low_ratio_index_topk_hip_decode(
     if envs.SGLANG_HIP_DSV41_INDEX_K_FP8.get():
         from sglang.srt.layers.attention.dsv4.fp8_index_backend_hip import (
             fp8_index_logits,
+            fp8_index_logits_candidates,
             query_fp8,
         )
 
         q_fp8, weights = query_fp8(layer, x, q_lora, pos)
+        # A consumer scores only the published candidates: every other column of
+        # the full rectangle is dropped by the level-two top-k.  Only worth it
+        # when the context is wider than the candidate span; a shorter context
+        # keeps every block, so the compact row is the whole row.
+        if (
+            two_level
+            and indexer.uses_candidates
+            and _candidate_width_pays(
+                indexer,
+                max_seq_len=decode_max_seq_len(backend, forward_batch),
+                ratio=ratio,
+            )
+        ):
+            fp8_index_logits_candidates(
+                q_fp8=q_fp8,
+                weights=weights,
+                cache=pool.get_index_k_with_scale_buffer(layer.layer_id),
+                page_size=indexer_metadata.compressed_page_size,
+                page_table=indexer_metadata.page_table,
+                lens=indexer_metadata.compressed_seq_lens,
+                candidates=candidates,
+                page_indices=core.sparse_page_indices(ratio),
+                raw_indices=core.sparse_raw_indices(ratio),
+            )
+            return
         logits = fp8_index_logits(
             q_fp8=q_fp8,
             weights=weights,
@@ -698,6 +750,9 @@ def low_ratio_index_topk_hip_extend(
                 page_table=indexer_metadata.page_table[rows],
                 lens=row_lens,
                 max_seq_len=int(row_lens.max().item()),
+                # rows_per_request keeps a row tile inside one request, which is
+                # what lets a tile share the request's page table
+                row_splits=rows_per_request,
             )
         if page8:
             return _score_requests_page8(
@@ -762,6 +817,42 @@ def low_ratio_index_topk_hip_extend(
             within=within,
         )
 
+    def select_rows_fp8_consumer(rows, req_lo, rows_per_request, consume_rows):
+        """An fp8 consumer scores only each request's candidate blocks."""
+        from sglang.srt.layers.attention.dsv4.fp8_index_backend_hip import (
+            fp8_index_logits_candidates,
+        )
+
+        def full_logits(r: slice, b: int) -> torch.Tensor:
+            g = slice(rows.start + r.start, rows.start + r.stop)
+            return score_rows(g, req_lo + b, [r.stop - r.start])
+
+        def within(r: slice, candidates, rows_page, rows_raw) -> None:
+            g = slice(rows.start + r.start, rows.start + r.stop)
+            fp8_index_logits_candidates(
+                q_fp8=q_fp8[g],
+                weights=weights[g],
+                cache=pool.get_index_k_with_scale_buffer(layer.layer_id),
+                page_size=indexer_metadata.compressed_page_size,
+                page_table=indexer_metadata.page_table[g],
+                lens=compress_lens[g],
+                candidates=candidates,
+                page_indices=rows_page,
+                raw_indices=rows_raw,
+            )
+
+        _consume_candidates_per_request(
+            extend_lens_cpu=rows_per_request,
+            consume=consume_rows,
+            compress_lens=compress_lens[rows],
+            page_table=indexer_metadata.page_table[rows],
+            page_size=indexer_metadata.compressed_page_size,
+            page_indices=page_indices[rows],
+            raw_indices=raw_indices[rows] if raw_indices is not None else None,
+            full_logits=full_logits,
+            within=within,
+        )
+
     def select_rows(
         rows: slice, req_lo, req_hi, group_is_identity, consume_rows, publish
     ):
@@ -772,6 +863,16 @@ def low_ratio_index_topk_hip_extend(
         )
         if page8 and consume_rows is not None:
             select_rows_page8_consumer(rows, req_lo, rows_per_request, consume_rows)
+            return
+        if (
+            fp8_mode
+            and consume_rows is not None
+            # lc_per_req is already on the host, so the width gate costs no sync
+            and _candidate_width_pays(
+                indexer, max_seq_len=max(lc_per_req[req_lo:req_hi])
+            )
+        ):
+            select_rows_fp8_consumer(rows, req_lo, rows_per_request, consume_rows)
             return
         _select_topk_extend_hip(
             indexer=indexer,
