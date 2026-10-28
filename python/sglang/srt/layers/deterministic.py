@@ -89,12 +89,15 @@ def row_uniform_linear(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
 # Off by default so it can be rolled out gradually and rolled back in a second.
 _BITEXACT_MIX = os.environ.get("SGLANG_DS41_MHC_BITEXACT_GEMM", "0") == "1"
 
-# rocBLAS answers this GEMM with one 64-CTA kernel for every row count from 64
-# to 16384, so it costs ~8 ms regardless of M; it only drops to tens of
-# microseconds below 64 rows, where it also switches kernels (and therefore
-# bits). Stay on rocBLAS there: there is nothing to win and the small-M bits are
-# what the baseline already produces.
-_BITEXACT_MIX_MIN_ROWS = 64
+# rocBLAS has three row-count regimes, measured on gfx942 at K=20480:
+#   M <= 16    17 us    bit-regime A
+#   17..32     33 us    bit-regime B
+#   M >= 33     7.9 ms  bit-regime C  (one 64-CTA kernel for every M to 16384)
+# The kernel below reproduces C, so it takes over at 33; below that rocBLAS is
+# both faster and the arithmetic the baseline already produces. The 240x cliff
+# and the bit split at 33 are what make a prompt's output depend on how many
+# rows the scheduler happened to put in the forward.
+_BITEXACT_MIX_MIN_ROWS = 33
 
 # Rows per CTA. The K loop is one serial fp32 FMA chain, so M is the only source
 # of parallelism: wide tiles once there are enough rows to fill the machine,
