@@ -389,9 +389,11 @@ def _mix_stats_impl(hc: HcSubLayer, x: torch.Tensor) -> HcTriplet:
         # K here is 20x the row width, which is exactly where hipBLASLt switches
         # to stream-K and starts grouping a row's sum by its M tile; keep the
         # mixing projection row-uniform so identical rows mix identically.
-        from sglang.srt.layers.deterministic import row_uniform_linear
+        # `row_uniform_mhc_mix` is the same arithmetic from a kernel that does
+        # not pin the whole GEMM to 64 CTAs; off unless asked for.
+        from sglang.srt.layers.deterministic import row_uniform_mhc_mix
 
-        mixes = (row_uniform_linear(x_flat, hc.fn) * rsqrt).unsqueeze(1)
+        mixes = (row_uniform_mhc_mix(x_flat, hc.fn) * rsqrt).unsqueeze(1)
     if _is_xpu:
         from sglang.srt.models.deepseek_v4 import get_mhc_ops
 
