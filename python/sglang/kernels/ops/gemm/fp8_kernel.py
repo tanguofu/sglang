@@ -344,6 +344,105 @@ def _w8a8_block_fp8_matmul_thin(
 
 
 @triton.jit
+def _w8a8_block_fp8_matmul_splitk(
+    A,
+    B,
+    C,
+    As,
+    Bs,
+    M,
+    N,
+    K,
+    stride_am,
+    stride_ak,
+    stride_bk,
+    stride_bn,
+    stride_cm,
+    stride_cn,
+    stride_As_m,
+    stride_As_k,
+    stride_Bs_k,
+    stride_Bs_n,
+    group_n: tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_N: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    SPLIT_K: tl.constexpr,
+    MASK_K: tl.constexpr,
+):
+    """Decode-shaped block-fp8 GEMM, optionally split along K.
+
+    Identical arithmetic to `_w8a8_block_fp8_matmul` (BLOCK_K must span exactly
+    one scale group, so the group scales are applied after each dot), but the
+    grid is `(cdiv(N, BLOCK_N), SPLIT_K)` and every program owns a contiguous
+    run of K tiles instead of the whole contraction.
+
+    Why this exists: with block_shape=[32, 32] the K tile is pinned to 32, so a
+    decode GEMM is a 160-iteration loop that moves 1 KB of B per tile.  At
+    M <= 32 the grid is only `cdiv(N, 32)` programs, so the machine is starved
+    of memory-level parallelism and runs at a few percent of HBM peak.  Splitting
+    K multiplies the program count and lets each program keep `num_stages` tiles
+    in flight without ever increasing the bytes fetched from DRAM.
+
+    `SPLIT_K > 1` writes fp32 partials into a `[SPLIT_K, M, N]` buffer (the
+    caller passes `stride_cm = M * N`, `stride_cn = N`) which the caller then
+    reduces, so the fp32 accumulation order differs from the single-accumulator
+    kernel -- results are close but not bit-identical.
+    """
+    pid_n = tl.program_id(0)
+    pid_k = tl.program_id(1)
+    offs_bn = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_am = tl.arange(0, BLOCK_M)
+
+    n_k_tile = tl.cdiv(K, BLOCK_K)
+    tiles_per_split = tl.cdiv(n_k_tile, SPLIT_K)
+    k_begin = pid_k * tiles_per_split
+    k_end = tl.minimum(k_begin + tiles_per_split, n_k_tile)
+
+    offs_k0 = k_begin * BLOCK_K + tl.arange(0, BLOCK_K)
+    a_ptrs = A + offs_am[:, None] * stride_am + offs_k0[None, :] * stride_ak
+    b_ptrs = B + offs_k0[:, None] * stride_bk + offs_bn[None, :] * stride_bn
+    As_ptrs = As + offs_am[:, None] * stride_As_m + k_begin * stride_As_k
+    Bs_ptrs = (
+        Bs + (offs_bn[None, :] // group_n) * stride_Bs_n + k_begin * stride_Bs_k
+    )
+
+    am_mask = offs_am[:, None] < M
+    bn_mask = offs_bn[None, :] < N
+    accumulator = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
+    for k in range(k_begin, k_end):
+        if MASK_K:
+            k_mask = (k * BLOCK_K + tl.arange(0, BLOCK_K)) < K
+            a = tl.load(a_ptrs, mask=am_mask & k_mask[None, :], other=0.0)
+            b = tl.load(b_ptrs, mask=k_mask[:, None] & bn_mask, other=0.0)
+        else:
+            a = tl.load(a_ptrs, mask=am_mask, other=0.0)
+            b = tl.load(b_ptrs, mask=bn_mask, other=0.0)
+        a_s = tl.load(As_ptrs, mask=offs_am[:, None] < M, other=1.0)
+        b_s = tl.load(Bs_ptrs, mask=bn_mask, other=1.0)
+        accumulator += tl.dot(a, b) * a_s * b_s
+        a_ptrs += BLOCK_K * stride_ak
+        b_ptrs += BLOCK_K * stride_bk
+        As_ptrs += stride_As_k
+        Bs_ptrs += stride_Bs_k
+
+    if SPLIT_K == 1:
+        c = accumulator.to(C.dtype.element_ty)
+        tl.store(
+            C + offs_am[:, None] * stride_cm + offs_bn[None, :] * stride_cn,
+            c,
+            mask=am_mask & bn_mask,
+        )
+    else:
+        tl.store(
+            C + pid_k * stride_cm + offs_am[:, None] * stride_cn
+            + offs_bn[None, :],
+            accumulator,
+            mask=am_mask & bn_mask,
+        )
+
+
+@triton.jit
 def _reduce_block_fp8_split_k(
     Parts, Out, ELEMENTS: tl.constexpr, SPLITS: tl.constexpr, BLOCK: tl.constexpr
 ):
@@ -861,6 +960,71 @@ def w8a8_mxfp8_matmul_deepgemm(
     return C
 
 
+def _use_dense_splitk() -> bool:
+    """Whether the decode-shaped split-K block-fp8 GEMM is enabled.
+
+    Off by default so a shipped image keeps the proven kernel until the tile
+    config explicitly opts in; `SGLANG_DS41_DENSE_FP8_SPLITK=0` disables it
+    outright (roll back the kernel without rebuilding the image).
+    """
+    return os.environ.get("SGLANG_DS41_DENSE_FP8_SPLITK", "0") != "0"
+
+
+def _w8a8_block_fp8_matmul_splitk_launch(
+    A, B, C, As, Bs, M, N, K, block_n, block_k, config, split_k
+):
+    block_m = int(config["BLOCK_SIZE_M"])
+    block_n_tile = int(config["BLOCK_SIZE_N"])
+    num_warps = int(config.get("num_warps", 4))
+    num_stages = int(config.get("num_stages", 2))
+
+    if split_k > 1:
+        partials = torch.empty(
+            (split_k, M, N), device=A.device, dtype=torch.float32
+        )
+        out_ptr = partials
+        stride_cm, stride_cn = M * N, N
+    else:
+        partials = None
+        out_ptr = C
+        stride_cm, stride_cn = C.stride(-2), C.stride(-1)
+
+    _w8a8_block_fp8_matmul_splitk[(triton.cdiv(N, block_n_tile), split_k)](
+        A,
+        B,
+        out_ptr,
+        As,
+        Bs,
+        M,
+        N,
+        K,
+        A.stride(-2),
+        A.stride(-1),
+        B.stride(1),
+        B.stride(0),
+        stride_cm,
+        stride_cn,
+        As.stride(-2),
+        As.stride(-1),
+        Bs.stride(1),
+        Bs.stride(0),
+        group_n=block_n,
+        BLOCK_M=block_m,
+        BLOCK_N=block_n_tile,
+        BLOCK_K=block_k,
+        SPLIT_K=split_k,
+        MASK_K=bool(K % block_k != 0),
+        num_warps=num_warps,
+        num_stages=num_stages,
+    )
+
+    if split_k > 1:
+        _reduce_block_fp8_split_k[(triton.cdiv(M * N, 256),)](
+            partials, C, M * N, split_k, 256
+        )
+    return C
+
+
 def w8a8_block_fp8_matmul_triton(
     A: torch.Tensor,
     B: torch.Tensor,
@@ -893,8 +1057,6 @@ def w8a8_block_fp8_matmul_triton(
     # Decode runs a handful of rows: the generic tiling can only step one 32-wide
     # scale group per tile, which turns these into 40-160 tiny tiles each.  Use
     # the wide-K variant instead when the shape allows it.
-    # SGLANG_DS41_DISABLE_THIN_GEMM=1 forces the generic kernel, so a numerical
-    # investigation can rule this variant in or out without a code change.
     if (
         os.environ.get("SGLANG_DS41_DISABLE_THIN_GEMM", "0") != "1"
         and M <= 16
@@ -939,6 +1101,8 @@ def w8a8_block_fp8_matmul_triton(
         # optimal config
         config = configs[min(configs.keys(), key=lambda x: abs(x - M))]
     else:
+        config = None
+    if config is None:
         # Default config
         # Block-wise quant: BLOCK_SIZE_K must be divisible by block_size[1]
         config = {
@@ -949,6 +1113,27 @@ def w8a8_block_fp8_matmul_triton(
             "num_warps": 4,
             "num_stages": 3,
         }
+
+    # Decode-shaped split-K: the tuned config may ask for more K splits than the
+    # grid can otherwise supply (see `_w8a8_block_fp8_matmul_splitk`).  It needs
+    # one program per (N tile, K split) and no M tiling, so it only applies when
+    # a single M tile covers the whole batch.
+    if _use_dense_splitk():
+        split_k = int(config.get("SPLIT_K", 1))
+        block_m = int(config.get("BLOCK_SIZE_M", 0))
+        if (
+            split_k >= 1
+            and M <= block_m
+            and block_m >= 16
+            and not _is_gfx1250
+            and tuple(block_size) == (32, 32)
+            and As.dtype == torch.float32
+            and Bs.dtype == torch.float32
+            and N % int(config.get("BLOCK_SIZE_N", 0)) == 0
+        ):
+            return _w8a8_block_fp8_matmul_splitk_launch(
+                A, B, C, As, Bs, M, N, K, block_n, block_k, config, split_k
+            )
 
     # Split-K accumulates K in SPLIT_K separate fp32 partials, so its results
     # do not match the single-accumulator kernels bit-for-bit.
@@ -961,6 +1146,10 @@ def w8a8_block_fp8_matmul_triton(
         config = {**config, "num_stages": 1}
         kernel = _w8a8_block_fp8_matmul_gfx1250
     else:
+        # SPLIT_K is a launch parameter of the decode-shaped split-K kernel
+        # only; the generic kernel has no such parameter and Triton raises
+        # `KeyError: Keyword argument SPLIT_K was specified but unrecognised`.
+        config = {k: v for k, v in config.items() if k != "SPLIT_K"}
         kernel = select_w8a8_block_fp8_matmul_kernel(M, N, config)
 
     split_k = config.get("SPLIT_K", 1) if hopper_tuned else 1
