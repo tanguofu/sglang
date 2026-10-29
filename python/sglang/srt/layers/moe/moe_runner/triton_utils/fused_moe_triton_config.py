@@ -80,10 +80,29 @@ def _probe_moe_override() -> Optional[Dict[str, int]]:
                 raw = json.load(handle).get("moe_config")
         except Exception:
             raw = None
+        value = None
+        if isinstance(raw, dict) and raw:
+            # Only a flat {"BLOCK_SIZE_M": 16, ...} tile override is understood.
+            # A tiered config ({"32": {...}}) used to reach int(<dict>) and raise
+            # TypeError on the first MoE forward, which takes the server down;
+            # ignore anything that is not a scalar instead.
+            flat = {}
+            for key, item in raw.items():
+                if isinstance(item, bool) or not isinstance(item, (int, float, str)):
+                    continue
+                try:
+                    flat[str(key)] = int(item)
+                except (TypeError, ValueError):
+                    continue
+            if len(flat) != len(raw):
+                logger.warning_once(
+                    "SGLANG_DS41_PROBE_CFG=%s has a non-scalar moe_config; "
+                    "ignoring it. The probe override expects a flat tile dict.",
+                    path,
+                )
+            value = flat or None
         _PROBE_OVERRIDE_STATE["mtime"] = mtime
-        _PROBE_OVERRIDE_STATE["value"] = (
-            {str(k): int(v) for k, v in raw.items()} if raw else None
-        )
+        _PROBE_OVERRIDE_STATE["value"] = value
     return _PROBE_OVERRIDE_STATE["value"]
 
 @functools.lru_cache
