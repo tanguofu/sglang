@@ -457,6 +457,186 @@ def _reduce_block_fp8_split_k(
 
 
 @triton.jit
+def _w8a8_block_fp8_matmul_widek(
+    A,
+    B,
+    C,
+    As,
+    Bs,
+    M,
+    N,
+    K,
+    group_n,
+    group_k,
+    stride_am,
+    stride_ak,
+    stride_bk,
+    stride_bn,
+    stride_cm,
+    stride_cn,
+    stride_As_m,
+    stride_As_k,
+    stride_Bs_k,
+    stride_Bs_n,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    WIDE_K: tl.constexpr,
+    GROUP_SIZE_M: tl.constexpr,
+    needs_masking: tl.constexpr,
+):
+    """Decode-shaped block-fp8 GEMM with a WIDE_K-deep K load per iteration.
+
+    `_w8a8_block_fp8_matmul` is latency-bound at decode sizes: with
+    block_shape=[32, 32] the K tile is pinned to 32 (one scale group per step),
+    so one iteration requests a 1-2 KB tile and then waits for it before the
+    dot. This kernel loads `WIDE_K` (64 or 128) rows of K per iteration --
+    WIDE_K/32 chunks in flight at once -- but it still performs **one 32-deep
+    tl.dot per scale group** and adds each scaled contribution separately, in
+    ascending K order:
+
+        shipped :  acc = acc + (dot(k..k+32)    * a_s[k/32]   * b_s[k/32])
+        here    :  acc = acc + (dot(k..k+32)    * a_s[k/32]   * b_s[k/32])
+                   acc = acc + (dot(k+32..k+64) * a_s[k/32+1] * b_s[k/32+1])
+
+    So the per-element fp32 expression is the same left-to-right chain as the
+    shipped kernel's -- same operands, same order, same rounding -- and the
+    results are bit-identical. A single 64-deep `tl.dot` would NOT be: it
+    merges two scale groups into one reduction before any scale is applied, so
+    the per-group scales could not be applied at all.
+
+    Because the scale stepping here is explicit (one `stride_As_k` /
+    `stride_Bs_k` per 32 of K), `group_k` is unused; it is kept so the
+    signature matches `_w8a8_block_fp8_matmul`. M is tiled exactly like the
+    generic kernel, so unlike the split-K kernel there is no `M <=
+    BLOCK_SIZE_M` restriction and an oversized batch cannot fall through to a
+    kernel that rejects the parameter.
+
+    WIDE_K and BLOCK_SIZE_K are mutually exclusive: this kernel must never be
+    handed BLOCK_SIZE_K and the generic kernel must never be handed WIDE_K.
+    Only 64 and 128 are implemented -- see `_w8a8_block_fp8_matmul_widek_launch`.
+    """
+    pid = tl.program_id(axis=0)
+    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
+    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
+    num_pid_in_group = GROUP_SIZE_M * num_pid_n
+    group_id = pid // num_pid_in_group
+    first_pid_m = group_id * GROUP_SIZE_M
+    group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)
+    pid_m = first_pid_m + (pid % group_size_m)
+    pid_n = (pid % num_pid_in_group) // group_size_m
+
+    offs_am = (pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)) % M
+    offs_bn = (pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)) % N
+    offs_k = tl.arange(0, 32)
+    a_ptrs = A + (offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak)
+    b_ptrs = B + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
+    As_ptrs = As + offs_am * stride_As_m
+    offs_bsn = offs_bn // group_n
+    Bs_ptrs = Bs + offs_bsn * stride_Bs_n
+
+    acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+
+    if WIDE_K == 64:
+        for k in range(0, tl.cdiv(K, 64)):
+            base = k * 64
+            if needs_masking:
+                a0 = tl.load(a_ptrs, mask=offs_k[None, :] < K - base, other=0.0)
+                b0 = tl.load(b_ptrs, mask=offs_k[:, None] < K - base, other=0.0)
+                a1 = tl.load(
+                    a_ptrs + 32 * stride_ak,
+                    mask=offs_k[None, :] < K - base - 32,
+                    other=0.0,
+                )
+                b1 = tl.load(
+                    b_ptrs + 32 * stride_bk,
+                    mask=offs_k[:, None] < K - base - 32,
+                    other=0.0,
+                )
+            else:
+                a0 = tl.load(a_ptrs)
+                b0 = tl.load(b_ptrs)
+                a1 = tl.load(a_ptrs + 32 * stride_ak)
+                b1 = tl.load(b_ptrs + 32 * stride_bk)
+            a_s0 = tl.load(As_ptrs)
+            b_s0 = tl.load(Bs_ptrs)
+            a_s1 = tl.load(As_ptrs + stride_As_k)
+            b_s1 = tl.load(Bs_ptrs + stride_Bs_k)
+            acc += tl.dot(a0, b0) * a_s0[:, None] * b_s0[None, :]
+            acc += tl.dot(a1, b1) * a_s1[:, None] * b_s1[None, :]
+            a_ptrs += 64 * stride_ak
+            b_ptrs += 64 * stride_bk
+            As_ptrs += 2 * stride_As_k
+            Bs_ptrs += 2 * stride_Bs_k
+    else:  # WIDE_K == 128
+        for k in range(0, tl.cdiv(K, 128)):
+            base = k * 128
+            if needs_masking:
+                a0 = tl.load(a_ptrs, mask=offs_k[None, :] < K - base, other=0.0)
+                b0 = tl.load(b_ptrs, mask=offs_k[:, None] < K - base, other=0.0)
+                a1 = tl.load(
+                    a_ptrs + 32 * stride_ak,
+                    mask=offs_k[None, :] < K - base - 32,
+                    other=0.0,
+                )
+                b1 = tl.load(
+                    b_ptrs + 32 * stride_bk,
+                    mask=offs_k[:, None] < K - base - 32,
+                    other=0.0,
+                )
+                a2 = tl.load(
+                    a_ptrs + 64 * stride_ak,
+                    mask=offs_k[None, :] < K - base - 64,
+                    other=0.0,
+                )
+                b2 = tl.load(
+                    b_ptrs + 64 * stride_bk,
+                    mask=offs_k[:, None] < K - base - 64,
+                    other=0.0,
+                )
+                a3 = tl.load(
+                    a_ptrs + 96 * stride_ak,
+                    mask=offs_k[None, :] < K - base - 96,
+                    other=0.0,
+                )
+                b3 = tl.load(
+                    b_ptrs + 96 * stride_bk,
+                    mask=offs_k[:, None] < K - base - 96,
+                    other=0.0,
+                )
+            else:
+                a0 = tl.load(a_ptrs)
+                b0 = tl.load(b_ptrs)
+                a1 = tl.load(a_ptrs + 32 * stride_ak)
+                b1 = tl.load(b_ptrs + 32 * stride_bk)
+                a2 = tl.load(a_ptrs + 64 * stride_ak)
+                b2 = tl.load(b_ptrs + 64 * stride_bk)
+                a3 = tl.load(a_ptrs + 96 * stride_ak)
+                b3 = tl.load(b_ptrs + 96 * stride_bk)
+            a_s0 = tl.load(As_ptrs)
+            b_s0 = tl.load(Bs_ptrs)
+            a_s1 = tl.load(As_ptrs + stride_As_k)
+            b_s1 = tl.load(Bs_ptrs + stride_Bs_k)
+            a_s2 = tl.load(As_ptrs + 2 * stride_As_k)
+            b_s2 = tl.load(Bs_ptrs + 2 * stride_Bs_k)
+            a_s3 = tl.load(As_ptrs + 3 * stride_As_k)
+            b_s3 = tl.load(Bs_ptrs + 3 * stride_Bs_k)
+            acc += tl.dot(a0, b0) * a_s0[:, None] * b_s0[None, :]
+            acc += tl.dot(a1, b1) * a_s1[:, None] * b_s1[None, :]
+            acc += tl.dot(a2, b2) * a_s2[:, None] * b_s2[None, :]
+            acc += tl.dot(a3, b3) * a_s3[:, None] * b_s3[None, :]
+            a_ptrs += 128 * stride_ak
+            b_ptrs += 128 * stride_bk
+            As_ptrs += 4 * stride_As_k
+            Bs_ptrs += 4 * stride_Bs_k
+
+    c = acc.to(C.dtype.element_ty)
+    offs_cm = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+    offs_cn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
+    c_ptrs = C + stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]
+    tl.store(c_ptrs, c, mask=(offs_cm[:, None] < M) & (offs_cn[None, :] < N))
+
+
+@triton.jit
 def _w8a8_block_fp8_matmul_gfx1250(
     # Pointers to inputs and output
     A,
@@ -773,10 +953,17 @@ def get_w8a8_block_fp8_configs(
         sanitized = {}
         clamped_ms = []
         for m_key, cfg in raw.items():
-            if cfg["BLOCK_SIZE_K"] < block_k and (
-                not _is_cuda or block_k % cfg["BLOCK_SIZE_K"] != 0
+            # A wide-K tier carries WIDE_K and deliberately no BLOCK_SIZE_K --
+            # the two are mutually exclusive (see
+            # `_w8a8_block_fp8_matmul_widek`). Reading it with [] would raise
+            # KeyError here, i.e. before any kernel is even selected, so treat
+            # a missing key as "one scale group per step" (block_k, the value
+            # `w8a8_block_fp8_matmul_triton` falls back to as well).
+            block_size_k = cfg.get("BLOCK_SIZE_K", block_k)
+            if block_size_k < block_k and (
+                not _is_cuda or block_k % block_size_k != 0
             ):
-                clamped_ms.append((m_key, cfg["BLOCK_SIZE_K"]))
+                clamped_ms.append((m_key, block_size_k))
                 cfg = {**cfg, "BLOCK_SIZE_K": block_k}
             sanitized[m_key] = cfg
         if clamped_ms:
@@ -980,6 +1167,16 @@ def _use_dense_splitk() -> bool:
     return os.environ.get("SGLANG_DS41_DENSE_FP8_SPLITK", "0") != "0"
 
 
+def _use_dense_widek() -> bool:
+    """Whether the wide-K variant of the dense block-fp8 GEMM is enabled.
+
+    Off by default so a shipped image keeps the proven kernel until the tile
+    config explicitly opts in; `SGLANG_DS41_DENSE_FP8_WIDEK=0` disables it
+    outright (roll back the kernel without rebuilding the image).
+    """
+    return os.environ.get("SGLANG_DS41_DENSE_FP8_WIDEK", "0") != "0"
+
+
 def _w8a8_block_fp8_matmul_splitk_launch(
     A, B, C, As, Bs, M, N, K, block_n, block_k, config, split_k
 ):
@@ -1032,6 +1229,57 @@ def _w8a8_block_fp8_matmul_splitk_launch(
         _reduce_block_fp8_split_k[(triton.cdiv(M * N, 256),)](
             partials, C, M * N, split_k, 256
         )
+    return C
+
+
+def _w8a8_block_fp8_matmul_widek_launch(
+    A, B, C, As, Bs, M, N, K, block_n, block_k, config, wide_k
+):
+    """Launch `_w8a8_block_fp8_matmul_widek`.
+
+    `WIDE_K` is passed explicitly and `BLOCK_SIZE_K` is deliberately never
+    forwarded, even if the tuned config carries one: the two keys are mutually
+    exclusive and each kernel ignores the other's. Only 64 and 128 are
+    implemented. 256 was measured and is NOT bit-exact (132 exact / 810 not),
+    so it must never be shipped; the gate in
+    `w8a8_block_fp8_matmul_triton` rejects it too.
+    """
+    if wide_k not in (64, 128):
+        raise ValueError(f"WIDE_K must be 64 or 128, got {wide_k}")
+
+    grid = (
+        triton.cdiv(M, int(config["BLOCK_SIZE_M"]))
+        * triton.cdiv(N, int(config["BLOCK_SIZE_N"])),
+    )
+    _w8a8_block_fp8_matmul_widek[grid](
+        A,
+        B,
+        C,
+        As,
+        Bs,
+        M,
+        N,
+        K,
+        block_n,
+        block_k,
+        A.stride(-2),
+        A.stride(-1),
+        B.stride(1),
+        B.stride(0),
+        C.stride(-2),
+        C.stride(-1),
+        As.stride(-2),
+        As.stride(-1),
+        Bs.stride(1),
+        Bs.stride(0),
+        BLOCK_SIZE_M=int(config["BLOCK_SIZE_M"]),
+        BLOCK_SIZE_N=int(config["BLOCK_SIZE_N"]),
+        WIDE_K=wide_k,
+        GROUP_SIZE_M=int(config.get("GROUP_SIZE_M", 1)),
+        needs_masking=bool(K % block_k != 0 or K % wide_k != 0),
+        num_warps=int(config.get("num_warps", 4)),
+        num_stages=int(config.get("num_stages", 2)),
+    )
     return C
 
 
@@ -1124,6 +1372,15 @@ def w8a8_block_fp8_matmul_triton(
             "num_stages": 3,
         }
 
+    # A tier that carries WIDE_K has no BLOCK_SIZE_K -- the two are mutually
+    # exclusive. If the wide-K kernel is not enabled (env off) such a tier
+    # reaches the generic kernel, which needs BLOCK_SIZE_K both to step K and
+    # for `needs_masking`, and would fail with `KeyError: 'BLOCK_SIZE_K'`.
+    # Default it to one scale group per step instead: a chart/config drift must
+    # degrade to the proven bit-exact kernel, never take the process down.
+    if "BLOCK_SIZE_K" not in config:
+        config = {**config, "BLOCK_SIZE_K": block_k}
+
     # Decode-shaped split-K: the tuned config may ask for more K splits than the
     # grid can otherwise supply (see `_w8a8_block_fp8_matmul_splitk`).  It needs
     # one program per (N tile, K split) and no M tiling, so it only applies when
@@ -1145,6 +1402,28 @@ def w8a8_block_fp8_matmul_triton(
                 A, B, C, As, Bs, M, N, K, block_n, block_k, config, split_k
             )
 
+    # Wide-K: the tuned config may ask for a WIDE_K-deep K load per loop
+    # iteration instead of BLOCK_SIZE_K-deep one (see
+    # `_w8a8_block_fp8_matmul_widek`). Unlike split-K this kernel M-tiles, so
+    # a batch that does not fit the tier it selected is merely suboptimal,
+    # never wrong -- there is no guard that can be missed, and the launch
+    # cannot fail the way split-K's `M <= BLOCK_SIZE_M` one did
+    # (2026-10-29 `KeyError: Keyword argument SPLIT_K was specified but
+    # unrecognised`).
+    if _use_dense_widek():
+        wide_k = int(config.get("WIDE_K", 0))
+        if (
+            wide_k in (64, 128)
+            and wide_k <= K
+            and not _is_gfx1250
+            and tuple(block_size) == (32, 32)
+            and As.dtype == torch.float32
+            and Bs.dtype == torch.float32
+        ):
+            return _w8a8_block_fp8_matmul_widek_launch(
+                A, B, C, As, Bs, M, N, K, block_n, block_k, config, wide_k
+            )
+
     # Split-K accumulates K in SPLIT_K separate fp32 partials, so its results
     # do not match the single-accumulator kernels bit-for-bit.
     hopper_tuned = get_platform().is_sm90 and (
@@ -1156,10 +1435,12 @@ def w8a8_block_fp8_matmul_triton(
         config = {**config, "num_stages": 1}
         kernel = _w8a8_block_fp8_matmul_gfx1250
     else:
-        # SPLIT_K is a launch parameter of the decode-shaped split-K kernel
-        # only; the generic kernel has no such parameter and Triton raises
-        # `KeyError: Keyword argument SPLIT_K was specified but unrecognised`.
-        config = {k: v for k, v in config.items() if k != "SPLIT_K"}
+        # SPLIT_K and WIDE_K are launch parameters of the decode-shaped
+        # split-K and wide-K kernels only; the generic kernel has neither
+        # parameter and Triton raises `KeyError: Keyword argument SPLIT_K was
+        # specified but unrecognised`. WIDE_K is stripped for the same reason
+        # (and BLOCK_SIZE_K is never forwarded to the wide-K kernel).
+        config = {k: v for k, v in config.items() if k not in ("SPLIT_K", "WIDE_K")}
         kernel = select_w8a8_block_fp8_matmul_kernel(M, N, K, config)
 
     split_k = config.get("SPLIT_K", 1) if hopper_tuned else 1
