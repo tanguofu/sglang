@@ -853,23 +853,33 @@ def get_w8a8_channelwise_fp8_config(N: int, K: int, M: int) -> Optional[Dict[str
     return configs[min(configs.keys(), key=lambda x: abs(x - M))]
 
 
-def select_w8a8_block_fp8_matmul_kernel(M, N, META):
+def select_w8a8_block_fp8_matmul_kernel(M, N, K, META):
     return _w8a8_block_fp8_matmul
 
 
 if _is_hip:
 
-    def use_w8a8_block_fp8_matmul_unrolledx4(M, N, META):
-        # Use manually unrolledx4 kernel on AMD GPU when the grid size is small.
-        # Empirical testing shows the sweet spot lies when it's less than the # of
-        # compute units available on the device.
-        num_workgroups = triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.cdiv(
-            N, META["BLOCK_SIZE_N"]
-        )
-        num_workgroups <= get_device_core_count()
+    def use_w8a8_block_fp8_matmul_unrolledx4(M, N, K, META):
+        # `_w8a8_block_fp8_matmul_unrolledx4` steps K in BLOCK_SIZE_K*4 chunks
+        # and silently drops the remainder, so it is only correct when K is a
+        # whole number of chunks. At BLOCK_SIZE_K=32 that means K % 128 == 0;
+        # K=288 (shared w2) would lose its last 32 elements.
+        if K % (META["BLOCK_SIZE_K"] * 4) != 0:
+            return False
+        # Deliberately disabled even for small grids. Upstream evaluated
+        # `num_workgroups <= get_device_core_count()` without returning it, so
+        # this path was never taken on HIP -- adding the missing `return` is a
+        # behaviour change, not a bug fix, and it would silently corrupt every
+        # K that is not a multiple of 128 were the check above ever removed.
+        # Enable it only with a measurement:
+        #   num_workgroups = triton.cdiv(M, META["BLOCK_SIZE_M"]) * triton.cdiv(
+        #       N, META["BLOCK_SIZE_N"]
+        #   )
+        #   return num_workgroups <= get_device_core_count()
+        return False
 
-    def select_w8a8_block_fp8_matmul_kernel(M, N, META):
-        if use_w8a8_block_fp8_matmul_unrolledx4(M, N, META):
+    def select_w8a8_block_fp8_matmul_kernel(M, N, K, META):
+        if use_w8a8_block_fp8_matmul_unrolledx4(M, N, K, META):
             return _w8a8_block_fp8_matmul_unrolledx4
         else:
             return _w8a8_block_fp8_matmul
@@ -1150,7 +1160,7 @@ def w8a8_block_fp8_matmul_triton(
         # only; the generic kernel has no such parameter and Triton raises
         # `KeyError: Keyword argument SPLIT_K was specified but unrecognised`.
         config = {k: v for k, v in config.items() if k != "SPLIT_K"}
-        kernel = select_w8a8_block_fp8_matmul_kernel(M, N, config)
+        kernel = select_w8a8_block_fp8_matmul_kernel(M, N, K, config)
 
     split_k = config.get("SPLIT_K", 1) if hopper_tuned else 1
     if split_k > 1:
