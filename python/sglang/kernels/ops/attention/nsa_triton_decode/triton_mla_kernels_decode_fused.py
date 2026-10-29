@@ -63,6 +63,14 @@ SMALL_BATCH_TOKEN_THRESHOLD = 8
 # Topk threshold for split-K value selection within the split-K path
 SPLITK_HIGH_TOPK_THRESHOLD = 512
 
+# Few-heads decode (a TP8 DeepSeek-V4 rank exposes 8 query heads): the
+# non-split-K grid is (1, total_tokens), so a decode batch launches at most a
+# few dozen CTAs on 80 CUs and each of them walks its whole KV range as one
+# serial chain. Wall time is then the per-CTA chain rather than the batch, and
+# splitting the KV range is the only way to shorten it.
+SMALL_HQ_DECODE_TOPK_THRESHOLD = 512
+SMALL_HQ_DECODE_TOKEN_THRESHOLD = 64
+
 # ============================================================================
 # Shared split-K decision logic for dual-scope kernels
 # ============================================================================
@@ -93,30 +101,38 @@ def _decide_splitk_dual_scope(total_tokens: int, h_q: int, total_topk: int) -> i
     use_splitk_for_large_hq = (
         h_q > 64 and total_tokens > SMALL_BATCH_TOKEN_THRESHOLD and total_topk >= 256
     )
+    # Few heads + a full top-k + a decode-sized batch: far fewer CTAs than CUs.
+    use_splitk_for_small_hq_decode = (
+        h_q <= 64
+        and total_topk >= SMALL_HQ_DECODE_TOPK_THRESHOLD
+        and total_tokens <= SMALL_HQ_DECODE_TOKEN_THRESHOLD
+    )
 
     if not (
         use_splitk_for_small_bs
         or use_splitk_for_h64_large_topk
         or use_splitk_for_large_topk
         or use_splitk_for_large_hq
+        or use_splitk_for_small_hq_decode
     ):
         return 0  # No split-K
 
     # Select split_k value based on workload characteristics.
     # Higher topk benefits from more splits; lower topk needs fewer to
     # avoid combine overhead.
+    if use_splitk_for_h64_large_topk:
+        return 2
+    if use_splitk_for_small_hq_decode:
+        # 8 splits only while the total CTA count stays well under the CU
+        # count; beyond that the combine kernel and wave quantization win.
+        return 8 if total_tokens <= SMALL_BATCH_TOKEN_THRESHOLD else 4
     if total_tokens <= SMALL_BATCH_TOKEN_THRESHOLD:
         if total_topk >= SPLITK_HIGH_TOPK_THRESHOLD and total_tokens <= 4:
             return 8
         return 4
-    elif use_splitk_for_large_hq:
-        if total_topk >= SPLITK_HIGH_TOPK_THRESHOLD:
-            return 4
-        return 2
-    elif use_splitk_for_h64_large_topk:
-        return 2
-    else:
-        return _select_split_k(total_topk, h_q, total_tokens)
+    if use_splitk_for_large_hq:
+        return 4 if total_topk >= SPLITK_HIGH_TOPK_THRESHOLD else 2
+    return _select_split_k(total_topk, h_q, total_tokens)
 
 
 DSV4_NUM_TILES = 7
