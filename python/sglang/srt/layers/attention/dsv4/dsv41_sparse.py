@@ -11,12 +11,6 @@ from typing import Optional, Tuple
 import torch
 from torch import nn
 
-from sglang.kernels.ops.attention.dsv4.indexer_launch_fusion import (
-    ENV_FUSE_ROPE_TAIL,
-    fuse_enabled,
-    rope_tail_fusable,
-    rope_tail_fused,
-)
 from sglang.kernels.ops.attention.dsv4.torch_quant import (
     fake_quant_compressed_kv,
     fake_quant_fp4,
@@ -45,8 +39,10 @@ def _rope_fq4(x, freqs, rope_dim, *, compressed_kv=False, positions=None):
         return rope_tail_fake_quant_fp4(
             x, freqs, rope_dim, compressed_kv=compressed_kv, positions=positions
         )
+    if positions is not None:
+        freqs = freqs[positions]
     quant = fake_quant_compressed_kv if compressed_kv else fake_quant_fp4
-    return quant(rope_tail(x, freqs, rope_dim, positions=positions))
+    return quant(rope_tail(x, freqs, rope_dim))
 
 
 class RMSNorm(nn.Module):
@@ -91,24 +87,9 @@ def token_req_indices(forward_batch, *, num_tokens=None) -> torch.Tensor:
 
 
 def rope_tail(
-    x: torch.Tensor,
-    freqs: torch.Tensor,
-    rope_dim: int,
-    inverse: bool = False,
-    positions: Optional[torch.Tensor] = None,
+    x: torch.Tensor, freqs: torch.Tensor, rope_dim: int, inverse: bool = False
 ) -> torch.Tensor:
-    """Rotate the last rope_dim features of x with complex freqs [T, rope_dim // 2].
-
-    :param positions: per-token row of indices into the whole ``freqs`` table.
-        Given it, the gather moves into the fused kernel instead of costing an
-        ``index_select`` of its own, and ``freqs`` keeps its full length.
-    """
-    if fuse_enabled(ENV_FUSE_ROPE_TAIL) and rope_tail_fusable(
-        x, freqs, rope_dim, positions
-    ):
-        return rope_tail_fused(x, freqs, rope_dim, inverse=inverse, positions=positions)
-    if positions is not None:
-        freqs = freqs[positions]
+    """Rotate the last rope_dim features of x with complex freqs [T, rope_dim // 2]."""
     head, tail = x[..., :-rope_dim], x[..., -rope_dim:]
     tc = torch.view_as_complex(tail.float().unflatten(-1, (-1, 2)).contiguous())
     f = freqs.conj() if inverse else freqs

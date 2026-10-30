@@ -1,24 +1,22 @@
 """Launch-fusion kernels for the DS4.1 indexer / low-ratio compressor path.
 
 Decode on gfx942 runs this path fully inside a CUDA graph, so every ATen op
-costs its ~2.6 us launch floor and nothing else.  Two blocks on this path are
-made of integer bookkeeping, bit-preserving permutations and one fp32 complex
-multiply, which means they collapse into a handful of Triton launches without
-touching any accumulation order:
+costs its ~1.9-2.9 us launch floor and nothing else.  The block fused here is
+made of integer bookkeeping, bit-preserving permutations and selects only:
 
 * :func:`fused_pair_partners_and_slots` replaces
   ``DeepseekV4AttnBackend._low_ratio_pair_partners`` plus the two integer
-  selects its caller computes (~38 ATen launches -> 2).  The block performs **no
+  selects its caller computes (~47 ATen launches -> 2).  The block performs **no
   floating-point arithmetic at all**: integer compare, boolean logic, a ring
   read, a roll (a bit-preserving permutation) and two selects.  There is no
   accumulation order to change, so it is not in the forbidden ``reduce_kernel``
   class.
-* :func:`rope_tail_fused` replaces :func:`rope_tail` and the ``freqs[positions]``
-  gather that feeds it (~5 ATen launches -> 1).  Its only arithmetic is one
-  complex64 multiply in fp32 followed by one round to bf16, both correctly
-  rounded and both in a fixed expression order.
 * :func:`group_pos_and_slots` is the integer-select half on its own, for when
-  the pairing fusion is switched off (4 ATen launches -> 2).
+  the pairing fusion is switched off (~9 ATen launches -> 5).
+
+Both are therefore bit-exact by construction rather than by measurement: every
+value they produce is a copy of a value the torch path produces, and every
+integer operation in them is an identity on the torch path's own integers.
 
 The ring hazard in the first block is respected by splitting it in two: the
 kernel that reads the ring and derives every index is a separate launch from the
@@ -27,12 +25,19 @@ semantics rather than by an in-kernel barrier.
 
 Every kernel is gated by an env switch defaulting to off, and every guard that
 cannot be checked before launch falls back to the untouched torch path.
+
+Not shipped: a fusion of ``rope_tail`` was written and then rejected.  Its only
+arithmetic is ``ar*fr - ai*fi`` in fp32, and torch's complex64 multiply is
+compiled with FMA contraction, so a kernel that writes the expression the way
+the source does disagrees with torch on 24 % of fp32 results.  See
+``LAUNCH_FUSION_SHIP.md``.  Nothing here must reintroduce it without solving
+that first.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Optional, Tuple
+from typing import Tuple
 
 import torch
 import triton
@@ -41,7 +46,6 @@ import triton.language as tl
 # Read per call so a process can A/B both sides of a fusion without a restart --
 # that is how the bit-exactness harness compares them.
 ENV_FUSE_PAIR_PARTNERS = "SGLANG_DS41_FUSE_PAIR_PARTNERS"
-ENV_FUSE_ROPE_TAIL = "SGLANG_DS41_FUSE_ROPE_TAIL"
 ENV_FUSE_INT_SELECTS = "SGLANG_DS41_FUSE_INT_SELECTS"
 
 
@@ -55,127 +59,6 @@ def _pow2(n: int) -> int:
 
 def _warps(block: int) -> int:
     return max(1, min(8, block // 32))
-
-
-# ---------------------------------------------------------------------------
-# rope_tail
-# ---------------------------------------------------------------------------
-
-
-@triton.jit
-def _rope_tail_kernel(
-    X,
-    F,
-    OUT,
-    POS,
-    HEADS,
-    D: tl.constexpr,
-    RD: tl.constexpr,
-    RD2: tl.constexpr,
-    INV: tl.constexpr,
-    GATHER: tl.constexpr,
-    BLOCK_D: tl.constexpr,
-):
-    """One program per row of ``x`` (a row is ``D`` features, ``HEADS`` rows per
-    token).  The head is copied bit-for-bit; the tail is rotated as complex64 in
-    fp32 and rounded once, exactly as ``rope_tail`` does."""
-    row = tl.program_id(0)
-    off = tl.arange(0, BLOCK_D)
-    m = off < D
-    x = tl.load(X + row * D + off, mask=m, other=0.0).to(tl.float32)
-
-    cut = D - RD
-    tail = off >= cut
-    rel = off - cut
-    j = tl.where(rel > 0, rel, 0) // 2
-
-    t = row // HEADS
-    if GATHER:
-        t = tl.load(POS + t).to(tl.int32)
-    fbase = t * RD2 + j
-
-    fr = tl.load(F + fbase * 2, mask=tail, other=0.0)
-    fi = tl.load(F + fbase * 2 + 1, mask=tail, other=0.0)
-    if INV:
-        fi = -fi
-
-    base = cut + 2 * j
-    ar = tl.load(X + row * D + base, mask=tail, other=0.0).to(tl.float32)
-    ai = tl.load(X + row * D + base + 1, mask=tail, other=0.0).to(tl.float32)
-    # Same expression order as thrust::complex::operator* on finite operands:
-    # two fp32 multiplies and one add per component, no contraction.
-    real = ar * fr - ai * fi
-    imag = ar * fi + ai * fr
-
-    rot = tl.where((rel & 1) == 1, imag, real)
-    tl.store(OUT + row * D + off, tl.where(tail, rot, x).to(OUT.dtype.element_ty), mask=m)
-
-
-def rope_tail_fusable(
-    x: torch.Tensor,
-    freqs: torch.Tensor,
-    rope_dim: int,
-    positions: Optional[torch.Tensor] = None,
-) -> bool:
-    """True when :func:`rope_tail_fused` can take over.  Every condition here is
-    a structural one; anything else keeps the torch path."""
-    return (
-        x.is_cuda
-        and x.is_contiguous()
-        and x.ndim in (2, 3)
-        and freqs.is_cuda
-        and freqs.is_contiguous()
-        and freqs.ndim == 2
-        and freqs.is_complex()
-        and freqs.dtype == torch.complex64
-        and rope_dim > 0
-        and rope_dim % 2 == 0
-        and rope_dim <= x.shape[-1]
-        and freqs.shape[-1] == rope_dim // 2
-        # Without positions the table is indexed by each token's own ordinal, so
-        # it must have exactly one row per token; with them its length is
-        # whatever the caller's index range needs.
-        and (positions is not None or freqs.shape[0] == x.shape[0])
-    )
-
-
-def rope_tail_fused(
-    x: torch.Tensor,
-    freqs: torch.Tensor,
-    rope_dim: int,
-    inverse: bool = False,
-    positions: Optional[torch.Tensor] = None,
-) -> torch.Tensor:
-    """``rope_tail`` with the ``freqs[positions]`` gather folded in.
-
-    :param freqs: the whole ``[L, rope_dim // 2]`` complex64 table.
-    :param positions: per-*token* table indices, or None to index the table by
-        each token's own ordinal (what ``rope_tail`` does today).
-    """
-    assert rope_tail_fusable(x, freqs, rope_dim)
-    d = x.shape[-1]
-    rows = x.numel() // d
-    heads = rows // x.shape[0]
-    out = torch.empty_like(x)
-    f = torch.view_as_real(freqs).view(-1, 2)
-    _rope_tail_kernel[(rows,)](
-        x,
-        f,
-        out,
-        # Unused when GATHER is false, but the signature still needs an int row.
-        positions
-        if positions is not None
-        else torch.empty(0, dtype=torch.int32, device=x.device),
-        heads,
-        D=d,
-        RD=rope_dim,
-        RD2=rope_dim // 2,
-        INV=inverse,
-        GATHER=positions is not None,
-        BLOCK_D=_pow2(d),
-        num_warps=_warps(_pow2(d)),
-    )
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +272,7 @@ def group_pos_and_slots(pos: torch.Tensor, out_loc: torch.Tensor):
     Both are pure integer identities with no floating point and nothing to
     round: ``pos % 2`` is 0 or 1 for every int under torch's Python-style
     remainder, so ``pos - pos % 2`` is the same number, and ``clamp(min=0)`` is
-    the same select.  Four ATen launches become two.
+    the same select.  Nine ATen launches become five.
     """
     if fuse_enabled(ENV_FUSE_INT_SELECTS):
         return pos - pos % 2, out_loc.clamp(min=0)
@@ -402,11 +285,8 @@ def group_pos_and_slots(pos: torch.Tensor, out_loc: torch.Tensor):
 __all__ = [
     "ENV_FUSE_INT_SELECTS",
     "ENV_FUSE_PAIR_PARTNERS",
-    "ENV_FUSE_ROPE_TAIL",
     "fuse_enabled",
     "fused_pair_partners_and_slots",
     "group_pos_and_slots",
     "pair_partners_fusable",
-    "rope_tail_fusable",
-    "rope_tail_fused",
 ]
