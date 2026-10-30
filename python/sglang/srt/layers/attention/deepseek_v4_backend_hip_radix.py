@@ -896,6 +896,10 @@ class DeepseekV4HipRadixBackend(
     _low_ratio_compress_decode = DeepseekV4AttnBackend._low_ratio_compress_decode
     _low_ratio_compress_torch = DeepseekV4AttnBackend._low_ratio_compress_torch
     _low_ratio_pair_partners = DeepseekV4AttnBackend._low_ratio_pair_partners
+    # _low_ratio_compress_torch reaches this one, so it has to be bound here
+    # too: nothing in this class is inherited, so a method added to
+    # DeepseekV4AttnBackend is invisible until the copy list binds it.
+    _low_ratio_pair = DeepseekV4AttnBackend._low_ratio_pair
     _low_ratio_write_group = DeepseekV4AttnBackend._low_ratio_write_group
     _low_ratio_compress_fused = DeepseekV4AttnBackend._low_ratio_compress_fused
     # MIXED BCG replay regresses ROCm DSV4 DP-attention serving throughput.
