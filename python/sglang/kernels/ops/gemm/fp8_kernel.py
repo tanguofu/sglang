@@ -1177,6 +1177,34 @@ def _use_dense_widek() -> bool:
     return os.environ.get("SGLANG_DS41_DENSE_FP8_WIDEK", "0") != "0"
 
 
+def _dense_widek_depth(
+    K: int, block_size, As, Bs, config: Optional[Dict[str, Any]]
+) -> int:
+    """The WIDE_K depth this call should run with, or 0 for "not wide-K".
+
+    Both the env switch and the tier have to ask for it: `SGLANG_DS41_DENSE_FP8_WIDEK`
+    alone does nothing without a `WIDE_K` tier, and a `WIDE_K` tier alone leaves
+    today's arithmetic in place. Returning 0 means the caller falls back to the
+    thin kernel at M <= 16 and to the generic one above it, so a shipped image
+    without wide-K tiers is byte-for-byte what it is today.
+
+    Only 64 and 128 are accepted. 256 was measured and is NOT bit-exact
+    (132 exact / 810 not), so it must never ship.
+    """
+    wide_k = int(config.get("WIDE_K", 0)) if config else 0
+    if (
+        _use_dense_widek()
+        and wide_k in (64, 128)
+        and wide_k <= K
+        and not _is_gfx1250
+        and tuple(block_size) == (32, 32)
+        and As.dtype == torch.float32
+        and Bs.dtype == torch.float32
+    ):
+        return wide_k
+    return 0
+
+
 def _w8a8_block_fp8_matmul_splitk_launch(
     A, B, C, As, Bs, M, N, K, block_n, block_k, config, split_k
 ):
@@ -1312,11 +1340,25 @@ def w8a8_block_fp8_matmul_triton(
 
     block_n, block_k = block_size
 
+    # Look the tier up before the thin gate: a tier that carries WIDE_K must be
+    # able to win at M <= 16 too, otherwise the thin kernel short-circuits
+    # first and decode runs a different arithmetic at low batch than it does
+    # at M >= 17.
+    configs = get_w8a8_block_fp8_configs(N, K, block_size[0], block_size[1])
+    if configs:
+        config = configs[min(configs.keys(), key=lambda x: abs(x - M))]
+    else:
+        config = None
+
+    wide_k = _dense_widek_depth(K, block_size, As, Bs, config)
+
     # Decode runs a handful of rows: the generic tiling can only step one 32-wide
-    # scale group per tile, which turns these into 40-160 tiny tiles each.  Use
-    # the wide-K variant instead when the shape allows it.
+    # scale group per tile, which turns these into 40-160 tiny tiles each.  The
+    # thin kernel is only used when neither the tier nor the env asks for the
+    # wide-K variant, so today's behaviour is unchanged unless both do.
     if (
-        os.environ.get("SGLANG_DS41_DISABLE_THIN_GEMM", "0") != "1"
+        not wide_k
+        and os.environ.get("SGLANG_DS41_DISABLE_THIN_GEMM", "0") != "1"
         and M <= 16
         and tuple(block_size) == (32, 32)
         and As.dtype == torch.float32
@@ -1353,13 +1395,6 @@ def w8a8_block_fp8_matmul_triton(
         )
         return C
 
-    configs = get_w8a8_block_fp8_configs(N, K, block_size[0], block_size[1])
-    if configs:
-        # If an optimal configuration map has been found, look up the
-        # optimal config
-        config = configs[min(configs.keys(), key=lambda x: abs(x - M))]
-    else:
-        config = None
     if config is None:
         # Default config
         # Block-wise quant: BLOCK_SIZE_K must be divisible by block_size[1]
@@ -1410,19 +1445,10 @@ def w8a8_block_fp8_matmul_triton(
     # cannot fail the way split-K's `M <= BLOCK_SIZE_M` one did
     # (2026-10-29 `KeyError: Keyword argument SPLIT_K was specified but
     # unrecognised`).
-    if _use_dense_widek():
-        wide_k = int(config.get("WIDE_K", 0))
-        if (
-            wide_k in (64, 128)
-            and wide_k <= K
-            and not _is_gfx1250
-            and tuple(block_size) == (32, 32)
-            and As.dtype == torch.float32
-            and Bs.dtype == torch.float32
-        ):
-            return _w8a8_block_fp8_matmul_widek_launch(
-                A, B, C, As, Bs, M, N, K, block_n, block_k, config, wide_k
-            )
+    if wide_k:
+        return _w8a8_block_fp8_matmul_widek_launch(
+            A, B, C, As, Bs, M, N, K, block_n, block_k, config, wide_k
+        )
 
     # Split-K accumulates K in SPLIT_K separate fp32 partials, so its results
     # do not match the single-accumulator kernels bit-for-bit.
