@@ -30,6 +30,13 @@ from sglang.kernels.ops.attention.dsv4.dequant_k_cache import (
     gather_dequant_requant_fp8_paged,
     q8kv8_padded_num_heads,
 )
+from sglang.kernels.ops.attention.dsv4.indexer_launch_fusion import (
+    ENV_FUSE_PAIR_PARTNERS,
+    fuse_enabled,
+    fused_pair_partners_and_slots,
+    group_pos_and_slots,
+    pair_partners_fusable,
+)
 from sglang.kernels.ops.attention.dsv4.kv_layout import KVLayout
 from sglang.kernels.ops.attention.dsv4.metadata_kernel import (
     fill_all_compressed_indices,
@@ -3604,24 +3611,47 @@ class DeepseekV4AttnBackend(
             )
             return
 
-        partner_kv, partner_score = self._low_ratio_pair_partners(
+        raw_loc = core.raw_out_loc[:num_tokens]
+        out_loc = core.c2_out_loc[:num_tokens]
+        partner_kv, partner_score, group_pos, slots = self._low_ratio_pair(
             layer_id=layer.layer_id,
             kv=kv,
             score=score,
             req=req,
             pos=pos,
-            pad=core.raw_out_loc[:num_tokens] == 0,
+            raw_loc=raw_loc,
+            out_loc=out_loc,
         )
         pooled = layer.compressor.pool_pairs(
             torch.stack([partner_kv, kv], dim=1),
             torch.stack([partner_score, score], dim=1),
         )
-        group_pos = torch.where(pos % 2 == 1, pos - 1, pos)
-        out_loc = core.c2_out_loc[:num_tokens]
-        slots = torch.where(out_loc >= 0, out_loc, torch.zeros_like(out_loc))
         self._low_ratio_write_group(
             layer, pooled, slots, group_pos, fuse_index_store=fuse_index_store
         )
+
+    def _low_ratio_pair(self, *, layer_id, kv, score, req, pos, raw_loc, out_loc):
+        """Partner rows, the group/slot indices the write needs, and the ring
+        update that pairs them -- in two launches when the fusion is on."""
+        if fuse_enabled(ENV_FUSE_PAIR_PARTNERS):
+            state = self.token_to_kv_pool.get_attention_compress_states(layer_id)
+            buffer = state.kv_score_buffer.kv_score
+            if pair_partners_fusable(buffer, kv, score, req, pos, raw_loc, out_loc):
+                return fused_pair_partners_and_slots(
+                    buffer=buffer,
+                    ring=state.ring_size,
+                    kv=kv,
+                    score=score,
+                    req=req,
+                    pos=pos,
+                    raw_loc=raw_loc,
+                    out_loc=out_loc,
+                )
+        partner_kv, partner_score = self._low_ratio_pair_partners(
+            layer_id=layer_id, kv=kv, score=score, req=req, pos=pos, pad=raw_loc == 0
+        )
+        group_pos, slots = group_pos_and_slots(pos, out_loc)
+        return partner_kv, partner_score, group_pos, slots
 
     def _low_ratio_pair_partners(
         self, *, layer_id, kv, score, req, pos, pad

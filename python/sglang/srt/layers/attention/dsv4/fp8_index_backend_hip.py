@@ -43,7 +43,7 @@ def store_index_k_fp8_group(
     """
     ratio = layer.compress_ratio
     k = indexer.k_norm(indexer.forward_wk(latent))
-    k = rope_tail(k, freqs[group_pos], indexer.rope_head_dim)
+    k = rope_tail(k, freqs, indexer.rope_head_dim, positions=group_pos)
     store_index_k_fp8(
         k,
         slots.to(torch.int64),
@@ -66,7 +66,7 @@ def store_index_k_fp8_layer(
     ratio = layer.compress_ratio
     group_pos = (pos // ratio) * ratio
     k = indexer.k_norm(indexer.forward_wk(latent))
-    k = rope_tail(k, freqs_cis[group_pos], indexer.rope_head_dim)
+    k = rope_tail(k, freqs_cis, indexer.rope_head_dim, positions=group_pos)
     store_index_k_fp8(
         k,
         out_loc.to(torch.int64),
@@ -82,7 +82,7 @@ def query_fp8(layer, x, q_lora, pos) -> Tuple[torch.Tensor, torch.Tensor]:
     q = q.view(q.shape[0], indexer.n_local_heads, indexer.index_head_dim)
     # No fp4 fake quantization: the payload is fp8, so round once, in the
     # quantizer that also folds the scale into the weights.
-    q = rope_tail(q, layer.freqs_cis[pos], indexer.rope_head_dim)
+    q = rope_tail(q, layer.freqs_cis, indexer.rope_head_dim, positions=pos)
     return quantize_query_fp8(q, indexer.head_weights(x))
 
 
