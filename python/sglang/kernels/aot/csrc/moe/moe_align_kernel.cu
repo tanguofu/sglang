@@ -325,6 +325,117 @@ __global__ void moe_align_block_size_small_batch_expert_kernel(
   }
 }
 
+// Bit-exact parallel replacement for
+// moe_align_block_size_small_batch_expert_kernel, selected with
+// SGLANG_MOE_ALIGN_PARALLEL=1.
+//
+// Why it is bit-exact: the blocked MoE GEMM consumes expert_ids[],
+// num_tokens_post_pad and sorted_token_ids[], and all three are a pure function
+// of the *histogram* of expert buckets (padded count -> block layout -> expert
+// ids and padded total). The histogram is integer adds, so it is identical. The
+// only remaining freedom is which slot inside one expert's [E[b], E[b]+count)
+// range a token lands in; each output row of the blocked GEMM is an independent
+// dot product over K (BLOCK_SIZE_M only batches rows, padding rows are marked by
+// sorted_token_ids == numel), so permuting rows inside one expert changes no
+// arithmetic - only the order in which independent elements are moved.
+//
+// Why it is faster: the shipped small-batch kernel reduces its per-thread
+// histograms with a `stride`-deep dependent shared-memory chain and then a
+// num_experts-deep dependent chain for cumsum - about 113 dependent LDS round
+// trips. Here the histogram lives in shared memory once and the reduction is a
+// 6-step Hillis-Steele scan over 64 lanes (log depth).
+//
+// Only portable primitives are used (atomicAdd / __syncthreads / dynamic smem),
+// and the kernel is only reachable behind the env flag and only on the
+// small-batch path, so the CUDA path is untouched when the flag is off.
+template <typename scalar_t>
+__global__ void moe_align_block_size_parallel_kernel(
+    const scalar_t* __restrict__ topk_ids,
+    int32_t* __restrict__ sorted_token_ids,
+    int32_t* __restrict__ expert_ids,
+    int32_t* __restrict__ total_tokens_post_pad,
+    int32_t num_experts,
+    int32_t block_size,
+    size_t numel,
+    bool pad_sorted_token_ids,
+    bool ignore_invalid_expert,
+    int32_t max_num_tokens_padded) {
+  extern __shared__ int32_t smem[];
+  // [0, num_experts)                        per-bucket counts
+  // [num_experts, 2 * num_experts)          per-bucket write cursors
+  // [2 * num_experts, 3 * num_experts + 1) exclusive offsets (num_experts + 1)
+  // [3 * num_experts + 1, ... + 64)         scan lanes
+  int32_t* counts = smem;
+  int32_t* cursor = counts + num_experts;
+  int32_t* excl = cursor + num_experts;
+  int32_t* scan = excl + (num_experts + 1);
+
+  const int32_t tid = threadIdx.x;
+
+  if (tid < num_experts) {
+    counts[tid] = 0;
+    cursor[tid] = 0;
+  }
+  __syncthreads();
+
+  // 1. histogram, one pass over numel
+  for (size_t i = tid; i < numel; i += blockDim.x) {
+    if (ignore_invalid_expert && topk_ids[i] < 0) continue;
+    const int32_t bucket = static_cast<int32_t>(topk_ids[i]) + 1;
+    atomicAdd(&counts[bucket], 1);
+  }
+  __syncthreads();
+
+  // 2. padded counts -> inclusive scan over 64 lanes, log depth
+  const int32_t padded = (tid < num_experts)
+      ? ((counts[tid] + block_size - 1) / block_size) * block_size
+      : 0;
+  if (tid < 64) scan[tid] = padded;
+  __syncthreads();
+#pragma unroll
+  for (int offset = 1; offset < 64; offset <<= 1) {
+    int32_t add = 0;
+    if (tid >= offset && tid < 64) add = scan[tid - offset];
+    __syncthreads();
+    if (tid < 64) scan[tid] += add;
+    __syncthreads();
+  }
+
+  // 3. exclusive offsets; every offset is a multiple of block_size
+  if (tid < num_experts) {
+    excl[tid] = (tid == 0) ? 0 : scan[tid - 1];
+  }
+  if (tid == 0) {
+    excl[num_experts] = scan[num_experts - 1];
+    *total_tokens_post_pad = scan[num_experts - 1];
+  }
+  __syncthreads();
+
+  // 4. pad sorted_token_ids with numel
+  if (pad_sorted_token_ids) {
+    for (int32_t i = tid; i < max_num_tokens_padded; i += blockDim.x) {
+      sorted_token_ids[i] = static_cast<int32_t>(numel);
+    }
+  }
+  __syncthreads();
+
+  // 5. expert_ids, one thread per bucket
+  if (tid < num_experts) {
+    const int32_t lo = excl[tid] / block_size;
+    const int32_t hi = excl[tid + 1] / block_size;
+    for (int32_t i = lo; i < hi; ++i) expert_ids[i] = tid - 1;
+  }
+
+  // 6. scatter; the order inside one bucket is whatever the atomic gives and is
+  //    irrelevant to the GEMM (see the header comment)
+  for (size_t i = tid; i < numel; i += blockDim.x) {
+    if (ignore_invalid_expert && topk_ids[i] < 0) continue;
+    const int32_t bucket = static_cast<int32_t>(topk_ids[i]) + 1;
+    const int32_t rank = atomicAdd(&cursor[bucket], 1);
+    sorted_token_ids[excl[bucket] + rank] = static_cast<int32_t>(i);
+  }
+}
+
 void moe_align_block_size(
     torch::Tensor topk_ids,
     int64_t num_experts,
@@ -345,7 +456,27 @@ void moe_align_block_size(
   DISPATCH_INTEGRAL_TYPES(topk_ids.scalar_type(), "moe_align_block_size_kernel", [&] {
     bool small_batch_expert_mode = (topk_ids.numel() < 1024) && (num_experts <= 64);
 
-    if (small_batch_expert_mode) {
+    // Read once per process: getenv on every MoE layer would be its own tax.
+    static const bool use_parallel_align = getBoolEnv("SGLANG_MOE_ALIGN_PARALLEL");
+
+    if (small_batch_expert_mode && use_parallel_align) {
+      constexpr int32_t par_threads = 256;
+      const int32_t shared_mem_size =
+          (2 * num_experts + (num_experts + 1) + 64) * sizeof(int32_t);
+
+      auto parallel_kernel = moe_align_block_size_parallel_kernel<scalar_t>;
+      parallel_kernel<<<1, par_threads, shared_mem_size, stream>>>(
+          topk_ids.data_ptr<scalar_t>(),
+          sorted_token_ids.data_ptr<int32_t>(),
+          experts_ids.data_ptr<int32_t>(),
+          num_tokens_post_pad.data_ptr<int32_t>(),
+          num_experts,
+          block_size,
+          topk_ids.numel(),
+          pad_sorted_token_ids,
+          ignore_invalid_expert,
+          max_num_tokens_padded);
+    } else if (small_batch_expert_mode) {
       const int32_t threads = max((int32_t)num_experts, WARP_SIZE);
       constexpr int32_t fill_threads = 256;
       const int32_t shared_mem_size = ((threads + 1) * num_experts + (num_experts + 1)) * sizeof(int32_t);
