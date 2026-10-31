@@ -11,6 +11,7 @@ Supports:
 - All configs: with/without topk_length, with/without attn_sink
 """
 
+import os
 from typing import Optional, Tuple
 
 import torch
@@ -59,6 +60,36 @@ NOSPLITK_TOKEN_THRESHOLD_LOW_TOPK = (
 
 # Small batch threshold: below this, split-K=4/8 for parallelism
 SMALL_BATCH_TOKEN_THRESHOLD = 8
+
+# ============================================================================
+# Environment switches for the two dual-scope decode attention changes
+# ============================================================================
+# Both default off so a shipped image keeps today's arithmetic until the
+# deployment explicitly opts in, and both are read once at import: the value
+# feeds a `tl.constexpr`, so a mid-process flip would only spawn a second
+# kernel specialization instead of taking effect everywhere.
+#
+# SGLANG_DS41_ATTN_SPLITK=1
+#     Let `_decide_splitk_dual_scope` engage at all. With it off split_k is
+#     pinned to 0 and every call takes the non-split-K kernel.
+# SGLANG_DS41_ATTN_P_HILO=1
+#     Carry the softmax probability as two bf16 words (hi + residual lo) so the
+#     bf16 rounding of `p` stops being the dominant error term. Strict accuracy
+#     win in both paths; costs 2-5%.
+#
+# They are deliberately independent so the two can be A/B'd separately.
+_ATTN_SPLITK_ENABLED = os.environ.get("SGLANG_DS41_ATTN_SPLITK", "0") != "0"
+_ATTN_P_HILO_ENABLED = os.environ.get("SGLANG_DS41_ATTN_P_HILO", "0") != "0"
+
+
+def attn_splitk_enabled() -> bool:
+    """Whether dual-scope decode attention may engage split-K."""
+    return _ATTN_SPLITK_ENABLED
+
+
+def attn_p_hilo_enabled() -> bool:
+    """Whether softmax probabilities are carried as two bf16 words."""
+    return _ATTN_P_HILO_ENABLED
 
 # Topk threshold for split-K value selection within the split-K path
 SPLITK_HIGH_TOPK_THRESHOLD = 512
@@ -183,6 +214,7 @@ def _process_kv_block_aggressive(
     LOG2E: tl.constexpr,
     BLOCK_H: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    P_HILO: tl.constexpr,
 ):
     """
     Process one block of KV tokens with batch loading.
@@ -293,6 +325,24 @@ def _process_kv_block_aggressive(
     acc_6 = acc_6 * alpha[:, None] + tl.dot(p_bf16, kv_6).to(tl.float32)
     acc_7 = acc_7 * alpha[:, None] + tl.dot(p_bf16, kv_7).to(tl.float32)
 
+    # `p_bf16` drops the low ~8 bits of `p`. That rounding is the dominant
+    # error term here, and split-K and non-split-K round *different* p values
+    # (each split re-anchors the running max), so the two paths pick up
+    # different errors. Carrying the residual as a second bf16 word and adding
+    # its contribution shrinks both errors ~500x. `P_HILO` is a constexpr, so
+    # with the switch off none of the code below is emitted and the arithmetic
+    # above is exactly what it is today.
+    if P_HILO:
+        p_bf16_lo = (p - p_bf16.to(tl.float32)).to(tl.bfloat16)
+        acc_0 += tl.dot(p_bf16_lo, kv_0).to(tl.float32)
+        acc_1 += tl.dot(p_bf16_lo, kv_1).to(tl.float32)
+        acc_2 += tl.dot(p_bf16_lo, kv_2).to(tl.float32)
+        acc_3 += tl.dot(p_bf16_lo, kv_3).to(tl.float32)
+        acc_4 += tl.dot(p_bf16_lo, kv_4).to(tl.float32)
+        acc_5 += tl.dot(p_bf16_lo, kv_5).to(tl.float32)
+        acc_6 += tl.dot(p_bf16_lo, kv_6).to(tl.float32)
+        acc_7 += tl.dot(p_bf16_lo, kv_7).to(tl.float32)
+
     return acc_0, acc_1, acc_2, acc_3, acc_4, acc_5, acc_6, acc_7, m_new, l_new
 
 
@@ -348,6 +398,7 @@ def _fused_gather_attn_dsv4_kernel(
     HAS_ATTN_SINK: tl.constexpr,
     BLOCK_H: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    P_HILO: tl.constexpr,
 ):
     """Fused gather+dequant+attention kernel for DSV4."""
     LOG2E: tl.constexpr = 1.4426950408889634
@@ -510,6 +561,7 @@ def _fused_gather_attn_dsv4_kernel(
                     LOG2E,
                     BLOCK_H,
                     BLOCK_N,
+                    P_HILO,
                 )
             )
 
@@ -609,6 +661,7 @@ def fused_gather_attn_decode_dsv4(
     topk_length: Optional[torch.Tensor] = None,
     attn_sink: Optional[torch.Tensor] = None,
     s_q: int = 1,
+    p_hilo: Optional[bool] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Fused gather+dequant+attention for DSV4.
@@ -623,11 +676,16 @@ def fused_gather_attn_decode_dsv4(
         topk_length: Optional per-batch topk length [b]
         attn_sink: Optional attention sink values [h_q]
         s_q: Sequence length per batch
+        p_hilo: Override for the two-word softmax probability. None (default)
+            follows SGLANG_DS41_ATTN_P_HILO.
 
     Returns:
         output: Attention output [total_tokens, h_q, d_v]
         lse: Log-sum-exp values [total_tokens, h_q]
     """
+    if p_hilo is None:
+        p_hilo = attn_p_hilo_enabled()
+
     total_tokens, h_q, d_qk = q.shape
     topk = indices.shape[1]
     d_v = DSV4_D_V
@@ -704,6 +762,7 @@ def fused_gather_attn_decode_dsv4(
                 partial_lse.stride(1),
                 partial_lse.stride(2),
                 HAS_TOPK_LENGTH=topk_length is not None,
+                P_HILO=p_hilo,
             )
 
         if disable_buffer_ops:
@@ -827,6 +886,7 @@ def fused_gather_attn_decode_dsv4(
             lse.stride(1),
             HAS_TOPK_LENGTH=topk_length is not None,
             HAS_ATTN_SINK=attn_sink is not None,
+            P_HILO=p_hilo,
         )
 
     if disable_buffer_ops:
@@ -931,6 +991,7 @@ def _fused_gather_attn_dsv4_dual_scope_kernel(
     HAS_ATTN_SINK: tl.constexpr,
     BLOCK_H: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    P_HILO: tl.constexpr,
 ):
     """
     OPTIMIZED fused gather+dequant+attention kernel for DSV4 with dual scope.
@@ -1112,6 +1173,7 @@ def _fused_gather_attn_dsv4_dual_scope_kernel(
                     LOG2E,
                     BLOCK_H,
                     BLOCK_N,
+                    P_HILO,
                 )
             )
 
@@ -1190,6 +1252,7 @@ def _fused_gather_attn_dsv4_dual_scope_kernel(
                     LOG2E,
                     BLOCK_H,
                     BLOCK_N,
+                    P_HILO,
                 )
             )
 
@@ -1339,6 +1402,7 @@ def _fused_gather_attn_dsv4_dual_scope_splitk_kernel(
     HAS_TOPK_LENGTH_EXTRA: tl.constexpr,
     BLOCK_H: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    P_HILO: tl.constexpr,
 ):
     """
     Split-K fused gather+dequant+attention kernel for DSV4 with dual scope.
@@ -1505,6 +1569,7 @@ def _fused_gather_attn_dsv4_dual_scope_splitk_kernel(
                     LOG2E,
                     BLOCK_H,
                     BLOCK_N,
+                    P_HILO,
                 )
             )
 
@@ -1585,6 +1650,7 @@ def _fused_gather_attn_dsv4_dual_scope_splitk_kernel(
                     LOG2E,
                     BLOCK_H,
                     BLOCK_N,
+                    P_HILO,
                 )
             )
 
@@ -1675,6 +1741,7 @@ def fused_gather_attn_decode_dsv4_dual_scope(
     attn_sink: Optional[torch.Tensor] = None,
     s_q: int = 1,
     force_no_splitk: bool = False,
+    p_hilo: Optional[bool] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Fused gather+dequant+attention for DSV4 with dual scope (main + extra).
@@ -1696,11 +1763,17 @@ def fused_gather_attn_decode_dsv4_dual_scope(
         force_no_splitk: If True, skip split-K and use the non-splitk kernel
             directly. Used by the dispatch layer for large batch prefill where
             the non-splitk fused kernel avoids intermediate buffer allocation.
+        p_hilo: Override for the two-word softmax probability. None (default)
+            follows SGLANG_DS41_ATTN_P_HILO; the prefill dispatch passes False
+            so prefill keeps today's arithmetic even with the switch on.
 
     Returns:
         output: Attention output [total_tokens, h_q, d_v]
         lse: Log-sum-exp values [total_tokens, h_q]
     """
+    if p_hilo is None:
+        p_hilo = attn_p_hilo_enabled()
+
     total_tokens, h_q, d_qk = q.shape
     topk_main = indices_main.shape[1]
     topk_extra = indices_extra.shape[1]
@@ -1737,7 +1810,7 @@ def fused_gather_attn_decode_dsv4_dual_scope(
 
     split_k = (
         0
-        if force_no_splitk
+        if force_no_splitk or not attn_splitk_enabled()
         else _decide_splitk_dual_scope(total_tokens, h_q, total_topk)
     )
     if split_k > 0:
@@ -1809,6 +1882,7 @@ def fused_gather_attn_decode_dsv4_dual_scope(
                 partial_lse.stride(2),
                 HAS_TOPK_LENGTH_MAIN=topk_length_main is not None,
                 HAS_TOPK_LENGTH_EXTRA=topk_length_extra is not None,
+                P_HILO=p_hilo,
             )
 
         if disable_buffer_ops:
@@ -1945,6 +2019,7 @@ def fused_gather_attn_decode_dsv4_dual_scope(
             HAS_TOPK_LENGTH_MAIN=topk_length_main is not None,
             HAS_TOPK_LENGTH_EXTRA=topk_length_extra is not None,
             HAS_ATTN_SINK=attn_sink is not None,
+            P_HILO=p_hilo,
         )
 
     if disable_buffer_ops:
@@ -2011,6 +2086,7 @@ def _fused_gather_attn_dsv4_splitk_kernel(
     HAS_TOPK_LENGTH: tl.constexpr,
     BLOCK_H: tl.constexpr,
     BLOCK_N: tl.constexpr,
+    P_HILO: tl.constexpr,
 ):
     """Split-K fused gather+dequant+attention kernel for DSV4."""
     LOG2E: tl.constexpr = 1.4426950408889634
@@ -2161,6 +2237,7 @@ def _fused_gather_attn_dsv4_splitk_kernel(
                     LOG2E,
                     BLOCK_H,
                     BLOCK_N,
+                    P_HILO,
                 )
             )
 
@@ -2867,8 +2944,14 @@ def fused_gather_attn_decode_dsv4_dual_scope_low_overhead(
     if not indices_extra.is_contiguous():
         indices_extra = indices_extra.contiguous()
 
+    p_hilo = attn_p_hilo_enabled()
+
     # Determine split_k
-    split_k = _decide_splitk_dual_scope(total_tokens, h_q, total_topk)
+    split_k = (
+        _decide_splitk_dual_scope(total_tokens, h_q, total_topk)
+        if attn_splitk_enabled()
+        else 0
+    )
 
     if split_k == 0:
         # Fall back to non-splitk version
@@ -2886,6 +2969,7 @@ def fused_gather_attn_decode_dsv4_dual_scope_low_overhead(
             attn_sink,
             s_q,
             force_no_splitk=True,
+            p_hilo=p_hilo,
         )
 
     topk_per_split = (total_topk + split_k - 1) // split_k
@@ -2974,6 +3058,7 @@ def fused_gather_attn_decode_dsv4_dual_scope_low_overhead(
                 stride_plse[2],
                 HAS_TOPK_LENGTH_MAIN=topk_length_main is not None,
                 HAS_TOPK_LENGTH_EXTRA=topk_length_extra is not None,
+                P_HILO=p_hilo,
             )
     else:
         _fused_gather_attn_dsv4_dual_scope_splitk_kernel[grid_splitk](
@@ -3016,6 +3101,7 @@ def fused_gather_attn_decode_dsv4_dual_scope_low_overhead(
             stride_plse[2],
             HAS_TOPK_LENGTH_MAIN=topk_length_main is not None,
             HAS_TOPK_LENGTH_EXTRA=topk_length_extra is not None,
+            P_HILO=p_hilo,
         )
 
     # Run combine kernel

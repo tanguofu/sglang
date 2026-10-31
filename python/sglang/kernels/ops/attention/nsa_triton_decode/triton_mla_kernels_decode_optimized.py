@@ -157,6 +157,9 @@ def _triton_sparse_attn_decode_dsv4(
             attn_sink=attn_sink,
             s_q=s_q,
             force_no_splitk=True,
+            # Prefill keeps today's arithmetic even with SGLANG_DS41_ATTN_P_HILO=1;
+            # that switch is a decode-only experiment.
+            p_hilo=False,
         )
 
     return output.view(b, s_q, h_q, d_v), lse.view(b, s_q, h_q).transpose(1, 2)
