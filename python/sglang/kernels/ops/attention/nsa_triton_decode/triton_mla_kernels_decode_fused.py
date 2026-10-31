@@ -70,8 +70,11 @@ SMALL_BATCH_TOKEN_THRESHOLD = 8
 # kernel specialization instead of taking effect everywhere.
 #
 # SGLANG_DS41_ATTN_SPLITK=1
-#     Let `_decide_splitk_dual_scope` engage at all. With it off split_k is
-#     pinned to 0 and every call takes the non-split-K kernel.
+#     Additionally let the few-heads decode branch of the split-K decision
+#     engage. With it off the decision is exactly what it was before that
+#     branch existed, which is NOT "split_k = 0": the h_q <= 64 / topk >= 1024 /
+#     8 < T <= 128 branch already returned 2, and pinning the whole decision to
+#     0 measured 1.8-5.0x slower at total_topk=1024.
 # SGLANG_DS41_ATTN_P_HILO=1
 #     Carry the softmax probability as two bf16 words (hi + residual lo) so the
 #     bf16 rounding of `p` stops being the dominant error term. Strict accuracy
@@ -107,8 +110,15 @@ SMALL_HQ_DECODE_TOKEN_THRESHOLD = 64
 # ============================================================================
 
 
-def _decide_splitk_dual_scope(total_tokens: int, h_q: int, total_topk: int) -> int:
+def _decide_splitk_dual_scope_ungated(
+    total_tokens: int, h_q: int, total_topk: int, few_heads_decode: bool
+) -> int:
     """Decide the split_k value for dual-scope attention.
+
+    `few_heads_decode=False` reproduces the decision exactly as it was before
+    the few-heads decode branch was added: that branch is the only behavioural
+    delta the branch's commit introduced, so disabling it restores the previous
+    decision for every (total_tokens, h_q, total_topk).
 
     Returns:
         split_k value (0 means no split-K, use non-splitk kernel).
@@ -134,7 +144,8 @@ def _decide_splitk_dual_scope(total_tokens: int, h_q: int, total_topk: int) -> i
     )
     # Few heads + a full top-k + a decode-sized batch: far fewer CTAs than CUs.
     use_splitk_for_small_hq_decode = (
-        h_q <= 64
+        few_heads_decode
+        and h_q <= 64
         and total_topk >= SMALL_HQ_DECODE_TOPK_THRESHOLD
         and total_tokens <= SMALL_HQ_DECODE_TOKEN_THRESHOLD
     )
@@ -164,6 +175,18 @@ def _decide_splitk_dual_scope(total_tokens: int, h_q: int, total_topk: int) -> i
     if use_splitk_for_large_hq:
         return 4 if total_topk >= SPLITK_HIGH_TOPK_THRESHOLD else 2
     return _select_split_k(total_topk, h_q, total_tokens)
+
+
+def _decide_splitk_dual_scope(total_tokens: int, h_q: int, total_topk: int) -> int:
+    """Split-K decision for the dual-scope decode kernels, honouring the switch.
+
+    SGLANG_DS41_ATTN_SPLITK off returns the pre-few-heads decision verbatim, so
+    the image keeps the split-K choices production already runs (including the
+    h_q <= 64 / topk >= 1024 branch); on adds the few-heads decode branch.
+    """
+    return _decide_splitk_dual_scope_ungated(
+        total_tokens, h_q, total_topk, few_heads_decode=attn_splitk_enabled()
+    )
 
 
 DSV4_NUM_TILES = 7
@@ -1810,7 +1833,7 @@ def fused_gather_attn_decode_dsv4_dual_scope(
 
     split_k = (
         0
-        if force_no_splitk or not attn_splitk_enabled()
+        if force_no_splitk
         else _decide_splitk_dual_scope(total_tokens, h_q, total_topk)
     )
     if split_k > 0:
@@ -2947,11 +2970,7 @@ def fused_gather_attn_decode_dsv4_dual_scope_low_overhead(
     p_hilo = attn_p_hilo_enabled()
 
     # Determine split_k
-    split_k = (
-        _decide_splitk_dual_scope(total_tokens, h_q, total_topk)
-        if attn_splitk_enabled()
-        else 0
-    )
+    split_k = _decide_splitk_dual_scope(total_tokens, h_q, total_topk)
 
     if split_k == 0:
         # Fall back to non-splitk version
