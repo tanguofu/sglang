@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import time
 from collections import deque
 from concurrent.futures import Future
@@ -372,6 +373,38 @@ class DecodeRequest:
     @property
     def priority(self) -> Optional[int]:
         return self.req.priority
+
+
+# Read once at import, like the other DS4.1 fork switches
+# (`SGLANG_DS41_MHC_BITEXACT_GEMM` in `layers/deterministic.py`), so a running
+# server cannot flip admission order mid-flight. Off by default: a shipped image
+# keeps today's strict FIFO order until the flag is explicitly enabled.
+_HEALTH_NO_HOL_BLOCK = os.environ.get("SGLANG_DS41_HEALTH_NO_HOL_BLOCK", "0") != "0"
+
+
+def health_first_scan_order(queue: List[DecodeRequest]) -> List[DecodeRequest]:
+    """Admission scan order for `pop_preallocated`: health-check requests first.
+
+    `pop_preallocated` admits from the head of the queue and `break`s on the
+    first request it cannot admit (KV capacity, mamba capacity, request rows,
+    metadata buffers). A health-check request appended behind a parked request
+    therefore never runs, and because
+    `Scheduler.is_fully_idle(for_health_check=True)` deliberately ignores the PD
+    queues, it is also never deferred into `return_health_check_ipcs`. No health
+    signal is ever emitted, so `/health` stays 503 forever with a live scheduler
+    loop, no error and no log line.
+
+    The health request is a 1-token request, so moving it in front only changes
+    *which* request is admitted first: every capacity check still applies to it,
+    and the budget used for the requests behind it is recomputed with
+    `extra_reserved_reqs=num_device_preallocated + 1`. Stable, so the relative
+    order of the non-health requests is untouched.
+    """
+    if not _HEALTH_NO_HOL_BLOCK:
+        return queue
+    if not any(is_health_check_req(decode_req.req) for decode_req in queue):
+        return queue
+    return sorted(queue, key=lambda d: 0 if is_health_check_req(d.req) else 1)
 
 
 class DecodePreallocQueue(DecodeHiCachePreallocMixin):
@@ -1359,6 +1392,9 @@ class DecodePreallocQueue(DecodeHiCachePreallocMixin):
                 1 if self.scheduler.schedule_low_priority_values_first else -1
             )
             self.queue.sort(key=lambda r: r.req.priority * priority_sign)
+        # Same-index invariant: must run before the abort-scan loop, which
+        # records `indices_to_remove` against this order.
+        self.queue = health_first_scan_order(self.queue)
 
         # First, remove all failed requests from the queue
         for i, decode_req in enumerate(self.queue):
