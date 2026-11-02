@@ -107,6 +107,75 @@ _BITEXACT_MIX_BLOCK_K = 32
 _BITEXACT_MIX_TILES = ((6144, 128), (4096, 64))
 _BITEXACT_MIX_BLOCK_M_DEFAULT = 16
 
+# --- the speculative-verify row counts ------------------------------------
+#
+# Speculative decoding widens a verify batch to batch_size * verify_width, so
+# mixing lands at M = 64..192 instead of the plain-decode M = batch_size. There
+# `ceil(M / BM)` is a handful of CTAs on an 80-CU part, the K loop is latency
+# bound rather than work bound and the cost is flat in M -- measured 385.9 us at
+# M=64 and 384.3 us at M=96 -- so turning speculation on adds ~28 ms/step of
+# pure mixing overhead, more than the accept rate buys back.
+#
+# Off by default. `tune` (also `1`) keeps the kernel but launches it with a tile
+# measured for these row counts; `chunk` splits the batch into <=32-row pieces so
+# each one stays on rocBLAS' fast path. M <= 32 -- plain decode, the common case
+# -- and M > 192 are never touched.
+#
+# `chunk` is faster but NOT bit-exact: rocBLAS' 17..32-row bit regime is not the
+# regime the kernel reproduces, so 32-row chunks move ~99% of the elements by up
+# to 5.6e-5 (production-ish scales). It stays reachable for a gated A/B and must
+# not be the default.
+_MIX_SMALLM_FIX = os.environ.get("SGLANG_DS41_MHC_MIX_SMALLM_FIX", "0").strip().lower()
+
+# Highest row count the fix may touch. Past this the row tiles already spread
+# over the machine and the kernel is the faster of the two.
+_MIX_SMALLM_MAX_ROWS = 192
+
+# Rows per rocBLAS call for `chunk`. 32 is the top of the 17..32 bit regime, and
+# requiring an exact multiple keeps every chunk the same size so one row cannot
+# be reduced in a different order from its neighbour.
+_MIX_SMALLM_CHUNK_ROWS = 32
+
+# (BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K, num_warps, num_stages) for `tune`.
+# Cutting BLOCK_SIZE_N to 16 puts two CTAs on the 24 mixing columns instead of
+# one, which is what buys the 2.2x: at BM=16 the launch is only ceil(M/16) CTAs
+# and the rest of the part idles. Measured on gfx942 (K=20480, MIX=24), us/call:
+#   16,32,32,4,2 (= today)  451   16,16,64,4,2   268   16,8,64,4,2  1206
+#   16,32,128,4,2           494   16,16,64,2,2   211   16,16,128,2,2 195
+# Every one of them bit-exact against today's output. The bench sees 451 us where
+# the profile sees 384 -- idle-card clocks -- but both are flat in M, so the ratio
+# is the transferable part.
+_MIX_SMALLM_TILE = (16, 16, 128, 2, 2)
+
+
+def _mix_smallm_strategy(m: int) -> str:
+    """Which small-M path this row count takes, or "" for today's behaviour."""
+    if _MIX_SMALLM_FIX in ("0", "", "off", "none"):
+        return ""
+    if m < _BITEXACT_MIX_MIN_ROWS or m > _MIX_SMALLM_MAX_ROWS:
+        return ""
+    if _MIX_SMALLM_FIX == "chunk":
+        if m % _MIX_SMALLM_CHUNK_ROWS:
+            return ""
+        return "chunk"
+    if _MIX_SMALLM_FIX in ("1", "on", "true", "tune"):
+        return "tune"
+    return ""
+
+
+def _chunked_row_uniform_linear(
+    x: torch.Tensor, weight: torch.Tensor, out: torch.Tensor
+) -> None:
+    """The projection as a run of equal <=32-row :func:`row_uniform_linear` calls.
+
+    One launch per chunk instead of one per batch: at these row counts rocBLAS
+    is ~12x faster per call than the kernel above, and the extra launches are
+    an order of magnitude cheaper than the chain they replace.
+    """
+    for start in range(0, x.shape[0], _MIX_SMALLM_CHUNK_ROWS):
+        stop = start + _MIX_SMALLM_CHUNK_ROWS
+        out[start:stop].copy_(row_uniform_linear(x[start:stop], weight))
+
 
 @triton.jit
 def _row_uniform_mix_kernel(
@@ -129,7 +198,7 @@ def _row_uniform_mix_kernel(
     costs ~2.6e-6 of relative accuracy, which is what moves HumanEval.
     """
     offs_m = tl.program_id(0) * BM + tl.arange(0, BM)
-    offs_n = tl.arange(0, MP)
+    offs_n = tl.program_id(1) * MP + tl.arange(0, MP)
     mask_m = offs_m < M
     mask_n = offs_n < MIX
     acc = tl.zeros([BM, MP], dtype=tl.float32)
@@ -189,12 +258,28 @@ def row_uniform_mhc_mix(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     m, k = x.shape
     mix = weight.shape[0]
     out = torch.empty((m, mix), dtype=torch.float32, device=x.device)
+    strategy = _mix_smallm_strategy(m)
+    if strategy == "chunk":
+        _chunked_row_uniform_linear(x, weight, out)
+        return out
     block_m = _BITEXACT_MIX_BLOCK_M_DEFAULT
-    for min_rows, tile in _BITEXACT_MIX_TILES:
-        if m >= min_rows:
-            block_m = tile
-            break
-    _row_uniform_mix_kernel[(triton.cdiv(m, block_m),)](
+    block_k = _BITEXACT_MIX_BLOCK_K
+    block_n = max(16, triton.next_power_of_2(mix))
+    warps = 4
+    stages = 2
+    if strategy == "tune":
+        block_m, block_n, block_k, warps, stages = _MIX_SMALLM_TILE
+    else:
+        for min_rows, tile in _BITEXACT_MIX_TILES:
+            if m >= min_rows:
+                block_m = tile
+                break
+    # The K loop is one serial chain per output element, so a CTA's cost does not
+    # change with how many of them run: at 24 mixing columns and BM=16 the launch
+    # is only ceil(M/16) CTAs, a handful of the 80 CUs. `tune` may cut the
+    # column tile to put more of them to work on the same chain.
+    grid = (triton.cdiv(m, block_m), triton.cdiv(mix, block_n))
+    _row_uniform_mix_kernel[grid](
         x,
         weight,
         out,
@@ -203,11 +288,11 @@ def row_uniform_mhc_mix(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
         x.stride(0),
         weight.stride(0),
         MIX=mix,
-        MP=max(16, triton.next_power_of_2(mix)),
+        MP=block_n,
         BM=block_m,
-        BK=_BITEXACT_MIX_BLOCK_K,
-        MASK_K=(k % _BITEXACT_MIX_BLOCK_K != 0),
-        num_warps=4,
-        num_stages=2,
+        BK=block_k,
+        MASK_K=(k % block_k != 0),
+        num_warps=warps,
+        num_stages=stages,
     )
     return out
