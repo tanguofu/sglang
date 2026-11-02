@@ -103,7 +103,19 @@ SPLITK_HIGH_TOPK_THRESHOLD = 512
 # serial chain. Wall time is then the per-CTA chain rather than the batch, and
 # splitting the KV range is the only way to shorten it.
 SMALL_HQ_DECODE_TOPK_THRESHOLD = 512
-SMALL_HQ_DECODE_TOKEN_THRESHOLD = 64
+# 128, was 64. split_k is not a tuning knob: it changes the fp32 reduction
+# order, so the *same* tokens produce different bits depending on how many
+# tokens happen to be in the batch. Measured on gfx942 with h_q=8, topk=640:
+# T=32 with split_k=4 versus T=128 with split_k=0 differs by 1 bf16 ulp on
+# 0.09% of output elements and 14% of LSE entries; with split_k forced to 4 the
+# two are torch.equal (3 seeds). T itself changes nothing -- only split_k does.
+# Raising the threshold to 128 leaves every T<=64 decision exactly as it was,
+# so plain decode (batch <= 32) is bit-for-bit unchanged. It only affects
+# speculative decoding, where the effective T is bs*(gamma+1) and bs=32 becomes
+# T=128: previously that silently dropped to split_k=0 and gave different bits
+# than the non-speculative path. Forcing 4 there is also measured no slower
+# (0.2336 ms vs 0.2468 ms at T=128).
+SMALL_HQ_DECODE_TOKEN_THRESHOLD = 128
 
 # ============================================================================
 # Shared split-K decision logic for dual-scope kernels
