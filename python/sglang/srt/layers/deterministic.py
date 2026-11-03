@@ -136,6 +136,23 @@ def row_chunked_lm_head(hidden_states: torch.Tensor, weight: torch.Tensor):
 # Off by default so it can be rolled out gradually and rolled back in a second.
 _BITEXACT_MIX = os.environ.get("SGLANG_DS41_MHC_BITEXACT_GEMM", "0") == "1"
 
+# Row chunk for the mixing projection. 0 keeps today's behaviour: one call for
+# the whole batch, so a row's fp32 accumulation order follows how many rows the
+# batch happens to hold (rocBLAS switches regime at 16/17 and at 33). Set to a
+# positive value (16 is the measured one) to call the projection in fixed-size
+# row chunks, so every call is a shape plain decode already makes and rows
+# 0..chunk-1 come back bit-identical whatever M is. Same idea as
+# SGLANG_DS41_LMHEAD_ROW_CHUNK; off by default, so flipping it back is a
+# values change and a bounce, not another image.
+def _mhc_mix_row_chunk() -> int:
+    try:
+        return int(os.environ.get("SGLANG_DS41_MHC_MIX_ROW_CHUNK", "0") or 0)
+    except ValueError:
+        return 0
+
+
+_MHC_MIX_ROW_CHUNK = _mhc_mix_row_chunk()
+
 # rocBLAS has three row-count regimes, measured on gfx942 at K=20480:
 #   M <= 16    17 us    bit-regime A
 #   17..32     33 us    bit-regime B
@@ -291,6 +308,31 @@ def _bit_exact_mix_usable(x: torch.Tensor, weight: torch.Tensor) -> bool:
 
 
 def row_uniform_mhc_mix(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    """The mHC mixing projection, optionally in fixed-size row chunks.
+
+    With `SGLANG_DS41_MHC_MIX_ROW_CHUNK` unset (the default) this is exactly the
+    projection below: one call for the whole batch.
+
+    With it set to N, a batch of more than N rows is served as ceil(M/N) calls of
+    N rows each. Every call is then a shape plain decode already makes, so a
+    prompt's rows no longer change arithmetic when the batch around them grows
+    or shrinks. Measured on gfx942 at K=20480: rows 0..15 of a 32-, 64- and
+    128-row batch all come back `torch.equal` to the 16-row batch, where today
+    they differ by 2.241e-05.
+    """
+    chunk = _MHC_MIX_ROW_CHUNK
+    if chunk and x.shape[0] > chunk:
+        return torch.cat(
+            [
+                _row_uniform_mhc_mix_impl(x[s : s + chunk].contiguous(), weight)
+                for s in range(0, x.shape[0], chunk)
+            ],
+            0,
+        )
+    return _row_uniform_mhc_mix_impl(x, weight)
+
+
+def _row_uniform_mhc_mix_impl(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     """The mHC mixing projection, bit-identical to :func:`row_uniform_linear`.
 
     rocBLAS' fp32 SGEMM on gfx942 is a serial FMA chain over K, which this kernel
