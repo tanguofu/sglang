@@ -38,6 +38,7 @@ from sglang.srt.distributed.device_communicators import triton_symm_mem_ag
 from sglang.srt.environ import envs
 from sglang.srt.layers import layernorm_sp
 from sglang.srt.layers.aux_hidden_states import AuxHiddenStates, pack_aux_hidden_states
+from sglang.srt.layers.deterministic import row_chunked_lm_head
 from sglang.srt.layers.dp_attention import (
     DpPaddingMode,
     attn_tp_all_gather,
@@ -1103,8 +1104,8 @@ class LogitsProcessor(nn.Module):
                     hidden_states.bfloat16(), lm_head.weight.T.bfloat16()
                 )
             else:
-                logits = torch.matmul(
-                    hidden_states.to(lm_head.weight.dtype), lm_head.weight.T
+                logits = row_chunked_lm_head(
+                    hidden_states.to(lm_head.weight.dtype), lm_head.weight
                 )
         else:
             # GGUF models

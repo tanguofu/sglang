@@ -82,6 +82,53 @@ def row_uniform_linear(x: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
         return torch.nn.functional.linear(x, weight)
 
 
+# --- the lm_head projection -------------------------------------------------
+#
+# The lm_head is the one GEMM whose output the sampler reads directly, so an ulp
+# there moves a token instead of being diluted by the rest of the layer.
+# hipBLASLt splits K by the work distribution over the M tiles, so the same row
+# accumulates in a different order when the batch holds 32 rows than when
+# speculative decoding widens it to 128: measured on gfx942 at [M, 5120] @
+# [16160, 5120].T (the TP8 shard of a 129280 vocab), M=32 versus M=128 differ by
+# 1 bf16 ulp on 0.035 % of the logits, and all 32 rows carry ~6 moved elements.
+#
+# Splitting the batch into fixed-size calls makes every call the shape plain
+# decode already makes, so rows 0..31 of a 128-row verify batch come back
+# bit-identical to the 32-row batch they stand in for. A batch of chunk rows or
+# fewer is one unchanged call, so the non-speculative baseline does not move --
+# which is why the chunk size must be at least `--max-running-requests`; a
+# smaller one would split plain decode too and move it.
+#
+# Off by default: at M=128 the four calls measured 372 us against 140 us for one
+# on an idle gfx942, so treat the ratio as indicative and gate the rollout.
+_LMHEAD_CHUNK_ROWS = int(os.environ.get("SGLANG_DS41_LMHEAD_ROW_CHUNK", "0") or 0)
+
+
+def lm_head_chunk_rows(rows: int) -> int:
+    """Rows per lm_head call for this batch, or 0 to keep today's single call."""
+    if _LMHEAD_CHUNK_ROWS <= 0 or rows <= _LMHEAD_CHUNK_ROWS:
+        return 0
+    return _LMHEAD_CHUNK_ROWS
+
+
+def row_chunked_lm_head(hidden_states: torch.Tensor, weight: torch.Tensor):
+    """`hidden_states @ weight.T` as fixed-size row chunks, so the accumulation
+    order of a row cannot follow how many rows the batch happens to have."""
+    chunk = lm_head_chunk_rows(hidden_states.shape[0])
+    if not chunk or hidden_states.dim() != 2 or weight.dim() != 2:
+        return torch.matmul(hidden_states, weight.T)
+    out = torch.empty(
+        (hidden_states.shape[0], weight.shape[0]),
+        dtype=hidden_states.dtype,
+        device=hidden_states.device,
+    )
+    for start in range(0, hidden_states.shape[0], chunk):
+        stop = start + chunk
+        # copy_ rather than `out=` so hipBLASLt sees the same call it sees today.
+        out[start:stop].copy_(torch.matmul(hidden_states[start:stop], weight.T))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # The mHC mixing projection: a bit-identical stand-in for rocBLAS' SGEMM
 # ---------------------------------------------------------------------------
