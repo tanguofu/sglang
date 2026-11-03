@@ -84,6 +84,31 @@ SMALL_BATCH_TOKEN_THRESHOLD = 8
 _ATTN_SPLITK_ENABLED = os.environ.get("SGLANG_DS41_ATTN_SPLITK", "0") != "0"
 _ATTN_P_HILO_ENABLED = os.environ.get("SGLANG_DS41_ATTN_P_HILO", "0") != "0"
 
+# SGLANG_DS41_ATTN_SPLITK_PIN=<2|4|8>
+#     Replace the few-heads decode branch's total_tokens-dependent choice with
+#     one constant, so a row's fp32 reduction order cannot follow how many rows
+#     the batch happens to hold. That branch returns 8 at T <= 8 and 4 above
+#     it, and the two disagree by ~1 bf16 ulp on 0.07% of the output and on
+#     25% of the LSE -- enough to move near-tied tokens, which is what measured
+#     as -2.44 HumanEval points between conc=2 (T in {4,8}) and conc=4 (T up
+#     to 16) with speculative decoding on, where T = 4*bs.
+#     Pinning to 8 therefore leaves every batch with T <= 8 -- conc <= 2 --
+#     bit-for-bit unchanged and only changes T >= 9, which makes the
+#     non-regression case measurable on the configuration that is already
+#     shipping. Default "0" keeps today's switch.
+#     Only the values the split-K kernels implement are honoured; anything else
+#     falls back to "0" rather than emitting a split_k nobody handles.
+_ATTN_SPLITK_SUPPORTED_PINS = (2, 4, 8)
+
+
+def attn_splitk_pin() -> int:
+    """A constant split_k for the few-heads decode branch, or 0 for today."""
+    try:
+        value = int(os.environ.get("SGLANG_DS41_ATTN_SPLITK_PIN", "0") or 0)
+    except ValueError:
+        return 0
+    return value if value in _ATTN_SPLITK_SUPPORTED_PINS else 0
+
 
 def attn_splitk_enabled() -> bool:
     """Whether dual-scope decode attention may engage split-K."""
@@ -123,7 +148,11 @@ SMALL_HQ_DECODE_TOKEN_THRESHOLD = 128
 
 
 def _decide_splitk_dual_scope_ungated(
-    total_tokens: int, h_q: int, total_topk: int, few_heads_decode: bool
+    total_tokens: int,
+    h_q: int,
+    total_topk: int,
+    few_heads_decode: bool,
+    splitk_pin: int = 0,
 ) -> int:
     """Decide the split_k value for dual-scope attention.
 
@@ -131,6 +160,10 @@ def _decide_splitk_dual_scope_ungated(
     the few-heads decode branch was added: that branch is the only behavioural
     delta the branch's commit introduced, so disabling it restores the previous
     decision for every (total_tokens, h_q, total_topk).
+
+    `splitk_pin` only applies to that same branch, so it cannot widen or narrow
+    which (total_tokens, h_q, total_topk) reach split-K at all -- it only
+    replaces the branch's total_tokens-dependent value with a constant.
 
     Returns:
         split_k value (0 means no split-K, use non-splitk kernel).
@@ -177,6 +210,8 @@ def _decide_splitk_dual_scope_ungated(
     if use_splitk_for_h64_large_topk:
         return 2
     if use_splitk_for_small_hq_decode:
+        if splitk_pin:
+            return splitk_pin
         # 8 splits only while the total CTA count stays well under the CU
         # count; beyond that the combine kernel and wave quantization win.
         return 8 if total_tokens <= SMALL_BATCH_TOKEN_THRESHOLD else 4
@@ -195,9 +230,14 @@ def _decide_splitk_dual_scope(total_tokens: int, h_q: int, total_topk: int) -> i
     SGLANG_DS41_ATTN_SPLITK off returns the pre-few-heads decision verbatim, so
     the image keeps the split-K choices production already runs (including the
     h_q <= 64 / topk >= 1024 branch); on adds the few-heads decode branch.
+    SGLANG_DS41_ATTN_SPLITK_PIN then holds that branch's value constant.
     """
     return _decide_splitk_dual_scope_ungated(
-        total_tokens, h_q, total_topk, few_heads_decode=attn_splitk_enabled()
+        total_tokens,
+        h_q,
+        total_topk,
+        few_heads_decode=attn_splitk_enabled(),
+        splitk_pin=attn_splitk_pin(),
     )
 
 
