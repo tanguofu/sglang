@@ -202,8 +202,11 @@ def _mix_smallm_strategy(m: int) -> str:
     if m < _BITEXACT_MIX_MIN_ROWS or m > _MIX_SMALLM_MAX_ROWS:
         return ""
     if _MIX_SMALLM_FIX == "chunk":
-        if m % _MIX_SMALLM_CHUNK_ROWS:
-            return ""
+        # Any row count, not just multiples of the chunk: the chunk runner pads
+        # the tail up to a full chunk, so every rocBLAS call stays in the 32-row
+        # bit regime. Rejecting the remainder sent those batches (bs 9..15,
+        # 18..23, 25..31 at gamma=3) to the serial Triton kernel, which costs
+        # ~30 ms/step -- the c=18 trough.
         return "chunk"
     if _MIX_SMALLM_FIX in ("1", "on", "true", "tune"):
         return "tune"
@@ -219,9 +222,18 @@ def _chunked_row_uniform_linear(
     is ~12x faster per call than the kernel above, and the extra launches are
     an order of magnitude cheaper than the chain they replace.
     """
-    for start in range(0, x.shape[0], _MIX_SMALLM_CHUNK_ROWS):
-        stop = start + _MIX_SMALLM_CHUNK_ROWS
-        out[start:stop].copy_(row_uniform_linear(x[start:stop], weight))
+    rows = x.shape[0]
+    chunk = _MIX_SMALLM_CHUNK_ROWS
+    tail = rows % chunk
+    if tail:
+        # A short final call would land in a different rocBLAS row regime and
+        # move the bits for exactly those rows. Pad with zeros (each output row
+        # only depends on its own input row) so every call is a full chunk.
+        x = torch.cat([x, x.new_zeros((chunk - tail, *x.shape[1:]))], dim=0)
+    for start in range(0, x.shape[0], chunk):
+        stop = start + chunk
+        valid = min(stop, rows)
+        out[start:valid].copy_(row_uniform_linear(x[start:stop], weight)[: valid - start])
 
 
 @triton.jit
