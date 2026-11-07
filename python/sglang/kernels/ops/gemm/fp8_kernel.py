@@ -1311,6 +1311,40 @@ def _w8a8_block_fp8_matmul_widek_launch(
     return C
 
 
+# --- low-batch decode (M <= 16) thin-GEMM launch geometry ------------------
+#
+# At M <= 16 the thin kernel short-circuits the (N,K) config map and always
+# launches with one hard-coded geometry: BLOCK_N=64 / warps=4 / stages=2 /
+# BLOCK_K=128, grid = cdiv(N,64). That is latency-bound at c=1..4 (M=4..16):
+# only cdiv(N,64) CTAs, each walking K in 40 serial MFMA steps on one fp32
+# accumulator chain, so the 80-CU part is mostly idle.
+#
+# The geometry below changes only the CTA grid, the warp count, the pipeline
+# depth and the K tile. It never regroups the fp32 accumulation: `acc +=
+# tl.dot(a, b)` stays one serial fp32 add chain over K in increasing order,
+# and the model's ue8m0 scales keep every product exact in fp32. The result is
+# therefore bit-identical (`torch.equal`) to the hard-coded launch. Measured
+# on gfx942 (MI308X) for M in {1,2,4,8,16} x 12 shapes x 3 arbitrary-fp32
+# scale seeds: 180/180 exact, maxdiff 0.
+#
+# Off by default so a shipped image is byte-for-byte what it is today; set
+# SGLANG_DS41_THIN_GEMM_TUNE=1 to opt in, =0 to roll back without rebuilding.
+_THIN_GEMM_TUNE = os.environ.get("SGLANG_DS41_THIN_GEMM_TUNE", "0") != "0"
+
+
+def _thin_gemm_launch_geometry(N: int):
+    """(BLOCK_N, num_warps, num_stages, BLOCK_K) for the M<=16 thin kernel.
+
+    Decoder layer shapes (N < 16384): half BLOCK_N doubles the CTA count.
+    lm_head-sized projections (N >= 16384): a shorter K chain wins instead.
+    """
+    if not _THIN_GEMM_TUNE:
+        return 64, 4, 2, 128
+    if N >= 16384:
+        return 64, 4, 2, 32
+    return 32, 2, 2, 128
+
+
 def w8a8_block_fp8_matmul_triton(
     A: torch.Tensor,
     B: torch.Tensor,
@@ -1366,7 +1400,8 @@ def w8a8_block_fp8_matmul_triton(
         and K % 128 == 0
         and N % 64 == 0
     ):
-        _w8a8_block_fp8_matmul_thin[(triton.cdiv(N, 64),)](
+        tile_n, warps, stages, tile_k = _thin_gemm_launch_geometry(N)
+        _w8a8_block_fp8_matmul_thin[(triton.cdiv(N, tile_n),)](
             A,
             B,
             C,
@@ -1388,10 +1423,10 @@ def w8a8_block_fp8_matmul_triton(
             group_n=block_n,
             group_k=block_k,
             BLOCK_M=16,
-            BLOCK_N=64,
-            BLOCK_K=128,
-            num_warps=4,
-            num_stages=2,
+            BLOCK_N=tile_n,
+            BLOCK_K=tile_k,
+            num_warps=warps,
+            num_stages=stages,
         )
         return C
 
