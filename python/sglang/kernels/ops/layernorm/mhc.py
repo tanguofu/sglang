@@ -2,6 +2,7 @@ import functools
 import importlib
 import logging
 import math
+import os
 import threading
 from typing import Tuple
 
@@ -305,6 +306,122 @@ def hc_split_sinkhorn_kernel(hc: int, sinkhorn_iters: int, eps: float):
     return hc_split_sinkhorn_kernel_
 
 
+# ---------------------------------------------------------------------------
+# mHC #1 launch fusion (env-gated, default off): fold the (GEMM * rsqrt)
+# elementwise mul into the sinkhorn input load.
+#
+# `deepseek_v4_mhc.py:396` computes ``mixes = (GEMM_out * rsqrt)`` as a separate
+# fp32 elementwise mul (one ATen launch per layer) before `hc_split_sinkhorn`.
+# `rsqrt` is the per-row fp32 scalar from `hc_rms_cast` (shape [n, 1]).  The OFF
+# chain is left byte-for-byte untouched; the ON chain passes the *unscaled*
+# GEMM output (`mixes_raw`, [n, mix_hc]) and `rsqrt` separately into the kernel.
+#
+# BIT-EXACT BY CONSTRUCTION: the OFF mul produces one fp32 value per element
+# ``m = round_f32(raw * rsqrt)`` that the shipped sinkhorn kernel then reads.
+# Here the SINGLE statement ``mixes_shared[j] = mixes_shared[j] * rs`` performs
+# that same fp32 multiply and *stores it back to fp32 shared memory* BEFORE any
+# sigmoid/comb/reduce reads it.  The store forces the product to be rounded to
+# fp32 exactly once and materialized, so the compiler cannot contract
+# ``(raw*rsqrt)*scale+base`` into an FMA or reorder it.  Everything after the
+# fusion block is a verbatim copy of `hc_split_sinkhorn_kernel_`, so pre/post/
+# comb are identical bit-for-bit.
+#
+# TileLang compiler behaviour (that it does NOT re-fuse the standalone mul into
+# a downstream FMA) cannot be proven 100% statically -- `verify_mhc_fusion.py`'s
+# GPU branch must confirm it with `torch.equal` before any rollout.  See the
+# gate checklist; HE+/GSM8K are waived ONLY once that GPU check fully passes.
+# ---------------------------------------------------------------------------
+
+ENV_MHC_FUSED_SINKHORN = "SGLANG_DS41_MHC_FUSED_SINKHORN"
+
+
+def fuse_enabled(name: str) -> bool:
+    """Per-call read (default off): one process can A/B both arms without a restart.
+
+    Mirrors `indexer_launch_fusion.py:52-53` and the `_mhc_*_on_hip` gates in
+    `deepseek_v4_mhc.py`; the call-site gate reads the same env directly.
+    """
+    return os.environ.get(name, "0") != "0"
+
+
+@tilelang.jit(pass_configs=pass_configs)
+def hc_split_sinkhorn_fused_kernel(hc: int, sinkhorn_iters: int, eps: float):
+    n = T.symbolic("n")
+    mix_hc = (2 + hc) * hc
+    threads = 64
+
+    ENABLE_PDL = is_arch_support_pdl()
+
+    @T.prim_func
+    def hc_split_sinkhorn_fused_kernel_(
+        mixes: T.Tensor[(n, mix_hc), FP32],
+        rsqrt: T.Tensor[(n,), FP32],
+        hc_scale: T.Tensor[(3,), T.float32],
+        hc_base: T.Tensor[(mix_hc,), T.float32],
+        pre: T.Tensor[(n, hc), FP32],
+        post: T.Tensor[(n, hc), FP32],
+        comb: T.Tensor[(n, hc, hc), FP32],
+    ):
+        with T.Kernel(n, threads=threads) as i:
+            if ENABLE_PDL:
+                T.pdl_sync()
+
+            mixes_shared = T.alloc_shared(mix_hc, FP32)
+            comb_frag = T.alloc_fragment((hc, hc), FP32)
+            T.copy(mixes[i, :], mixes_shared)
+            # --- mHC #1 fusion: the ONLY semantic delta from the shipped kernel ---
+            # `mixes` here is the RAW (unscaled) GEMM output.  Scale it in place
+            # with ONE standalone fp32 multiply landed back into fp32 shared
+            # memory.  The store is what forces the single fp32 rounding; it
+            # keeps `(raw*rsqrt)*scale+base` from becoming an FMA/reorder.
+            rs = rsqrt[i]
+            for j in T.Parallel(mix_hc):
+                mixes_shared[j] = mixes_shared[j] * rs
+            # --- end mHC #1 fusion; everything below is verbatim from the
+            #     original hc_split_sinkhorn_kernel_ ---
+
+            for j in T.Parallel(hc):
+                pre[i, j] = T.sigmoid(mixes_shared[j] * hc_scale[0] + hc_base[j]) + eps
+            for j in T.Parallel(hc):
+                post[i, j] = 2 * T.sigmoid(
+                    mixes_shared[j + hc] * hc_scale[1] + hc_base[j + hc]
+                )
+            for j, k in T.Parallel(hc, hc):
+                comb_frag[j, k] = (
+                    mixes_shared[j * hc + k + hc * 2] * hc_scale[2]
+                    + hc_base[j * hc + k + hc * 2]
+                )
+
+            row_sum = T.alloc_fragment(hc, FP32)
+            col_sum = T.alloc_fragment(hc, FP32)
+
+            row_max = T.alloc_fragment(hc, FP32)
+            T.reduce_max(comb_frag, row_max, dim=1)
+            for j, k in T.Parallel(hc, hc):
+                comb_frag[j, k] = T.exp(comb_frag[j, k] - row_max[j])
+            T.reduce_sum(comb_frag, row_sum, dim=1)
+            for j, k in T.Parallel(hc, hc):
+                comb_frag[j, k] = comb_frag[j, k] / row_sum[j] + eps
+
+            T.reduce_sum(comb_frag, col_sum, dim=0)
+            for j, k in T.Parallel(hc, hc):
+                comb_frag[j, k] = comb_frag[j, k] / (col_sum[k] + eps)
+
+            for _ in T.serial(sinkhorn_iters - 1):
+                T.reduce_sum(comb_frag, row_sum, dim=1)
+                for j, k in T.Parallel(hc, hc):
+                    comb_frag[j, k] = comb_frag[j, k] / (row_sum[j] + eps)
+                T.reduce_sum(comb_frag, col_sum, dim=0)
+                for j, k in T.Parallel(hc, hc):
+                    comb_frag[j, k] = comb_frag[j, k] / (col_sum[k] + eps)
+
+            T.copy(comb_frag, comb[i, :, :])
+            if ENABLE_PDL:
+                T.pdl_trigger()
+
+    return hc_split_sinkhorn_fused_kernel_
+
+
 def _hc_split_sinkhorn_torch(
     mixes: torch.Tensor,
     hc_scale: torch.Tensor,
@@ -496,6 +613,75 @@ def hc_split_sinkhorn(
     kernel = hc_split_sinkhorn_kernel(hc_mult, sinkhorn_iters, eps)
     kernel(
         mixes.view(-1, (2 + hc_mult) * hc_mult),
+        hc_scale,
+        hc_base,
+        pre.view(-1, hc_mult),
+        post.view(-1, hc_mult),
+        comb.view(-1, hc_mult, hc_mult),
+    )
+    return pre, post, comb
+
+
+def hc_split_sinkhorn_fused(
+    mixes_raw: torch.Tensor,
+    rsqrt: torch.Tensor,
+    hc_scale: torch.Tensor,
+    hc_base: torch.Tensor,
+    hc_mult: int = 4,
+    sinkhorn_iters: int = 20,
+    eps: float = 1e-6,
+):
+    """Fused ``(GEMM * rsqrt)`` + split-sinkhorn, bit-exact by construction.
+
+    ``mixes_raw`` is the ``[n, mix_hc]`` fp32 GEMM output BEFORE the
+    ``* rsqrt`` mul; ``rsqrt`` is the ``[n, 1]`` fp32 per-row scalar from
+    ``hc_rms_cast`` (``rsqrt.view(-1)`` -> ``[n]`` is passed to the kernel,
+    indexed ``rsqrt[i]`` per row).  Returns ``(pre, post, comb)`` shaped
+    ``[n, 1, hc] / [n, 1, hc] / [n, 1, hc, hc]`` -- exactly what
+    ``hc_split_sinkhorn((mixes_raw * rsqrt).unsqueeze(1), ...)`` returns on the
+    OFF chain, so the caller's ``.squeeze(1)`` is unchanged.
+
+    Every precondition that cannot be settled before the launch falls back to
+    the untouched OFF chain (the pre-multiplied tensor through the shipped
+    ``hc_split_sinkhorn``, which also owns gfx1250 / empty handling).  A caller
+    that enables the env on an unsupported layout therefore still cannot get
+    wrong numbers.
+    """
+    mix_hc = (2 + hc_mult) * hc_mult
+
+    def fallback():
+        # Replay the OFF chain verbatim for the shapes actually received.
+        mixes = mixes_raw * rsqrt
+        if mixes.ndim == 2:
+            mixes = mixes.unsqueeze(1)
+        return hc_split_sinkhorn(
+            mixes, hc_scale, hc_base, hc_mult, sinkhorn_iters, eps
+        )
+
+    # Structural guards; any violation replays the original chain.
+    n = mixes_raw.shape[0]
+    if (
+        mixes_raw.ndim != 2
+        or mixes_raw.shape[1] != mix_hc
+        or mixes_raw.dtype != torch.float32
+        or not mixes_raw.is_contiguous()
+        or not mixes_raw.is_cuda
+        or rsqrt.dtype != torch.float32
+        or not rsqrt.is_contiguous()
+        or not rsqrt.is_cuda
+        or rsqrt.numel() != n
+        or n == 0
+        or is_gfx1250_supported()  # TileLang CK addressing does not compile there
+    ):
+        return fallback()
+
+    pre = mixes_raw.new_empty(n, 1, hc_mult)
+    post = mixes_raw.new_empty(n, 1, hc_mult)
+    comb = mixes_raw.new_empty(n, 1, hc_mult, hc_mult)
+    kernel = hc_split_sinkhorn_fused_kernel(hc_mult, sinkhorn_iters, eps)
+    kernel(
+        mixes_raw,                       # [n, mix_hc] raw (unscaled) GEMM output
+        rsqrt.view(-1),                  # [n] fp32 per-row scalar -> rsqrt[i]
         hc_scale,
         hc_base,
         pre.view(-1, hc_mult),

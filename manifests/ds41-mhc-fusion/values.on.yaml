@@ -1,0 +1,16 @@
+# One-key overlay to opt into the mHC #1 launch fusion.
+# Apply ON TOP of the m20 release values (do NOT replace them):
+#
+#   helm -n kube-system upgrade ds41-ts4-poc charts/ds41-flash \
+#     -f <current-release-values.yaml> \
+#     -f manifests/ds41-mhc-fusion/values.on.yaml
+#
+# The key sits under the SHARED `env:` (templates/_helpers.tpl:66 merges
+# .Values.env into BOTH prefill and decode), so both pods get the switch in one
+# atomic change = 同源同切.  Rendering diff = exactly one env entry per engine
+# pod.  Requires the rebuilt image (2 changed .py files).
+#
+# Rollback: remove this overlay (or set the value to "0") and re-upgrade -- no
+# rebuild needed, env default-off restores m20 behaviour.
+env:
+  SGLANG_DS41_MHC_FUSED_SINKHORN: "1"

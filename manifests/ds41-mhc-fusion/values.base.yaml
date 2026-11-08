@@ -1,0 +1,107 @@
+# m20 user-values snapshot (verbatim copy of
+# /Users/guofutan/ai-frameworks/dsv4-308x/manifests/ds41-c8-fixed-cost/values.m20.yaml).
+# Used ONLY as the -f base for verify-render.sh (read-only helm template).
+backendTrafficPolicy:
+  enabled: false
+decode:
+  args:
+    --mem-fraction-static: "0.65"
+  extraEnv:
+    SGLANG_DS41_ATTN_P_HILO: 1
+    SGLANG_DS41_ATTN_SPLITK: 1
+    SGLANG_DS41_THIN_GEMM_TUNE: "1"
+    SGLANG_DS41_DENSE_FP8_SPLITK: 0
+    SGLANG_DS41_DENSE_FP8_WIDEK: 0
+    SGLANG_DS41_FUSE_INT_SELECTS: 1
+    SGLANG_DS41_FUSE_PAIR_PARTNERS: 1
+    SGLANG_DS41_HEALTH_NO_HOL_BLOCK: 1
+    SGLANG_DS41_LMHEAD_ROW_CHUNK: 32
+    SGLANG_DS41_MHC_MIX_SMALLM_FIX: chunk
+    SGLANG_MOE_ALIGN_PARALLEL: 1
+  hostIP: 21.234.171.87
+  node: node-21.234.171.87
+denseTileConfig:
+  decode:
+    n576-k5120.json: '{"BLOCK_SIZE_M": 16, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 32,
+      "GROUP_SIZE_M": 1, "num_warps": 1, "num_stages": 2}'
+    n1792-k5120.json: '{"BLOCK_SIZE_M": 16, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 32,
+      "GROUP_SIZE_M": 1, "num_warps": 1, "num_stages": 2}'
+    n4096-k1280.json: '{"BLOCK_SIZE_M": 16, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 32,
+      "GROUP_SIZE_M": 1, "num_warps": 1, "num_stages": 2}'
+    n5120-k288.json: '{"BLOCK_SIZE_M": 16, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 32,
+      "GROUP_SIZE_M": 1, "num_warps": 1, "num_stages": 2}'
+    n5120-k1024.json: '{"BLOCK_SIZE_M": 16, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 32,
+      "GROUP_SIZE_M": 1, "num_warps": 1, "num_stages": 2}'
+    n25600-k6144.json: '{"BLOCK_SIZE_M": 16, "BLOCK_SIZE_N": 32, "BLOCK_SIZE_K": 32,
+      "GROUP_SIZE_M": 1, "num_warps": 1, "num_stages": 2}'
+  decode32: thin
+  decodeSmall: "off"
+  enabled: true
+  shapes:
+  - k: 5120
+    key: n1792-k5120.json
+    "n": 1792
+  - k: 5120
+    key: n576-k5120.json
+    "n": 576
+  - k: 1280
+    key: n4096-k1280.json
+    "n": 4096
+  - k: 1024
+    key: n5120-k1024.json
+    "n": 5120
+  - k: 288
+    key: n5120-k288.json
+    "n": 5120
+  - k: 6144
+    key: n25600-k6144.json
+    "n": 25600
+  - k: 15360
+    key: n5120-k15360.json
+    "n": 5120
+  - k: 5120
+    key: n1280-k5120.json
+    "n": 1280
+  - k: 5120
+    key: n512-k5120.json
+    "n": 512
+env:
+  SGLANG_DS41_MHC_BITEXACT_GEMM: 1
+  SGLANG_MOE_CONFIG_DIR: /moecfg
+fullnameOverride: ds41-ts4-poc
+httpRoute:
+  enabled: false
+image:
+  tag: ds41-prod-1033-m20
+livenessProbe:
+  enabled: true
+moeTileConfig:
+  enabled: true
+  fileName: E=48,N=2304,device_name=AMD_Instinct_MI308X,dtype=fp8_w8a8,block_shape=[128,
+    128].json
+  mountPath: /moecfg
+  tritonVersion: 3.7.0
+prefill:
+  extraEnv:
+    SGLANG_HIP_DSV41_INDEX_BLOCK_M: 1
+    SGLANG_HIP_DSV41_INDEX_CANDIDATE_ONLY: 0
+    SGLANG_HIP_DSV41_INDEX_LOGITS_BLOCK_M: 8
+  hostIP: 21.234.170.159
+  node: node-21.234.170.159
+  warmup:
+    url: http://21.234.170.159:30001/v1/chat/completions
+router:
+  auth:
+    existingSecret: ds41-flash-apikey
+  hostIP: 21.234.170.159
+  image:
+    tag: v1028-responses-slim
+  node: node-21.234.170.159
+speculative:
+  dsparkBlockSize: 3
+  enabled: true
+volumes:
+  rdmaLibs:
+    enabled: true
+    hostPath: /data/rdma-libs-ts4
+    mountPath: /data/rdma-libs

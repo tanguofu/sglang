@@ -72,6 +72,29 @@ def _mhc_fused_stats_on_hip() -> bool:
     """
     return os.environ.get("SGLANG_DS41_MHC_FUSED_STATS", "0") == "1"
 
+
+def _mhc_fused_sinkhorn_on_hip() -> bool:
+    """gfx942: fold the ``(GEMM * rsqrt)`` mul into the sinkhorn input load.
+
+    OFF by default, read per call (mirrors ``fuse_enabled`` in
+    ``kernels/ops/layernorm/mhc.py``).  The ``:396`` ``mixes = GEMM * rsqrt``
+    is one fp32 elementwise mul launch per layer on the live gfx942 decode
+    path; the fused kernel lands that same fp32 mul into shared memory before
+    the SAME sigmoid/comb/reduce, so it is bit-exact by construction.  The
+    OFF arm below is byte-for-byte the current chain.
+
+    TileLang compiler behaviour (no FMA contraction / reorder of the standalone
+    mul) must be confirmed with a GPU ``torch.equal`` before rollout; see the
+    gate checklist.  gfx1250/XPU are excluded here and defensively fall back in
+    the wrapper.
+    """
+    return (
+        _is_hip
+        and not _is_xpu
+        and os.environ.get("SGLANG_DS41_MHC_FUSED_SINKHORN", "0") != "0"
+    )
+
+
 # ---------------------------------------------------------------------------
 # What a layer hands this module
 # ---------------------------------------------------------------------------
@@ -393,6 +416,27 @@ def _mix_stats_impl(hc: HcSubLayer, x: torch.Tensor) -> HcTriplet:
         # not pin the whole GEMM to 64 CTAs; off unless asked for.
         from sglang.srt.layers.deterministic import row_uniform_mhc_mix
 
+        # mHC #1 fusion (env-gated, default OFF): fold the (GEMM * rsqrt)
+        # elementwise mul into the sinkhorn input load, saving one fp32 mul
+        # launch per layer.  The fused kernel lands raw*rsqrt into fp32 shared
+        # memory before the SAME sigmoid/comb/reduce -> bit-exact by
+        # construction.  OFF arm below is byte-for-byte the current chain.
+        if _mhc_fused_sinkhorn_on_hip():
+            mixes_raw = row_uniform_mhc_mix(x_flat, hc.fn)
+            from sglang.kernels.ops.layernorm.mhc import (
+                hc_split_sinkhorn_fused,
+            )
+
+            pre, post, comb = hc_split_sinkhorn_fused(
+                mixes_raw,
+                rsqrt,
+                hc.scale,
+                hc.base,
+                cfg.mult,
+                cfg.sinkhorn_iters,
+                cfg.eps,
+            )
+            return pre.squeeze(1), post.squeeze(1), comb.squeeze(1)
         mixes = (row_uniform_mhc_mix(x_flat, hc.fn) * rsqrt).unsqueeze(1)
     if _is_xpu:
         from sglang.srt.models.deepseek_v4 import get_mhc_ops
